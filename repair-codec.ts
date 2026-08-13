@@ -14,13 +14,19 @@
  *     3 repair          -> sequence + rules    replace frequent adjacent pairs
  *     4 assignSingleBytes -> escape table      top-N symbols get a 1-byte code
  *     5 emitStream      -> Uint8Array          1 byte if < N, else 2 bytes
- *     6 serialize       -> Uint8Array          header + lexicon + tables + stream
+ *     6 planLexiconSuffixes -> suffix table    endings worth a code of their own
+ *     7 serialize       -> Uint8Array          header + lexicon + tables + stream
  *
  * The lexicon is stored front-coded: entries are sorted by their UTF-8 bytes and
  * each one records how many leading bytes it shares with its predecessor, so
  * "beget"/"begettest"/"begetting" pay for their common stem once. That is why
  * terminal ids are in byte order rather than frequency order — the id is the
  * position in the stored list, and front coding needs that list sorted.
+ *
+ * Suffix codes are part of that same storage layer and nothing else. "testing"
+ * is its own lexicon entry with its own id, written as "share 4 bytes with the
+ * previous entry, then apply the -ing code". The token stream never sees a
+ * suffix: it addresses "testing" with one id exactly as it would any other word.
  *
  *   DECODE  bytes
  *     1 deserialize     -> container
@@ -42,16 +48,17 @@
 export interface CodecConfig {
   /** Reserved single-byte codes for whole symbols. The original used 0x55 (85). */
   singleByteCount: number;
-  /** Byte codes reserved for suffix markers. The cartridge used roughly 20. */
+  /**
+   * Size of the lexicon's suffix table. Costs nothing in the token stream — these
+   * codes live in the lexicon section. The cartridge had roughly 20 (0x82–0x9E).
+   */
   suffixCount: number;
   /** A pair must occur at least this many times to earn a rule. Original: 3. */
   minPairCount: number;
   /** Hard cap on grammar rules, on top of the cap implied by the id space. */
   maxPairs: number;
-  /** Longest suffix the splitter will consider. */
+  /** Longest suffix, in characters, the lexicon writer will consider. */
   maxSuffixLength: number;
-  /** Shortest stem the splitter will leave behind. */
-  minStemLength: number;
 }
 
 export const DEFAULT_CONFIG: CodecConfig = {
@@ -60,7 +67,6 @@ export const DEFAULT_CONFIG: CodecConfig = {
   minPairCount: 3,
   maxPairs: 65535,
   maxSuffixLength: 4,
-  minStemLength: 3,
 };
 
 /** left/right token ids of one grammar rule (a "4 byte block" in the ROM). */
@@ -68,6 +74,8 @@ export type Rule = readonly [number, number];
 
 export interface Container {
   threshold: number;
+  /** Endings the lexicon can reference by code instead of spelling out. */
+  suffixes: string[];
   lexicon: string[];
   escapeTable: number[];
   rules: Rule[];
@@ -76,6 +84,8 @@ export interface Container {
 
 export interface SectionSizes {
   header: number;
+  /** The lexicon's suffix table. */
+  suffixTable: number;
   /** Section A in the ROM: the word list. */
   lexicon: number;
   /** The single-byte escape table. */
@@ -91,24 +101,22 @@ export interface EncodeResult {
   bytes: Uint8Array;
   container: Container;
   stages: {
-    /** Tokens before suffix splitting. */
-    rawTokens: string[];
-    /** Tokens after suffix splitting — what the lexicon is built from. */
     tokens: string[];
     terminalIds: number[];
     sequence: number[];
     rules: Rule[];
     escapeTable: number[];
-    suffixPlan: SuffixPlan;
+    lexiconEntries: LexiconEntry[];
   };
   stats: {
     originalBytes: number;
-    rawTokenCount: number;
+    /** The suffix table, best first. */
     suffixes: string[];
-    /** Suffix markers that earned a byte code (some get swallowed by rules). */
+    /** Table entries at least one lexicon entry actually references. */
     suffixCodesUsed: number;
-    splitOccurrences: number;
-    wordsFolded: number;
+    /** Lexicon entries written with a suffix code. */
+    entriesSuffixed: number;
+    /** Lexicon bytes the suffix table saves, net of what the table itself costs. */
     lexiconBytesSaved: number;
     tokenCount: number;
     distinctTerminals: number;
@@ -155,14 +163,9 @@ function sharedPrefix(a: Uint8Array, b: Uint8Array): number {
 
 const varintSize = (v: number): number => (v < 0x80 ? 1 : v < 0x4000 ? 2 : 3);
 
-const EMPTY = new Uint8Array(0);
+const utf8Length = (s: string): number => ENCODER.encode(s).length;
 
-/** Bytes one front-coded entry occupies: two varints plus what it does not share. */
-function frontCodedCost(previous: Uint8Array, entry: Uint8Array): number {
-  const shared = sharedPrefix(previous, entry);
-  const rest = entry.length - shared;
-  return varintSize(shared) + varintSize(rest) + rest;
-}
+const EMPTY = new Uint8Array(0);
 
 // ---------------------------------------------------------------------------
 // Stage 1 — tokenize / detokenize
@@ -230,11 +233,7 @@ export function detokenize(tokens: string[]): string {
   let pendingSpace = false;
   let prevWasMarker = false;
   for (const token of tokens) {
-    if (isSuffixMarker(token)) {
-      out += token.slice(1);
-      pendingSpace = true;
-      prevWasMarker = false;
-    } else if (isSeparator(token)) {
+    if (isSeparator(token)) {
       out += token;
       pendingSpace = false;
       prevWasMarker = false;
@@ -248,193 +247,10 @@ export function detokenize(tokens: string[]): string {
   return out;
 }
 
-// ---------------------------------------------------------------------------
-// Stage 1b — suffix splitting
-// ---------------------------------------------------------------------------
-
-/**
- * Marker prefix for suffix tokens. A marker is NUL followed by at least one
- * character, so it can never collide with anything the tokenizer produces: a
- * literal NUL in the input comes out as a one-character token of its own.
- */
-export const SUFFIX_MARK = "\u0000";
-
-export function isSuffixMarker(token: string): boolean {
-  return token.length > 1 && token.charCodeAt(0) === 0;
-}
-
-export function suffixOf(token: string): string {
-  return token.slice(1);
-}
-
-/** Print a token the way a person reads it: "-ing" for markers, "␀" for glue. */
+/** Print a token the way a person reads it: "␀" for the glue token. */
 export function describeToken(token: string): string {
-  if (isSuffixMarker(token)) return "-" + suffixOf(token);
   if (token === "") return "␀";
   return token.replace(/\n/g, "⏎").replace(/\t/g, "⇥");
-}
-
-export interface SuffixPlan {
-  /** Chosen suffixes, best first. */
-  suffixes: string[];
-  /** word -> [stem, suffix] for every word the splitter will break up. */
-  mapping: Map<string, [string, string]>;
-  /** Token occurrences that will gain a marker byte. */
-  splitOccurrences: number;
-  /** Lexicon entries the split removes. */
-  wordsFolded: number;
-  /** Net lexicon bytes reclaimed, before the markers' own entries. */
-  lexiconBytesSaved: number;
-}
-
-const utf8Length = (s: string): number => ENCODER.encode(s).length;
-
-/**
- * What a suffix marker costs the lexicon. Markers all begin with NUL, so they
- * sort together and every one after the first shares that byte: two varints
- * plus the suffix itself.
- */
-const markerCost = (suffix: string): number => 2 + utf8Length(suffix);
-
-/**
- * Bytes the lexicon reclaims by dropping each word, given front coding.
- *
- * Two terms: the entry's own cost, minus what its successor loses. Removing a
- * word leaves the one after it front-coding against the word before instead, and
- * that neighbour is further away, so part of the saving is handed straight back.
- * That is exactly why splitting "begetting" into "beget" + -ing is worth much
- * less than its length suggests — the two sat next to each other already.
- *
- * Exact for one removal at a time, an estimate when several neighbours go
- * together, which is the same footing the rest of the suffix scoring is on.
- */
-function lexiconRemovalGains(words: Iterable<string>): Map<string, number> {
-  const entries = [...words].map((word) => ({ word, bytes: ENCODER.encode(word) }));
-  entries.sort((a, b) => compareBytes(a.bytes, b.bytes));
-
-  const gains = new Map<string, number>();
-  for (let i = 0; i < entries.length; i++) {
-    const before = i > 0 ? entries[i - 1].bytes : EMPTY;
-    const own = frontCodedCost(before, entries[i].bytes);
-    const successor = entries[i + 1];
-    const penalty = successor
-      ? frontCodedCost(before, successor.bytes) - frontCodedCost(entries[i].bytes, successor.bytes)
-      : 0;
-    gains.set(entries[i].word, own - penalty);
-  }
-  return gains;
-}
-
-/**
- * Pick the suffixes worth reserving a byte code for, the way the cartridge did:
- * "testing" becomes the token for "test" followed by an -ing marker, so the
- * lexicon carries one entry instead of two.
- *
- * A split is only taken when it pays. Dropping a word's lexicon entry saves what
- * front coding was charging for it (see lexiconRemovalGains) once; the marker
- * costs one byte at every occurrence. So splitting rare long words wins and
- * splitting common ones loses, which is why this helps the tail of the
- * vocabulary rather than the head.
- *
- * The stem must already exist as a standalone token — this never invents
- * vocabulary, matching a decoder that just concatenates.
- */
-export function planSuffixes(
-  tokens: string[],
-  options: { count: number; maxSuffixLength?: number; minStemLength?: number },
-): SuffixPlan {
-  const empty: SuffixPlan = {
-    suffixes: [],
-    mapping: new Map(),
-    splitOccurrences: 0,
-    wordsFolded: 0,
-    lexiconBytesSaved: 0,
-  };
-  if (options.count <= 0) return empty;
-
-  const maxLen = options.maxSuffixLength ?? 4;
-  const minStem = options.minStemLength ?? 3;
-
-  const counts = new Map<string, number>();
-  for (const token of tokens) {
-    if (isSeparator(token)) continue;
-    counts.set(token, (counts.get(token) ?? 0) + 1);
-  }
-
-  // What each entry is actually worth once the lexicon is front-coded. Built
-  // over every distinct token, separators included, because that is the list
-  // serialize() will sort and delta-encode.
-  const removalGains = lexiconRemovalGains(new Set(tokens));
-
-  // Candidate splits, grouped by suffix, keeping only the ones that pay.
-  type Candidate = { word: string; stem: string; gain: number };
-  const candidates = new Map<string, Candidate[]>();
-  for (const [word, count] of counts) {
-    for (let len = 1; len <= maxLen; len++) {
-      if (word.length - len < minStem) break;
-      const stem = word.slice(0, word.length - len);
-      if (!counts.has(stem)) continue;
-      const suffix = word.slice(word.length - len);
-      const gain = (removalGains.get(word) ?? 0) - count;
-      if (gain <= 0) continue;
-      const list = candidates.get(suffix);
-      if (list) list.push({ word, stem, gain });
-      else candidates.set(suffix, [{ word, stem, gain }]);
-    }
-  }
-
-  // A suffix has to cover its own lexicon entry and its escape-table slot.
-  const scored = [...candidates.entries()]
-    .map(([suffix, list]) => ({
-      suffix,
-      list,
-      score: list.reduce((sum, c) => sum + c.gain, 0) - markerCost(suffix) - 2,
-    }))
-    .filter((s) => s.score > 0)
-    .sort((a, b) => b.score - a.score || a.suffix.length - b.suffix.length)
-    .slice(0, options.count);
-
-  // One word can match several chosen suffixes; take the longest, which strips
-  // the most from the lexicon entry.
-  const mapping = new Map<string, [string, string]>();
-  const bestLength = new Map<string, number>();
-  for (const { suffix, list } of scored) {
-    for (const { word, stem } of list) {
-      if ((bestLength.get(word) ?? 0) >= suffix.length) continue;
-      bestLength.set(word, suffix.length);
-      mapping.set(word, [stem, suffix]);
-    }
-  }
-
-  let splitOccurrences = 0;
-  let lexiconBytesSaved = 0;
-  for (const word of mapping.keys()) {
-    splitOccurrences += counts.get(word) ?? 0;
-    lexiconBytesSaved += removalGains.get(word) ?? 0;
-  }
-  for (const { suffix } of scored) lexiconBytesSaved -= markerCost(suffix);
-
-  return {
-    suffixes: scored.map((s) => s.suffix),
-    mapping,
-    splitOccurrences,
-    wordsFolded: mapping.size,
-    lexiconBytesSaved,
-  };
-}
-
-export function applySuffixes(tokens: string[], mapping: Map<string, [string, string]>): string[] {
-  if (mapping.size === 0) return tokens;
-  const out: string[] = [];
-  for (const token of tokens) {
-    const split = mapping.get(token);
-    if (split && !isSeparator(token)) {
-      out.push(split[0], SUFFIX_MARK + split[1]);
-    } else {
-      out.push(token);
-    }
-  }
-  return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -658,29 +474,6 @@ export function assignSingleBytes(
     .map(([id]) => id);
 }
 
-/**
- * Suffix markers get their codes reserved up front rather than competing on
- * frequency, so the suffix budget is a knob you can turn independently. Markers
- * the grammar swallowed whole never appear alone, so they do not take a slot.
- */
-export function pinSuffixCodes(
-  sequence: number[],
-  lexicon: string[],
-  suffixCount: number,
-): number[] {
-  if (suffixCount <= 0) return [];
-  const counts = new Map<number, number>();
-  for (const id of sequence) {
-    if (id < lexicon.length && isSuffixMarker(lexicon[id])) {
-      counts.set(id, (counts.get(id) ?? 0) + 1);
-    }
-  }
-  return [...counts.entries()]
-    .sort((a, b) => (b[1] - a[1]) || (a[0] - b[0]))
-    .slice(0, suffixCount)
-    .map(([id]) => id);
-}
-
 // ---------------------------------------------------------------------------
 // Stage 5 — byte framing
 // ---------------------------------------------------------------------------
@@ -774,13 +567,187 @@ export function expandToWords(token: number, container: Container): string[] {
 }
 
 // ---------------------------------------------------------------------------
-// Stage 6 — container serialization
+// Stage 6 — lexicon storage: front coding plus suffix codes
+// ---------------------------------------------------------------------------
+
+/**
+ * How one lexicon entry is written. Rebuilt as
+ * `previous[0 .. shared] + literal + (suffix < 0 ? "" : suffixes[suffix])`.
+ */
+export interface LexiconEntry {
+  /** Leading bytes taken from the entry before this one. */
+  shared: number;
+  /** Bytes spelled out. */
+  literal: Uint8Array;
+  /** Index into the suffix table, or -1. */
+  suffix: number;
+  /** Encoded size, including both varints and the code byte where there is one. */
+  bytes: number;
+}
+
+/**
+ * Two bits of the length varint say how the rest of the entry is spelled:
+ * literal bytes, a suffix code alone, or literal bytes then a code. A code in
+ * MODE_SUFFIX rides in the varint itself, so a table of up to 32 endings makes
+ * "testing" cost two bytes after "tested": share 4, apply -ing.
+ */
+const MODE_LITERAL = 0;
+const MODE_SUFFIX = 1;
+const MODE_BOTH = 2;
+
+function endsWith(haystack: Uint8Array, needle: Uint8Array): boolean {
+  if (needle.length === 0 || needle.length > haystack.length) return false;
+  const offset = haystack.length - needle.length;
+  for (let i = 0; i < needle.length; i++) {
+    if (haystack[offset + i] !== needle[i]) return false;
+  }
+  return true;
+}
+
+/** What a suffix costs to carry in the table. */
+const suffixTableCost = (suffix: string): number => {
+  const n = utf8Length(suffix);
+  return varintSize(n) + n;
+};
+
+/**
+ * Decide how every lexicon entry is written, given the suffix table. Pure
+ * arithmetic: for each entry take the cheapest of the three modes. serialize()
+ * and measure() both go through here, so what is counted is what is written.
+ */
+export function planLexiconEntries(
+  lexicon: readonly string[],
+  suffixes: readonly string[],
+): LexiconEntry[] {
+  const table = suffixes.map((s) => ENCODER.encode(s));
+  const entries: LexiconEntry[] = [];
+  let previous = EMPTY;
+
+  for (const word of lexicon) {
+    const bytes = ENCODER.encode(word);
+    const shared = sharedPrefix(previous, bytes);
+    const rest = bytes.subarray(shared);
+    const sharedSize = varintSize(shared);
+
+    let suffix = -1;
+    let literal = rest.length;
+    let size = sharedSize + varintSize((rest.length << 2) | MODE_LITERAL) + rest.length;
+
+    for (let code = 0; code < table.length; code++) {
+      if (!endsWith(rest, table[code])) continue;
+      const remainder = rest.length - table[code].length;
+      const candidate = remainder === 0
+        ? sharedSize + varintSize((code << 2) | MODE_SUFFIX)
+        : sharedSize + varintSize((remainder << 2) | MODE_BOTH) + remainder + 1;
+      if (candidate < size) {
+        size = candidate;
+        suffix = code;
+        literal = remainder;
+      }
+    }
+
+    entries.push({ shared, literal: rest.subarray(0, literal), suffix, bytes: size });
+    previous = bytes;
+  }
+  return entries;
+}
+
+/**
+ * Pick the endings worth a code of their own.
+ *
+ * Front coding has already stripped what each entry shares with its predecessor,
+ * so what is left — the "rest" — is usually short: sorted neighbours differ in
+ * their tails. Giving the commonest tails a code turns those bytes into nothing
+ * at all, since a MODE_SUFFIX code rides inside the varint that would have held
+ * the length.
+ *
+ * Greedy with exclusive assignment: score every candidate by what it would save
+ * across the entries it covers, take the best, then subtract those entries from
+ * every other candidate's score so overlapping endings ("ing", "ng", "g") do not
+ * all get counted for the same word.
+ *
+ * Unlike the token-level splitter this replaced, nothing here has to exist as a
+ * word. The prefix comes from the neighbouring entry rather than from a lexicon
+ * lookup, so "waters" can be coded off "water..." whether or not "water" is in
+ * the text at all.
+ */
+export function planLexiconSuffixes(
+  lexicon: readonly string[],
+  options: { count: number; maxSuffixLength?: number },
+): string[] {
+  if (options.count <= 0 || lexicon.length === 0) return [];
+  const maxChars = options.maxSuffixLength ?? 4;
+  const decoder = new TextDecoder();
+  // What a code will cost inside the tag once the table is full.
+  const codeTagSize = varintSize(((options.count - 1) << 2) | MODE_SUFFIX);
+
+  type Match = { suffix: string; saving: number };
+  const matches: Match[][] = [];
+  const totals = new Map<string, number>();
+
+  let previous = EMPTY;
+  for (const word of lexicon) {
+    const bytes = ENCODER.encode(word);
+    const rest = bytes.subarray(sharedPrefix(previous, bytes));
+    previous = bytes;
+
+    const literalCost = varintSize((rest.length << 2) | MODE_LITERAL) + rest.length;
+    const list: Match[] = [];
+    let chars = 0;
+    for (let start = rest.length - 1; start >= 0 && chars < maxChars; start--) {
+      if ((rest[start] & 0xc0) === 0x80) continue; // mid-character, not a boundary
+      chars++;
+      const remainder = start; // bytes left over once this ending is coded
+      const coded = remainder === 0
+        ? codeTagSize
+        : varintSize((remainder << 2) | MODE_BOTH) + remainder + 1;
+      const saving = literalCost - coded;
+      if (saving <= 0) continue;
+      const suffix = decoder.decode(rest.subarray(start));
+      list.push({ suffix, saving });
+      totals.set(suffix, (totals.get(suffix) ?? 0) + saving);
+    }
+    matches.push(list);
+  }
+
+  const chosen: string[] = [];
+  const spokenFor = new Uint8Array(lexicon.length);
+  for (let round = 0; round < options.count; round++) {
+    let best = "";
+    let bestScore = 0;
+    for (const [suffix, total] of totals) {
+      const score = total - suffixTableCost(suffix);
+      if (score < bestScore) continue;
+      if (score > bestScore || best === "" || suffix.length > best.length ||
+          (suffix.length === best.length && suffix < best)) {
+        bestScore = score;
+        best = suffix;
+      }
+    }
+    if (best === "" || bestScore <= 0) break;
+
+    chosen.push(best);
+    totals.delete(best);
+    for (let i = 0; i < matches.length; i++) {
+      if (spokenFor[i] || !matches[i].some((m) => m.suffix === best)) continue;
+      spokenFor[i] = 1;
+      for (const m of matches[i]) {
+        const remaining = totals.get(m.suffix);
+        if (remaining !== undefined) totals.set(m.suffix, remaining - m.saving);
+      }
+    }
+  }
+  return chosen;
+}
+
+// ---------------------------------------------------------------------------
+// Stage 7 — container serialization
 // ---------------------------------------------------------------------------
 
 const MAGIC = [0x52, 0x50, 0x52, 0x31]; // "RPR1"
-/** 2 front-codes the lexicon; 1 stored every entry in full. */
-const FORMAT_VERSION = 2;
-const HEADER_BYTES = 14;
+/** 3 adds the lexicon suffix table; 2 front-coded only; 1 stored entries in full. */
+const FORMAT_VERSION = 3;
+const HEADER_BYTES = 15;
 
 class ByteWriter {
   private bytes: number[] = [];
@@ -851,24 +818,23 @@ export function plainLexiconBytes(lexicon: readonly string[]): number {
   return total;
 }
 
-export function measure(container: Container): SectionSizes {
+export function measure(container: Container, entries?: readonly LexiconEntry[]): SectionSizes {
+  const planned = entries ?? planLexiconEntries(container.lexicon, container.suffixes);
   let lexicon = 0;
-  let previous = EMPTY;
-  for (const word of container.lexicon) {
-    const bytes = ENCODER.encode(word);
-    lexicon += frontCodedCost(previous, bytes);
-    previous = bytes;
-  }
+  for (const entry of planned) lexicon += entry.bytes;
+  let suffixTable = 0;
+  for (const suffix of container.suffixes) suffixTable += suffixTableCost(suffix);
   const escapeTable = container.escapeTable.length * 2;
   const rules = container.rules.length * 4;
   const stream = container.stream.length;
   return {
     header: HEADER_BYTES,
+    suffixTable,
     lexicon,
     escapeTable,
     rules,
     stream,
-    total: HEADER_BYTES + lexicon + escapeTable + rules + stream,
+    total: HEADER_BYTES + suffixTable + lexicon + escapeTable + rules + stream,
   };
 }
 
@@ -880,15 +846,26 @@ export function serialize(container: Container): Uint8Array {
   w.u16(container.lexicon.length);
   w.u16(container.rules.length);
   w.u32(container.stream.length);
-  // Front-coded: shared prefix length, then the bytes this entry adds.
-  let previous = EMPTY;
-  for (const word of container.lexicon) {
-    const bytes = ENCODER.encode(word);
-    const shared = sharedPrefix(previous, bytes);
-    w.varint(shared);
-    w.varint(bytes.length - shared);
-    w.raw(bytes.subarray(shared));
-    previous = bytes;
+  if (container.suffixes.length > 255) throw new CodecError("the suffix table holds at most 255 codes");
+  w.u8(container.suffixes.length);
+  for (const suffix of container.suffixes) {
+    const bytes = ENCODER.encode(suffix);
+    w.varint(bytes.length);
+    w.raw(bytes);
+  }
+  // Front-coded: shared prefix length, then a tagged length, then the rest.
+  for (const entry of planLexiconEntries(container.lexicon, container.suffixes)) {
+    w.varint(entry.shared);
+    if (entry.suffix >= 0 && entry.literal.length === 0) {
+      w.varint((entry.suffix << 2) | MODE_SUFFIX);
+    } else if (entry.suffix >= 0) {
+      w.varint((entry.literal.length << 2) | MODE_BOTH);
+      w.raw(entry.literal);
+      w.u8(entry.suffix);
+    } else {
+      w.varint((entry.literal.length << 2) | MODE_LITERAL);
+      w.raw(entry.literal);
+    }
   }
   for (const id of container.escapeTable) w.u16(id);
   for (const [left, right] of container.rules) {
@@ -907,8 +884,8 @@ export function deserialize(bytes: Uint8Array): Container {
   const version = r.u8();
   if (version !== FORMAT_VERSION) {
     throw new CodecError(
-      version === 1
-        ? "version 1 containers stored the lexicon uncompressed; re-encode to read them"
+      version < FORMAT_VERSION
+        ? `version ${version} stored the lexicon differently; re-encode to read it`
         : `unsupported version ${version}`,
     );
   }
@@ -918,17 +895,46 @@ export function deserialize(bytes: Uint8Array): Container {
   const streamLength = r.u32();
 
   const decoder = new TextDecoder();
+  const suffixCount = r.u8();
+  const suffixBytes: Uint8Array[] = [];
+  const suffixes: string[] = [];
+  for (let i = 0; i < suffixCount; i++) {
+    const bytes = r.raw(r.varint());
+    suffixBytes.push(bytes);
+    suffixes.push(decoder.decode(bytes));
+  }
+
   const lexicon: string[] = [];
   let previous = EMPTY;
   for (let i = 0; i < lexiconSize; i++) {
     const shared = r.varint();
-    const rest = r.varint();
     if (shared > previous.length) {
       throw new CodecError(`lexicon entry ${i} shares ${shared} bytes with a ${previous.length}-byte entry`);
     }
-    const bytes = new Uint8Array(shared + rest);
+    const tag = r.varint();
+    const mode = tag & 3;
+    const n = tag >>> 2;
+
+    let literal: Uint8Array = EMPTY;
+    let suffix: Uint8Array = EMPTY;
+    if (mode === MODE_LITERAL) {
+      literal = r.raw(n);
+    } else if (mode === MODE_SUFFIX) {
+      if (n >= suffixBytes.length) throw new CodecError(`lexicon entry ${i} uses undefined suffix code ${n}`);
+      suffix = suffixBytes[n];
+    } else if (mode === MODE_BOTH) {
+      literal = r.raw(n);
+      const code = r.u8();
+      if (code >= suffixBytes.length) throw new CodecError(`lexicon entry ${i} uses undefined suffix code ${code}`);
+      suffix = suffixBytes[code];
+    } else {
+      throw new CodecError(`lexicon entry ${i} has an unknown storage mode`);
+    }
+
+    const bytes = new Uint8Array(shared + literal.length + suffix.length);
     bytes.set(previous.subarray(0, shared));
-    bytes.set(r.raw(rest), shared);
+    bytes.set(literal, shared);
+    bytes.set(suffix, shared + literal.length);
     lexicon.push(decoder.decode(bytes));
     previous = bytes;
   }
@@ -936,7 +942,7 @@ export function deserialize(bytes: Uint8Array): Container {
   for (let i = 0; i < threshold; i++) escapeTable.push(r.u16());
   const rules: Rule[] = [];
   for (let i = 0; i < ruleCount; i++) rules.push([r.u16(), r.u16()]);
-  return { threshold, lexicon, escapeTable, rules, stream: r.raw(streamLength) };
+  return { threshold, suffixes, lexicon, escapeTable, rules, stream: r.raw(streamLength) };
 }
 
 // ---------------------------------------------------------------------------
@@ -952,28 +958,23 @@ export function encode(text: string, config: Partial<CodecConfig> = {}): EncodeR
   if (cfg.singleByteCount < 0 || cfg.suffixCount < 0) {
     throw new CodecError("byte budgets cannot be negative");
   }
-  const reserved = cfg.singleByteCount + cfg.suffixCount;
-  if (reserved > 255) {
-    throw new CodecError(
-      `single-byte codes (${cfg.singleByteCount}) plus suffix codes (${cfg.suffixCount}) must leave room for two-byte tokens`,
-    );
+  if (cfg.singleByteCount > 255) {
+    throw new CodecError(`${cfg.singleByteCount} single-byte codes leaves no room for two-byte tokens`);
+  }
+  if (cfg.suffixCount > 255) {
+    throw new CodecError("the suffix table holds at most 255 codes");
   }
 
-  const rawTokens = tokenize(text);
-  const plan = planSuffixes(rawTokens, {
-    count: cfg.suffixCount,
-    maxSuffixLength: cfg.maxSuffixLength,
-    minStemLength: cfg.minStemLength,
-  });
-  const tokens = applySuffixes(rawTokens, plan.mapping);
+  const tokens = tokenize(text);
   const { lexicon, ids } = buildLexicon(tokens);
 
-  // The id ceiling depends on the configured budgets, not the effective ones, so
-  // a partly-filled escape table can never push a token out of range.
-  const ceiling = maxTokenIdFor(reserved);
+  // The id ceiling depends on the configured budget, not the effective one, so a
+  // partly-filled escape table can never push a token out of range. Suffix codes
+  // do not appear in it: they are spent in the lexicon, not the stream.
+  const ceiling = maxTokenIdFor(cfg.singleByteCount);
   if (lexicon.length > ceiling + 1) {
     throw new CodecError(
-      `${lexicon.length} distinct tokens exceeds the ${ceiling + 1} addressable ids with ${reserved} reserved byte codes`,
+      `${lexicon.length} distinct tokens exceeds the ${ceiling + 1} addressable ids with ${cfg.singleByteCount} reserved byte codes`,
     );
   }
 
@@ -984,32 +985,42 @@ export function encode(text: string, config: Partial<CodecConfig> = {}): EncodeR
     firstRuleId: lexicon.length,
   });
 
-  const pinned = pinSuffixCodes(sequence, lexicon, cfg.suffixCount);
-  const escapeTable = [
-    ...pinned,
-    ...assignSingleBytes(sequence, cfg.singleByteCount, new Set(pinned)),
-  ];
+  const escapeTable = assignSingleBytes(sequence, cfg.singleByteCount);
   const threshold = escapeTable.length;
   const { stream, singleByteTokens, twoByteTokens } = emitStream(sequence, escapeTable, threshold);
 
-  const container: Container = { threshold, lexicon, escapeTable, rules, stream };
+  const suffixes = planLexiconSuffixes(lexicon, {
+    count: cfg.suffixCount,
+    maxSuffixLength: cfg.maxSuffixLength,
+  });
+  const container: Container = { threshold, suffixes, lexicon, escapeTable, rules, stream };
+  const lexiconEntries = planLexiconEntries(lexicon, suffixes);
   const bytes = serialize(container);
-  const sizes = measure(container);
+  const sizes = measure(container, lexiconEntries);
   const originalBytes = ENCODER.encode(text).length;
   const { maxDepth, maxWidth } = expand(sequence, rules, lexicon.length);
+
+  // What the suffix table bought, against front coding alone.
+  let frontCodedOnly = 0;
+  for (const entry of planLexiconEntries(lexicon, [])) frontCodedOnly += entry.bytes;
+  const codesUsed = new Set<number>();
+  let entriesSuffixed = 0;
+  for (const entry of lexiconEntries) {
+    if (entry.suffix < 0) continue;
+    entriesSuffixed++;
+    codesUsed.add(entry.suffix);
+  }
 
   return {
     bytes,
     container,
-    stages: { rawTokens, tokens, terminalIds: ids, sequence, rules, escapeTable, suffixPlan: plan },
+    stages: { tokens, terminalIds: ids, sequence, rules, escapeTable, lexiconEntries },
     stats: {
       originalBytes,
-      rawTokenCount: rawTokens.length,
-      suffixes: plan.suffixes,
-      suffixCodesUsed: pinned.length,
-      splitOccurrences: plan.splitOccurrences,
-      wordsFolded: plan.wordsFolded,
-      lexiconBytesSaved: plan.lexiconBytesSaved,
+      suffixes,
+      suffixCodesUsed: codesUsed.size,
+      entriesSuffixed,
+      lexiconBytesSaved: frontCodedOnly - sizes.lexicon - sizes.suffixTable,
       tokenCount: tokens.length,
       distinctTerminals: lexicon.length,
       lexiconPlainBytes: plainLexiconBytes(lexicon),
@@ -1067,27 +1078,25 @@ export function sweepSingleByteCount(
   range: { from?: number; to?: number; step?: number } = {},
 ): { points: SweepPoint[]; ruleCount: number; sequenceLength: number; lexiconSize: number } {
   const cfg = { ...DEFAULT_CONFIG, ...config };
-  const plan = planSuffixes(tokenize(text), {
-    count: cfg.suffixCount,
-    maxSuffixLength: cfg.maxSuffixLength,
-    minStemLength: cfg.minStemLength,
-  });
-  const tokens = applySuffixes(tokenize(text), plan.mapping);
+  const tokens = tokenize(text);
   const { lexicon, ids } = buildLexicon(tokens);
   const { sequence, rules } = repair(ids, {
     minPairCount: cfg.minPairCount,
     maxPairs: cfg.maxPairs,
-    maxTokenId: maxTokenIdFor((range.from ?? 0) + cfg.suffixCount),
+    maxTokenId: maxTokenIdFor(range.from ?? 0),
     firstRuleId: lexicon.length,
   });
-  const pinned = pinSuffixCodes(sequence, lexicon, cfg.suffixCount);
-  return sweepFromGrammar(lexicon, sequence, rules, { ...range, pinned, reserved: cfg.suffixCount });
+  const suffixes = planLexiconSuffixes(lexicon, {
+    count: cfg.suffixCount,
+    maxSuffixLength: cfg.maxSuffixLength,
+  });
+  return sweepFromGrammar(lexicon, sequence, rules, { ...range, suffixes });
 }
 
 /**
  * The same sweep, reusing a grammar you already built (e.g. from encode()).
- * `pinned` holds ids whose codes are already spoken for — the suffix markers —
- * and `reserved` is the configured suffix budget that shrinks the id space.
+ * The lexicon and its suffix table are the same at every N, so they land in the
+ * fixed base that each point is measured on top of.
  */
 export function sweepFromGrammar(
   lexicon: string[],
@@ -1097,29 +1106,22 @@ export function sweepFromGrammar(
     from?: number;
     to?: number;
     step?: number;
-    pinned?: readonly number[];
-    reserved?: number;
+    suffixes?: string[];
   } = {},
 ): { points: SweepPoint[]; ruleCount: number; sequenceLength: number; lexiconSize: number } {
   const from = Math.max(0, options.from ?? 0);
   const step = options.step ?? 1;
-  const pinned = options.pinned ?? [];
-  const reserved = options.reserved ?? pinned.length;
-  const to = Math.min(255 - reserved, options.to ?? 255);
+  const to = Math.min(255, options.to ?? 255);
 
-  const pinnedSet = new Set(pinned);
   const counts = new Map<number, number>();
-  let pinnedOccurrences = 0;
-  for (const id of sequence) {
-    if (pinnedSet.has(id)) pinnedOccurrences++;
-    else counts.set(id, (counts.get(id) ?? 0) + 1);
-  }
+  for (const id of sequence) counts.set(id, (counts.get(id) ?? 0) + 1);
   const sorted = [...counts.values()].sort((a, b) => b - a);
   const prefix = new Float64Array(sorted.length + 1);
   for (let i = 0; i < sorted.length; i++) prefix[i + 1] = prefix[i] + sorted[i];
 
   const base = measure({
     threshold: 0,
+    suffixes: options.suffixes ?? [],
     lexicon,
     escapeTable: [],
     rules,
@@ -1129,16 +1131,15 @@ export function sweepFromGrammar(
 
   const points: SweepPoint[] = [];
   for (let n = from; n <= to; n += step) {
-    const picked = Math.min(n, sorted.length);
-    const threshold = pinned.length + picked;
-    const stream = 2 * sequence.length - pinnedOccurrences - prefix[picked];
+    const threshold = Math.min(n, sorted.length);
+    const stream = 2 * sequence.length - prefix[threshold];
     points.push({
       n,
       threshold,
       stream,
       escapeTable: threshold * 2,
       total: base + threshold * 2 + stream,
-      fits: highestId <= maxTokenIdFor(n + reserved),
+      fits: highestId <= maxTokenIdFor(n),
     });
   }
   return { points, ruleCount: rules.length, sequenceLength: sequence.length, lexiconSize: lexicon.length };

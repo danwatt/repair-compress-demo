@@ -5,8 +5,8 @@ import {
   detokenize,
   expandToWords,
   sweepSingleByteCount,
-  planSuffixes,
-  applySuffixes,
+  planLexiconSuffixes,
+  planLexiconEntries,
   tokenize as tok,
   describeToken,
   buildLexicon,
@@ -77,36 +77,68 @@ for (const n of [0, 1, 16, 85, 128, 200, 235]) {
   }
 }
 
-// Suffix budgets must not overflow the byte space.
+// Byte budgets must stay inside a byte.
 let threw = false;
 try {
-  encode(samples.genesis, { singleByteCount: 200, suffixCount: 100 });
+  encode(samples.genesis, { singleByteCount: 300 });
 } catch {
   threw = true;
 }
 check("rejects an impossible byte budget", threw);
 
-// The splitter should find the obvious morphology and stay lossless.
+// The suffix table should find the obvious morphology.
 const morph =
   "test tests tested testing walk walks walked walking talk talks talked talking " +
   "jump jumps jumped jumping work works worked working ".repeat(3);
-const plan = planSuffixes(tok(morph), { count: 20 });
-check("finds -ing / -ed / -s", ["ing", "ed", "s"].every((s) => plan.suffixes.includes(s)), plan.suffixes.join(","));
-check("suffix split round trips", detokenize(applySuffixes(tok(morph), plan.mapping)) === morph);
-check("marker renders readably", describeToken("\u0000ing") === "-ing");
+const morphLexicon = buildLexicon(tok(morph)).lexicon;
+const morphSuffixes = planLexiconSuffixes(morphLexicon, { count: 20 });
+check("finds -ing / -ed / -s", ["ing", "ed", "s"].every((s) => morphSuffixes.includes(s)), morphSuffixes.join(","));
+check("glue token renders readably", describeToken("") === "␀");
 
+// Suffix codes are a lexicon device. Turning the table on must not move a single
+// byte of the token stream — only what the lexicon costs to store.
 for (const [name, text] of Object.entries(samples)) {
   const withSuffix = encode(text, { suffixCount: 20 });
   const without = encode(text, { suffixCount: 0 });
   check(`suffix round trip: ${name}`, decode(withSuffix.bytes) === text);
+  check(
+    `suffix table leaves the stream alone: ${name}`,
+    withSuffix.stats.sizes.stream === without.stats.sizes.stream &&
+      withSuffix.stats.sequenceLength === without.stats.sequenceLength &&
+      withSuffix.stats.ruleCount === without.stats.ruleCount,
+    `${without.stats.sizes.stream} vs ${withSuffix.stats.sizes.stream}`,
+  );
+  check(
+    `suffix table never costs bytes: ${name}`,
+    withSuffix.stats.sizes.total <= without.stats.sizes.total,
+    `${without.stats.sizes.total} -> ${withSuffix.stats.sizes.total}`,
+  );
   if (text.length > 200) {
     console.log(
       `     ${name}: suffixes ${withSuffix.stats.suffixes.slice(0, 6).join(" ") || "none"} · ` +
-        `${withSuffix.stats.wordsFolded} words folded · ` +
+        `${withSuffix.stats.entriesSuffixed} entries coded · ` +
         `${without.stats.sizes.total} -> ${withSuffix.stats.sizes.total} bytes`,
     );
   }
 }
+
+// All three storage modes have to survive the round trip, including
+// literal-plus-code, where an ending is coded onto bytes that are spelled out.
+const modeSample = "testing tested tester zooming boomed loomed gnarling flying";
+const modeResult = encode(modeSample, { suffixCount: 8 });
+const modeEntries = planLexiconEntries(modeResult.container.lexicon, modeResult.container.suffixes);
+check(
+  "planLexiconEntries sizes match what serialize writes",
+  modeEntries.reduce((n, e) => n + e.bytes, 0) === modeResult.stats.sizes.lexicon,
+);
+check(
+  "every storage mode gets exercised",
+  modeEntries.some((e) => e.suffix < 0) &&
+    modeEntries.some((e) => e.suffix >= 0 && e.literal.length === 0) &&
+    modeEntries.some((e) => e.suffix >= 0 && e.literal.length > 0),
+  modeEntries.map((e) => `${e.shared}/${e.literal.length}/${e.suffix}`).join(" "),
+);
+check("mixed-mode round trip", decode(modeResult.bytes) === modeSample);
 
 // Front coding: the lexicon must be in UTF-8 byte order, since an id is a
 // position in that list and each entry is a delta against the one before it.
@@ -148,15 +180,15 @@ check(
   roundTrippedLexicon.length === sortedLexicon.length &&
     roundTrippedLexicon.every((w, i) => w === stemResult.container.lexicon[i]),
 );
-const v1 = Uint8Array.from(stemResult.bytes);
-v1[4] = 1;
+const older = Uint8Array.from(stemResult.bytes);
+older[4] = 2;
 let rejected = "";
 try {
-  deserialize(v1);
+  deserialize(older);
 } catch (e) {
   rejected = e instanceof CodecError ? e.message : "wrong error type";
 }
-check("rejects a version 1 container", rejected.includes("version 1"), rejected);
+check("rejects an older container", rejected.includes("re-encode"), rejected);
 check("plainLexiconBytes measures the old format", plainLexiconBytes(["ab", "cd"]) === 6);
 
 // A big synthetic corpus: repeated structure, the case Re-Pair is built for.

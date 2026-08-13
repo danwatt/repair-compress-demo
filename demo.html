@@ -179,9 +179,6 @@ td.num { text-align: right; font-variant-numeric: tabular-nums; }
 .cell.b1 { width: 8px; background: var(--dmg-4); }
 .cell.b2t { width: 18px; background: var(--dmg-3); }
 .cell.b2r { width: 18px; background: var(--dmg-2); }
-.cell.s1 { width: 8px; background: var(--hot); }
-.cell.s2 { width: 18px; background: var(--hot-soft); }
-.cell.carries { box-shadow: inset 0 -4px 0 var(--hot); }
 .readout {
   min-height: 44px; padding: 8px 10px; background: var(--panel);
   border: 1px solid var(--rule); border-radius: 2px; font-size: 12px; color: var(--ink-soft);
@@ -207,9 +204,9 @@ footer a { color: var(--hot); }
   <h1>Compression lab</h1>
   <p class="thesis">
     A generic rebuild of the text compression in the 1993 Game Boy KJV: tokenize into words, fold
-    frequent adjacent pairs into grammar rules, split common suffixes off their stems, front-code
-    the sorted word list, then reserve low byte values as one-byte codes for the hottest symbols.
-    The cartridge reserved 0x55 of them and roughly 20 more for suffixes. Paste text, move the
+    frequent adjacent pairs into grammar rules, store the sorted word list front-coded with a
+    suffix code for common endings, then reserve low byte values as one-byte codes for the hottest
+    symbols. The cartridge reserved 0x55 of those and had roughly 20 suffixes. Paste text, move the
     knobs, and watch every byte get counted — lexicon and tables included.
   </p>
 
@@ -241,10 +238,10 @@ footer a { color: var(--hot); }
         <div class="knob">
           <label for="suffix">Suffix codes — S</label>
           <div class="row">
-            <input type="range" id="suffix" min="0" max="64" value="20">
-            <input type="number" id="suffix-num" min="0" max="64" value="20">
+            <input type="range" id="suffix" min="0" max="255" value="20">
+            <input type="number" id="suffix-num" min="0" max="255" value="20">
           </div>
-          <p class="note">"test" + a suffix code instead of a second entry for "testing".</p>
+          <p class="note">Lexicon only: "testing" is stored as "share 4, then -ing". Costs N nothing.</p>
         </div>
         <div class="knob">
           <label for="minpair">Minimum pair occurrences</label>
@@ -296,14 +293,20 @@ footer a { color: var(--hot); }
       <span><i style="background:var(--dmg-4)"></i><b>1 byte</b> escape code</span>
       <span><i style="background:var(--dmg-3)"></i><b>2 bytes</b> single word</span>
       <span><i style="background:var(--dmg-2)"></i><b>2 bytes</b> grammar rule</span>
-      <span><i style="background:var(--hot)"></i><b>1 byte</b> suffix code</span>
-      <span><i style="background:var(--hot-soft)"></i><b>2 bytes</b> suffix marker</span>
-      <span><i style="background:var(--dmg-2);box-shadow:inset 0 -4px 0 var(--hot)"></i><b>underlined</b> rule carrying a suffix</span>
     </div>
   </section>
 
+  <section id="lexicon-section" hidden>
+    <div class="stage-label"><span class="num">06</span> <span>Lexicon storage</span>
+      <span class="hint" id="lexicon-hint"></span></div>
+    <div class="table-wrap">
+      <table id="lexicon-table"></table>
+    </div>
+    <p class="chart-note" id="lexicon-note"></p>
+  </section>
+
   <section id="longest-section" hidden>
-    <div class="stage-label"><span class="num">06</span> <span>Longest tokens</span>
+    <div class="stage-label"><span class="num">07</span> <span>Longest tokens</span>
       <span class="hint">top 20 grammar rules by words when fully expanded</span></div>
     <div class="table-wrap">
       <table id="longest-table"></table>
@@ -344,8 +347,6 @@ footer a { color: var(--hot); }
   __export(repair_codec_exports, {
     CodecError: () => CodecError,
     DEFAULT_CONFIG: () => DEFAULT_CONFIG,
-    SUFFIX_MARK: () => SUFFIX_MARK,
-    applySuffixes: () => applySuffixes,
     assignSingleBytes: () => assignSingleBytes,
     buildLexicon: () => buildLexicon,
     decode: () => decode,
@@ -358,16 +359,14 @@ footer a { color: var(--hot); }
     expand: () => expand,
     expandToWords: () => expandToWords,
     isSeparator: () => isSeparator,
-    isSuffixMarker: () => isSuffixMarker,
     maxTokenIdFor: () => maxTokenIdFor,
     measure: () => measure,
-    pinSuffixCodes: () => pinSuffixCodes,
     plainLexiconBytes: () => plainLexiconBytes,
-    planSuffixes: () => planSuffixes,
+    planLexiconEntries: () => planLexiconEntries,
+    planLexiconSuffixes: () => planLexiconSuffixes,
     readStream: () => readStream,
     repair: () => repair,
     serialize: () => serialize,
-    suffixOf: () => suffixOf,
     sweepFromGrammar: () => sweepFromGrammar,
     sweepSingleByteCount: () => sweepSingleByteCount,
     tokenize: () => tokenize
@@ -377,8 +376,7 @@ footer a { color: var(--hot); }
     suffixCount: 20,
     minPairCount: 3,
     maxPairs: 65535,
-    maxSuffixLength: 4,
-    minStemLength: 3
+    maxSuffixLength: 4
   };
   var CodecError = class extends Error {
   };
@@ -397,12 +395,8 @@ footer a { color: var(--hot); }
     return i;
   }
   var varintSize = (v) => v < 128 ? 1 : v < 16384 ? 2 : 3;
+  var utf8Length = (s) => ENCODER.encode(s).length;
   var EMPTY = new Uint8Array(0);
-  function frontCodedCost(previous, entry) {
-    const shared = sharedPrefix(previous, entry);
-    const rest = entry.length - shared;
-    return varintSize(shared) + varintSize(rest) + rest;
-  }
   var TOKEN_RE = /\s+|[\p{L}\p{N}]+(?:['\u2019][\p{L}\p{N}]+)*|[^\s\p{L}\p{N}]/gu;
   var ATTACHED_PUNCTUATION = /* @__PURE__ */ new Set([",", ".", ";", ":", "!", "?"]);
   var STRUCTURE_MARKERS = /* @__PURE__ */ new Set(["%", "$", "#", "@", "{", "}"]);
@@ -436,11 +430,7 @@ footer a { color: var(--hot); }
     let pendingSpace = false;
     let prevWasMarker = false;
     for (const token of tokens) {
-      if (isSuffixMarker(token)) {
-        out += token.slice(1);
-        pendingSpace = true;
-        prevWasMarker = false;
-      } else if (isSeparator(token)) {
+      if (isSeparator(token)) {
         out += token;
         pendingSpace = false;
         prevWasMarker = false;
@@ -453,105 +443,9 @@ footer a { color: var(--hot); }
     }
     return out;
   }
-  var SUFFIX_MARK = "\0";
-  function isSuffixMarker(token) {
-    return token.length > 1 && token.charCodeAt(0) === 0;
-  }
-  function suffixOf(token) {
-    return token.slice(1);
-  }
   function describeToken(token) {
-    if (isSuffixMarker(token)) return "-" + suffixOf(token);
     if (token === "") return "\u2400";
     return token.replace(/\n/g, "\u23CE").replace(/\t/g, "\u21E5");
-  }
-  var utf8Length = (s) => ENCODER.encode(s).length;
-  var markerCost = (suffix) => 2 + utf8Length(suffix);
-  function lexiconRemovalGains(words) {
-    const entries = [...words].map((word) => ({ word, bytes: ENCODER.encode(word) }));
-    entries.sort((a, b) => compareBytes(a.bytes, b.bytes));
-    const gains = /* @__PURE__ */ new Map();
-    for (let i = 0; i < entries.length; i++) {
-      const before = i > 0 ? entries[i - 1].bytes : EMPTY;
-      const own = frontCodedCost(before, entries[i].bytes);
-      const successor = entries[i + 1];
-      const penalty = successor ? frontCodedCost(before, successor.bytes) - frontCodedCost(entries[i].bytes, successor.bytes) : 0;
-      gains.set(entries[i].word, own - penalty);
-    }
-    return gains;
-  }
-  function planSuffixes(tokens, options) {
-    const empty = {
-      suffixes: [],
-      mapping: /* @__PURE__ */ new Map(),
-      splitOccurrences: 0,
-      wordsFolded: 0,
-      lexiconBytesSaved: 0
-    };
-    if (options.count <= 0) return empty;
-    const maxLen = options.maxSuffixLength ?? 4;
-    const minStem = options.minStemLength ?? 3;
-    const counts = /* @__PURE__ */ new Map();
-    for (const token of tokens) {
-      if (isSeparator(token)) continue;
-      counts.set(token, (counts.get(token) ?? 0) + 1);
-    }
-    const removalGains = lexiconRemovalGains(new Set(tokens));
-    const candidates = /* @__PURE__ */ new Map();
-    for (const [word, count] of counts) {
-      for (let len = 1; len <= maxLen; len++) {
-        if (word.length - len < minStem) break;
-        const stem = word.slice(0, word.length - len);
-        if (!counts.has(stem)) continue;
-        const suffix = word.slice(word.length - len);
-        const gain = (removalGains.get(word) ?? 0) - count;
-        if (gain <= 0) continue;
-        const list = candidates.get(suffix);
-        if (list) list.push({ word, stem, gain });
-        else candidates.set(suffix, [{ word, stem, gain }]);
-      }
-    }
-    const scored = [...candidates.entries()].map(([suffix, list]) => ({
-      suffix,
-      list,
-      score: list.reduce((sum, c) => sum + c.gain, 0) - markerCost(suffix) - 2
-    })).filter((s) => s.score > 0).sort((a, b) => b.score - a.score || a.suffix.length - b.suffix.length).slice(0, options.count);
-    const mapping = /* @__PURE__ */ new Map();
-    const bestLength = /* @__PURE__ */ new Map();
-    for (const { suffix, list } of scored) {
-      for (const { word, stem } of list) {
-        if ((bestLength.get(word) ?? 0) >= suffix.length) continue;
-        bestLength.set(word, suffix.length);
-        mapping.set(word, [stem, suffix]);
-      }
-    }
-    let splitOccurrences = 0;
-    let lexiconBytesSaved = 0;
-    for (const word of mapping.keys()) {
-      splitOccurrences += counts.get(word) ?? 0;
-      lexiconBytesSaved += removalGains.get(word) ?? 0;
-    }
-    for (const { suffix } of scored) lexiconBytesSaved -= markerCost(suffix);
-    return {
-      suffixes: scored.map((s) => s.suffix),
-      mapping,
-      splitOccurrences,
-      wordsFolded: mapping.size,
-      lexiconBytesSaved
-    };
-  }
-  function applySuffixes(tokens, mapping) {
-    if (mapping.size === 0) return tokens;
-    const out = [];
-    for (const token of tokens) {
-      const split = mapping.get(token);
-      if (split && !isSeparator(token)) {
-        out.push(split[0], SUFFIX_MARK + split[1]);
-      } else {
-        out.push(token);
-      }
-    }
-    return out;
   }
   function buildLexicon(tokens) {
     const entries = [...new Set(tokens)].map((word) => ({ word, bytes: ENCODER.encode(word) }));
@@ -694,16 +588,6 @@ footer a { color: var(--hot); }
     }
     return [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0] - b[0]).slice(0, singleByteCount).map(([id]) => id);
   }
-  function pinSuffixCodes(sequence, lexicon, suffixCount) {
-    if (suffixCount <= 0) return [];
-    const counts = /* @__PURE__ */ new Map();
-    for (const id of sequence) {
-      if (id < lexicon.length && isSuffixMarker(lexicon[id])) {
-        counts.set(id, (counts.get(id) ?? 0) + 1);
-      }
-    }
-    return [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0] - b[0]).slice(0, suffixCount).map(([id]) => id);
-  }
   function emitStream(sequence, escapeTable, threshold) {
     const escapeIndex = /* @__PURE__ */ new Map();
     escapeTable.forEach((id, i) => escapeIndex.set(id, i));
@@ -773,9 +657,106 @@ footer a { color: var(--hot); }
     const { terminals } = expand([token], container.rules, container.lexicon.length);
     return terminals.map((t) => container.lexicon[t]);
   }
+  var MODE_LITERAL = 0;
+  var MODE_SUFFIX = 1;
+  var MODE_BOTH = 2;
+  function endsWith(haystack, needle) {
+    if (needle.length === 0 || needle.length > haystack.length) return false;
+    const offset = haystack.length - needle.length;
+    for (let i = 0; i < needle.length; i++) {
+      if (haystack[offset + i] !== needle[i]) return false;
+    }
+    return true;
+  }
+  var suffixTableCost = (suffix) => {
+    const n = utf8Length(suffix);
+    return varintSize(n) + n;
+  };
+  function planLexiconEntries(lexicon, suffixes) {
+    const table = suffixes.map((s) => ENCODER.encode(s));
+    const entries = [];
+    let previous = EMPTY;
+    for (const word of lexicon) {
+      const bytes = ENCODER.encode(word);
+      const shared = sharedPrefix(previous, bytes);
+      const rest = bytes.subarray(shared);
+      const sharedSize = varintSize(shared);
+      let suffix = -1;
+      let literal = rest.length;
+      let size = sharedSize + varintSize(rest.length << 2 | MODE_LITERAL) + rest.length;
+      for (let code = 0; code < table.length; code++) {
+        if (!endsWith(rest, table[code])) continue;
+        const remainder = rest.length - table[code].length;
+        const candidate = remainder === 0 ? sharedSize + varintSize(code << 2 | MODE_SUFFIX) : sharedSize + varintSize(remainder << 2 | MODE_BOTH) + remainder + 1;
+        if (candidate < size) {
+          size = candidate;
+          suffix = code;
+          literal = remainder;
+        }
+      }
+      entries.push({ shared, literal: rest.subarray(0, literal), suffix, bytes: size });
+      previous = bytes;
+    }
+    return entries;
+  }
+  function planLexiconSuffixes(lexicon, options) {
+    if (options.count <= 0 || lexicon.length === 0) return [];
+    const maxChars = options.maxSuffixLength ?? 4;
+    const decoder = new TextDecoder();
+    const codeTagSize = varintSize(options.count - 1 << 2 | MODE_SUFFIX);
+    const matches = [];
+    const totals = /* @__PURE__ */ new Map();
+    let previous = EMPTY;
+    for (const word of lexicon) {
+      const bytes = ENCODER.encode(word);
+      const rest = bytes.subarray(sharedPrefix(previous, bytes));
+      previous = bytes;
+      const literalCost = varintSize(rest.length << 2 | MODE_LITERAL) + rest.length;
+      const list = [];
+      let chars = 0;
+      for (let start = rest.length - 1; start >= 0 && chars < maxChars; start--) {
+        if ((rest[start] & 192) === 128) continue;
+        chars++;
+        const remainder = start;
+        const coded = remainder === 0 ? codeTagSize : varintSize(remainder << 2 | MODE_BOTH) + remainder + 1;
+        const saving = literalCost - coded;
+        if (saving <= 0) continue;
+        const suffix = decoder.decode(rest.subarray(start));
+        list.push({ suffix, saving });
+        totals.set(suffix, (totals.get(suffix) ?? 0) + saving);
+      }
+      matches.push(list);
+    }
+    const chosen = [];
+    const spokenFor = new Uint8Array(lexicon.length);
+    for (let round = 0; round < options.count; round++) {
+      let best = "";
+      let bestScore = 0;
+      for (const [suffix, total] of totals) {
+        const score = total - suffixTableCost(suffix);
+        if (score < bestScore) continue;
+        if (score > bestScore || best === "" || suffix.length > best.length || suffix.length === best.length && suffix < best) {
+          bestScore = score;
+          best = suffix;
+        }
+      }
+      if (best === "" || bestScore <= 0) break;
+      chosen.push(best);
+      totals.delete(best);
+      for (let i = 0; i < matches.length; i++) {
+        if (spokenFor[i] || !matches[i].some((m) => m.suffix === best)) continue;
+        spokenFor[i] = 1;
+        for (const m of matches[i]) {
+          const remaining = totals.get(m.suffix);
+          if (remaining !== void 0) totals.set(m.suffix, remaining - m.saving);
+        }
+      }
+    }
+    return chosen;
+  }
   var MAGIC = [82, 80, 82, 49];
-  var FORMAT_VERSION = 2;
-  var HEADER_BYTES = 14;
+  var FORMAT_VERSION = 3;
+  var HEADER_BYTES = 15;
   var ByteWriter = class {
     constructor() {
       __publicField(this, "bytes", []);
@@ -845,24 +826,23 @@ footer a { color: var(--hot); }
     }
     return total;
   }
-  function measure(container) {
+  function measure(container, entries) {
+    const planned = entries ?? planLexiconEntries(container.lexicon, container.suffixes);
     let lexicon = 0;
-    let previous = EMPTY;
-    for (const word of container.lexicon) {
-      const bytes = ENCODER.encode(word);
-      lexicon += frontCodedCost(previous, bytes);
-      previous = bytes;
-    }
+    for (const entry of planned) lexicon += entry.bytes;
+    let suffixTable = 0;
+    for (const suffix of container.suffixes) suffixTable += suffixTableCost(suffix);
     const escapeTable = container.escapeTable.length * 2;
     const rules = container.rules.length * 4;
     const stream = container.stream.length;
     return {
       header: HEADER_BYTES,
+      suffixTable,
       lexicon,
       escapeTable,
       rules,
       stream,
-      total: HEADER_BYTES + lexicon + escapeTable + rules + stream
+      total: HEADER_BYTES + suffixTable + lexicon + escapeTable + rules + stream
     };
   }
   function serialize(container) {
@@ -873,14 +853,25 @@ footer a { color: var(--hot); }
     w.u16(container.lexicon.length);
     w.u16(container.rules.length);
     w.u32(container.stream.length);
-    let previous = EMPTY;
-    for (const word of container.lexicon) {
-      const bytes = ENCODER.encode(word);
-      const shared = sharedPrefix(previous, bytes);
-      w.varint(shared);
-      w.varint(bytes.length - shared);
-      w.raw(bytes.subarray(shared));
-      previous = bytes;
+    if (container.suffixes.length > 255) throw new CodecError("the suffix table holds at most 255 codes");
+    w.u8(container.suffixes.length);
+    for (const suffix of container.suffixes) {
+      const bytes = ENCODER.encode(suffix);
+      w.varint(bytes.length);
+      w.raw(bytes);
+    }
+    for (const entry of planLexiconEntries(container.lexicon, container.suffixes)) {
+      w.varint(entry.shared);
+      if (entry.suffix >= 0 && entry.literal.length === 0) {
+        w.varint(entry.suffix << 2 | MODE_SUFFIX);
+      } else if (entry.suffix >= 0) {
+        w.varint(entry.literal.length << 2 | MODE_BOTH);
+        w.raw(entry.literal);
+        w.u8(entry.suffix);
+      } else {
+        w.varint(entry.literal.length << 2 | MODE_LITERAL);
+        w.raw(entry.literal);
+      }
     }
     for (const id of container.escapeTable) w.u16(id);
     for (const [left, right] of container.rules) {
@@ -898,7 +889,7 @@ footer a { color: var(--hot); }
     const version = r.u8();
     if (version !== FORMAT_VERSION) {
       throw new CodecError(
-        version === 1 ? "version 1 containers stored the lexicon uncompressed; re-encode to read them" : `unsupported version ${version}`
+        version < FORMAT_VERSION ? `version ${version} stored the lexicon differently; re-encode to read it` : `unsupported version ${version}`
       );
     }
     const threshold = r.u8();
@@ -906,17 +897,43 @@ footer a { color: var(--hot); }
     const ruleCount = r.u16();
     const streamLength = r.u32();
     const decoder = new TextDecoder();
+    const suffixCount = r.u8();
+    const suffixBytes = [];
+    const suffixes = [];
+    for (let i = 0; i < suffixCount; i++) {
+      const bytes2 = r.raw(r.varint());
+      suffixBytes.push(bytes2);
+      suffixes.push(decoder.decode(bytes2));
+    }
     const lexicon = [];
     let previous = EMPTY;
     for (let i = 0; i < lexiconSize; i++) {
       const shared = r.varint();
-      const rest = r.varint();
       if (shared > previous.length) {
         throw new CodecError(`lexicon entry ${i} shares ${shared} bytes with a ${previous.length}-byte entry`);
       }
-      const bytes2 = new Uint8Array(shared + rest);
+      const tag = r.varint();
+      const mode = tag & 3;
+      const n = tag >>> 2;
+      let literal = EMPTY;
+      let suffix = EMPTY;
+      if (mode === MODE_LITERAL) {
+        literal = r.raw(n);
+      } else if (mode === MODE_SUFFIX) {
+        if (n >= suffixBytes.length) throw new CodecError(`lexicon entry ${i} uses undefined suffix code ${n}`);
+        suffix = suffixBytes[n];
+      } else if (mode === MODE_BOTH) {
+        literal = r.raw(n);
+        const code = r.u8();
+        if (code >= suffixBytes.length) throw new CodecError(`lexicon entry ${i} uses undefined suffix code ${code}`);
+        suffix = suffixBytes[code];
+      } else {
+        throw new CodecError(`lexicon entry ${i} has an unknown storage mode`);
+      }
+      const bytes2 = new Uint8Array(shared + literal.length + suffix.length);
       bytes2.set(previous.subarray(0, shared));
-      bytes2.set(r.raw(rest), shared);
+      bytes2.set(literal, shared);
+      bytes2.set(suffix, shared + literal.length);
       lexicon.push(decoder.decode(bytes2));
       previous = bytes2;
     }
@@ -924,7 +941,7 @@ footer a { color: var(--hot); }
     for (let i = 0; i < threshold; i++) escapeTable.push(r.u16());
     const rules = [];
     for (let i = 0; i < ruleCount; i++) rules.push([r.u16(), r.u16()]);
-    return { threshold, lexicon, escapeTable, rules, stream: r.raw(streamLength) };
+    return { threshold, suffixes, lexicon, escapeTable, rules, stream: r.raw(streamLength) };
   }
   function maxTokenIdFor(threshold) {
     return (256 - threshold) * 256 - 1;
@@ -934,24 +951,18 @@ footer a { color: var(--hot); }
     if (cfg.singleByteCount < 0 || cfg.suffixCount < 0) {
       throw new CodecError("byte budgets cannot be negative");
     }
-    const reserved = cfg.singleByteCount + cfg.suffixCount;
-    if (reserved > 255) {
-      throw new CodecError(
-        `single-byte codes (${cfg.singleByteCount}) plus suffix codes (${cfg.suffixCount}) must leave room for two-byte tokens`
-      );
+    if (cfg.singleByteCount > 255) {
+      throw new CodecError(`${cfg.singleByteCount} single-byte codes leaves no room for two-byte tokens`);
     }
-    const rawTokens = tokenize(text);
-    const plan = planSuffixes(rawTokens, {
-      count: cfg.suffixCount,
-      maxSuffixLength: cfg.maxSuffixLength,
-      minStemLength: cfg.minStemLength
-    });
-    const tokens = applySuffixes(rawTokens, plan.mapping);
+    if (cfg.suffixCount > 255) {
+      throw new CodecError("the suffix table holds at most 255 codes");
+    }
+    const tokens = tokenize(text);
     const { lexicon, ids } = buildLexicon(tokens);
-    const ceiling = maxTokenIdFor(reserved);
+    const ceiling = maxTokenIdFor(cfg.singleByteCount);
     if (lexicon.length > ceiling + 1) {
       throw new CodecError(
-        `${lexicon.length} distinct tokens exceeds the ${ceiling + 1} addressable ids with ${reserved} reserved byte codes`
+        `${lexicon.length} distinct tokens exceeds the ${ceiling + 1} addressable ids with ${cfg.singleByteCount} reserved byte codes`
       );
     }
     const { sequence, rules } = repair(ids, {
@@ -960,30 +971,38 @@ footer a { color: var(--hot); }
       maxTokenId: ceiling,
       firstRuleId: lexicon.length
     });
-    const pinned = pinSuffixCodes(sequence, lexicon, cfg.suffixCount);
-    const escapeTable = [
-      ...pinned,
-      ...assignSingleBytes(sequence, cfg.singleByteCount, new Set(pinned))
-    ];
+    const escapeTable = assignSingleBytes(sequence, cfg.singleByteCount);
     const threshold = escapeTable.length;
     const { stream, singleByteTokens, twoByteTokens } = emitStream(sequence, escapeTable, threshold);
-    const container = { threshold, lexicon, escapeTable, rules, stream };
+    const suffixes = planLexiconSuffixes(lexicon, {
+      count: cfg.suffixCount,
+      maxSuffixLength: cfg.maxSuffixLength
+    });
+    const container = { threshold, suffixes, lexicon, escapeTable, rules, stream };
+    const lexiconEntries = planLexiconEntries(lexicon, suffixes);
     const bytes = serialize(container);
-    const sizes = measure(container);
+    const sizes = measure(container, lexiconEntries);
     const originalBytes = ENCODER.encode(text).length;
     const { maxDepth, maxWidth } = expand(sequence, rules, lexicon.length);
+    let frontCodedOnly = 0;
+    for (const entry of planLexiconEntries(lexicon, [])) frontCodedOnly += entry.bytes;
+    const codesUsed = /* @__PURE__ */ new Set();
+    let entriesSuffixed = 0;
+    for (const entry of lexiconEntries) {
+      if (entry.suffix < 0) continue;
+      entriesSuffixed++;
+      codesUsed.add(entry.suffix);
+    }
     return {
       bytes,
       container,
-      stages: { rawTokens, tokens, terminalIds: ids, sequence, rules, escapeTable, suffixPlan: plan },
+      stages: { tokens, terminalIds: ids, sequence, rules, escapeTable, lexiconEntries },
       stats: {
         originalBytes,
-        rawTokenCount: rawTokens.length,
-        suffixes: plan.suffixes,
-        suffixCodesUsed: pinned.length,
-        splitOccurrences: plan.splitOccurrences,
-        wordsFolded: plan.wordsFolded,
-        lexiconBytesSaved: plan.lexiconBytesSaved,
+        suffixes,
+        suffixCodesUsed: codesUsed.size,
+        entriesSuffixed,
+        lexiconBytesSaved: frontCodedOnly - sizes.lexicon - sizes.suffixTable,
         tokenCount: tokens.length,
         distinctTerminals: lexicon.length,
         lexiconPlainBytes: plainLexiconBytes(lexicon),
@@ -1014,40 +1033,32 @@ footer a { color: var(--hot); }
   }
   function sweepSingleByteCount(text, config = {}, range = {}) {
     const cfg = { ...DEFAULT_CONFIG, ...config };
-    const plan = planSuffixes(tokenize(text), {
-      count: cfg.suffixCount,
-      maxSuffixLength: cfg.maxSuffixLength,
-      minStemLength: cfg.minStemLength
-    });
-    const tokens = applySuffixes(tokenize(text), plan.mapping);
+    const tokens = tokenize(text);
     const { lexicon, ids } = buildLexicon(tokens);
     const { sequence, rules } = repair(ids, {
       minPairCount: cfg.minPairCount,
       maxPairs: cfg.maxPairs,
-      maxTokenId: maxTokenIdFor((range.from ?? 0) + cfg.suffixCount),
+      maxTokenId: maxTokenIdFor(range.from ?? 0),
       firstRuleId: lexicon.length
     });
-    const pinned = pinSuffixCodes(sequence, lexicon, cfg.suffixCount);
-    return sweepFromGrammar(lexicon, sequence, rules, { ...range, pinned, reserved: cfg.suffixCount });
+    const suffixes = planLexiconSuffixes(lexicon, {
+      count: cfg.suffixCount,
+      maxSuffixLength: cfg.maxSuffixLength
+    });
+    return sweepFromGrammar(lexicon, sequence, rules, { ...range, suffixes });
   }
   function sweepFromGrammar(lexicon, sequence, rules, options = {}) {
     const from = Math.max(0, options.from ?? 0);
     const step = options.step ?? 1;
-    const pinned = options.pinned ?? [];
-    const reserved = options.reserved ?? pinned.length;
-    const to = Math.min(255 - reserved, options.to ?? 255);
-    const pinnedSet = new Set(pinned);
+    const to = Math.min(255, options.to ?? 255);
     const counts = /* @__PURE__ */ new Map();
-    let pinnedOccurrences = 0;
-    for (const id of sequence) {
-      if (pinnedSet.has(id)) pinnedOccurrences++;
-      else counts.set(id, (counts.get(id) ?? 0) + 1);
-    }
+    for (const id of sequence) counts.set(id, (counts.get(id) ?? 0) + 1);
     const sorted = [...counts.values()].sort((a, b) => b - a);
     const prefix = new Float64Array(sorted.length + 1);
     for (let i = 0; i < sorted.length; i++) prefix[i + 1] = prefix[i] + sorted[i];
     const base = measure({
       threshold: 0,
+      suffixes: options.suffixes ?? [],
       lexicon,
       escapeTable: [],
       rules,
@@ -1056,16 +1067,15 @@ footer a { color: var(--hot); }
     const highestId = lexicon.length + rules.length - 1;
     const points = [];
     for (let n = from; n <= to; n += step) {
-      const picked = Math.min(n, sorted.length);
-      const threshold = pinned.length + picked;
-      const stream = 2 * sequence.length - pinnedOccurrences - prefix[picked];
+      const threshold = Math.min(n, sorted.length);
+      const stream = 2 * sequence.length - prefix[threshold];
       points.push({
         n,
         threshold,
         stream,
         escapeTable: threshold * 2,
         total: base + threshold * 2 + stream,
-        fits: highestId <= maxTokenIdFor(n + reserved)
+        fits: highestId <= maxTokenIdFor(n)
       });
     }
     return { points, ruleCount: rules.length, sequenceLength: sequence.length, lexiconSize: lexicon.length };
@@ -1076,7 +1086,7 @@ footer a { color: var(--hot); }
 <script>
 (function () {
   const {
-    encode, decode, expandToWords, sweepFromGrammar, maxTokenIdFor, describeToken, isSuffixMarker,
+    encode, decode, expandToWords, sweepFromGrammar, maxTokenIdFor, describeToken, planLexiconEntries,
   } = window.RePair;
 
   const $ = (id) => document.getElementById(id);
@@ -1109,10 +1119,11 @@ And God said, Let there be lights in the firmament of the heaven to divide the d
   }
 
   function budget() {
-    const suffix = syncPair("suffix", "suffix-num", $("suffix").value, 64);
-    const n = syncPair("n", "n-num", $("n").value, 255 - suffix);
-    $("n").max = 255 - suffix;
-    return { n, suffix };
+    // Suffix codes live in the lexicon, so they cost N nothing.
+    return {
+      suffix: syncPair("suffix", "suffix-num", $("suffix").value, 255),
+      n: syncPair("n", "n-num", $("n").value, 255),
+    };
   }
 
   function updateInputSize() {
@@ -1172,6 +1183,7 @@ And God said, Let there be lights in the firmament of the heaven to divide the d
 
     const parts = [
       { key: "lexicon", label: "Lexicon", color: "var(--dmg-4)", bytes: z.lexicon },
+      { key: "suffixTable", label: "Suffix table", color: "var(--hot-soft)", bytes: z.suffixTable },
       { key: "rules", label: "Rules", color: "var(--dmg-3)", bytes: z.rules },
       { key: "escapeTable", label: "Escape table", color: "var(--dmg-2)", bytes: z.escapeTable },
       { key: "stream", label: "Stream", color: "var(--hot)", bytes: z.stream },
@@ -1196,17 +1208,22 @@ And God said, Let there be lights in the firmament of the heaven to divide the d
       <div class="legend">
         ${parts.map((p) => `<span><i style="background:${p.color}"></i><b>${p.label}</b> ${fmt(p.bytes)} B</span>`).join("")}
       </div>
-      ${s.suffixCodesUsed > 0
-        ? `<p class="chart-note">Suffix codes in use: ${s.suffixes.slice(0, s.suffixCodesUsed).map((x) => "<b>-" + escapeHtml(x) + "</b>").join(" ")} — folding ${fmt(s.wordsFolded)} words into stems and reclaiming ${fmt(s.lexiconBytesSaved)} lexicon bytes, at ${fmt(s.splitOccurrences)} marker bytes in the stream.</p>`
-        : (latestConfig && latestConfig.suffixCount > 0
-          ? `<p class="chart-note">No suffix paid for itself here. A split saves one lexicon entry but costs a byte per occurrence, so it needs a long tail of vocabulary to win.</p>`
-          : "")}
       <p class="chart-note">The lexicon is sorted and front-coded — each entry stores only what it does
         not share with the one before it, so a run like <b>beget</b> / <b>begets</b> / <b>begetting</b>
         pays for its stem once. ${s.lexiconPlainBytes > 0
           ? `Written out in full it would be ${fmt(s.lexiconPlainBytes)} bytes; here it is ${fmt(z.lexicon)}
              (${pct(z.lexicon / s.lexiconPlainBytes)}).`
           : ""}</p>
+      ${s.suffixCodesUsed > 0
+        ? `<p class="chart-note">${fmt(s.suffixCodesUsed)} suffix code${s.suffixCodesUsed === 1 ? "" : "s"} earn their keep:
+           ${s.suffixes.slice(0, 12).map((x) => "<b>-" + escapeHtml(x) + "</b>").join(" ")}${s.suffixes.length > 12 ? " …" : ""} —
+           spelling the ending of ${fmt(s.entriesSuffixed)} of ${fmt(s.distinctTerminals)} entries with a code instead of letters,
+           worth ${fmt(s.lexiconBytesSaved)} bytes after the ${fmt(z.suffixTable)}-byte table. <b>The stream is untouched:</b>
+           "testing" is still one id, it is just cheaper to store.</p>`
+        : (latestConfig && latestConfig.suffixCount > 0
+          ? `<p class="chart-note">No ending repeated often enough to earn a code. Front coding had already taken the shared
+             prefixes, and what is left over here is too varied to be worth a table.</p>`
+          : "")}
       ${z.lexicon > z.total * 0.35 ? `<p class="chart-note">The lexicon is ${pct(z.lexicon / z.total)} of the output here. On the cartridge one lexicon covered the whole Bible, so paste more text to see the tables amortize.</p>` : ""}
       <div class="grid" style="margin-top:22px">
         <div class="stat-grid">
@@ -1231,7 +1248,57 @@ And God said, Let there be lights in the firmament of the heaven to divide the d
     drawSweep(result);
     drawEscapeTable(result);
     drawStrip(result);
+    drawLexicon(result);
     drawLongestTokens(result);
+  }
+
+  // How the word list is actually written: a shared prefix count, whatever bytes
+  // the entry adds, and an optional code for the ending.
+  function drawLexicon(result) {
+    const lexicon = result.container.lexicon;
+    const suffixes = result.container.suffixes;
+    if (lexicon.length === 0) { $("lexicon-section").hidden = true; return; }
+    $("lexicon-section").hidden = false;
+
+    const entries = planLexiconEntries(lexicon, suffixes);
+    const decoder = new TextDecoder();
+    // Start where the sharing does: the first stretch of a sorted list is dull.
+    let from = 0;
+    let bestRun = -1;
+    for (let i = 0; i + 24 < entries.length; i++) {
+      let run = 0;
+      for (let j = i; j < i + 24; j++) run += entries[j].shared + (entries[j].suffix >= 0 ? 3 : 0);
+      if (run > bestRun) { bestRun = run; from = i; }
+    }
+    const shown = entries.slice(from, from + 24);
+
+    const rows = shown.map((entry, i) => {
+      const word = lexicon[from + i];
+      const literal = decoder.decode(entry.literal);
+      const ending = entry.suffix >= 0 ? suffixes[entry.suffix] : "";
+      return `<tr>
+        <td>${fmt(from + i)}</td>
+        <td class="words">${escapeHtml(describeToken(word))}</td>
+        <td class="num">${entry.shared}</td>
+        <td class="words">${literal === "" ? "—" : escapeHtml(describeToken(literal))}</td>
+        <td class="words">${ending === "" ? "—" : `<span class="tag suffix">-${escapeHtml(ending)}</span>`}</td>
+        <td class="num">${entry.bytes}</td>
+      </tr>`;
+    });
+
+    $("lexicon-table").innerHTML = `
+      <thead><tr>
+        <th>Id</th><th>Word</th><th class="num">Shares</th><th>Adds</th><th>Ending</th>
+        <th class="num">Bytes</th>
+      </tr></thead>
+      <tbody>${rows.join("")}</tbody>`;
+
+    $("lexicon-hint").textContent = `ids ${fmt(from)}–${fmt(from + shown.length - 1)} of ${fmt(lexicon.length)}`;
+    $("lexicon-note").innerHTML =
+      `Every entry is written against the one above it: <b>shares</b> bytes taken from that word, then the ` +
+      `bytes it <b>adds</b>, then an <b>ending</b> from the suffix table if one fits. An ending costs nothing ` +
+      `beyond the length byte it replaces, which is why "-ing" words collapse to two bytes. Ids are positions ` +
+      `in this list, so the stream still addresses every word here individually.`;
   }
 
   function drawSweep(result) {
@@ -1239,10 +1306,7 @@ And God said, Let there be lights in the firmament of the heaven to divide the d
       result.container.lexicon,
       result.stages.sequence,
       result.stages.rules,
-      {
-        pinned: result.container.escapeTable.slice(0, result.stats.suffixCodesUsed),
-        reserved: latestConfig ? latestConfig.suffixCount : result.stats.suffixCodesUsed,
-      },
+      { suffixes: result.container.suffixes },
     );
     const usable = points.filter((p) => p.fits);
     if (usable.length < 2) { $("sweep-section").hidden = true; return; }
@@ -1256,7 +1320,7 @@ And God said, Let there be lights in the firmament of the heaven to divide the d
     const y = (v) => padT + (1 - (v - min) / span) * (H - padT - padB);
 
     const best = usable.reduce((a, b) => (b.total < a.total ? b : a));
-    const nNow = result.stats.threshold - result.stats.suffixCodesUsed;
+    const nNow = result.stats.threshold;
     const current = points.find((p) => p.n === nNow) || points[0];
     const cartridge = points.find((p) => p.n === 0x55);
 
@@ -1303,16 +1367,14 @@ And God said, Let there be lights in the firmament of the heaven to divide the d
 
     const lexicon = result.container.lexicon;
     const lexSize = lexicon.length;
-    const suffixCodes = result.stats.suffixCodesUsed;
     const uses = new Map();
     for (const id of result.stages.sequence) uses.set(id, (uses.get(id) ?? 0) + 1);
 
     const hex = (v, width) => "0x" + v.toString(16).toUpperCase().padStart(width, "0");
     const rows = table.map((id, code) => {
       const words = expandToWords(id, result.container).map(describeToken);
-      const isSuffix = code < suffixCodes;
-      const kind = isSuffix ? "suffix" : id < lexSize ? "word" : "rule";
-      const label = isSuffix ? "suffix" : id < lexSize ? "word" : words.length + " words";
+      const kind = id < lexSize ? "word" : "rule";
+      const label = id < lexSize ? "word" : words.length + " words";
       const count = uses.get(id) ?? 0;
       let text = words.join(" ");
       if (text.length > 90) text = text.slice(0, 88) + "…";
@@ -1354,33 +1416,11 @@ And God said, Let there be lights in the firmament of the heaven to divide the d
     const rules = result.stages.rules;
     const escapes = new Set(result.container.escapeTable);
 
-    // Does this symbol expand to anything with a suffix marker in it?
-    const carries = new Map();
-    const carriesSuffix = (id) => {
-      const seen = carries.get(id);
-      if (seen !== undefined) return seen;
-      let answer;
-      if (id < lexSize) {
-        answer = isSuffixMarker(lexicon[id]);
-      } else {
-        carries.set(id, false); // guard, the grammar is acyclic anyway
-        const rule = rules[id - lexSize];
-        answer = carriesSuffix(rule[0]) || carriesSuffix(rule[1]);
-      }
-      carries.set(id, answer);
-      return answer;
-    };
-
     stripState = { seq, lexSize, escapes, container: result.container };
     $("stream-section").hidden = false;
     $("strip").innerHTML = seq
       .map((id, i) => {
-        const oneByte = escapes.has(id);
-        const marker = id < lexSize && isSuffixMarker(lexicon[id]);
-        let cls;
-        if (marker) cls = oneByte ? "s1" : "s2";
-        else cls = oneByte ? "b1" : id < lexSize ? "b2t" : "b2r";
-        if (!marker && carriesSuffix(id)) cls += " carries";
+        const cls = escapes.has(id) ? "b1" : id < lexSize ? "b2t" : "b2r";
         return `<div class="cell ${cls}" data-i="${i}" tabindex="0"></div>`;
       })
       .join("");
@@ -1457,10 +1497,7 @@ And God said, Let there be lights in the firmament of the heaven to divide the d
     const { seq, lexSize, escapes, container } = stripState;
     const id = seq[i];
     const words = expandToWords(id, container);
-    const marker = id < lexSize && isSuffixMarker(container.lexicon[id]);
-    const kind = marker
-      ? (escapes.has(id) ? "1-byte suffix code" : "2-byte suffix marker")
-      : escapes.has(id) ? "1-byte escape" : id < lexSize ? "2-byte word" : "2-byte rule";
+    const kind = escapes.has(id) ? "1-byte escape" : id < lexSize ? "2-byte word" : "2-byte rule";
     $("readout").innerHTML =
       `<b>#${i} · id ${id} · ${kind} · ${words.length} word${words.length === 1 ? "" : "s"}</b><br>` +
       escapeHtml(words.map(describeToken).join(" · "));

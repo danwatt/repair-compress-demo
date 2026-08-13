@@ -22,15 +22,14 @@ Each stage is a pure exported function, so you can stop anywhere and look at the
 
 ```
 encode(text)
-  tokenize          text        -> string[]        words, punctuation, separators
-  planSuffixes      string[]    -> suffix plan     which suffixes earn a byte code
-  applySuffixes     string[]    -> string[]        "testing" -> "test" + -ing marker
-  buildLexicon      string[]    -> lexicon, ids    terminals in UTF-8 byte order
-  repair            ids         -> sequence, rules fold frequent adjacent pairs
-  pinSuffixCodes    sequence    -> pinned ids      suffix markers claim their codes
-  assignSingleBytes sequence    -> escapeTable     top-N remaining symbols get one
-  emitStream        sequence    -> Uint8Array      1 byte if < N, else 2
-  serialize         container   -> Uint8Array      header + front-coded lexicon + tables + stream
+  tokenize            text      -> string[]        words, punctuation, separators
+  buildLexicon        string[]  -> lexicon, ids    terminals in UTF-8 byte order
+  repair              ids       -> sequence, rules fold frequent adjacent pairs
+  assignSingleBytes   sequence  -> escapeTable     top-N symbols get a one-byte code
+  emitStream          sequence  -> Uint8Array      1 byte if < N, else 2
+  planLexiconSuffixes lexicon   -> suffix table    endings worth a code of their own
+  planLexiconEntries  lexicon   -> per-entry plan  shared prefix + literal + ending
+  serialize           container -> Uint8Array      header + tables + lexicon + stream
 
 decode(bytes)
   deserialize -> readStream -> expand -> detokenize
@@ -50,47 +49,49 @@ Points where the grammar would no longer fit the shrinking id space come back wi
 
 ## Suffixes
 
-`suffixCount` (S) reserves byte codes for suffix markers, as the cartridge did with roughly 20 of
-them: "testing" is stored as the token for "test" followed by an -ing code, so the lexicon carries
-one entry instead of two.
+`suffixCount` (S) sizes the lexicon's suffix table. This is a storage device for the word list and
+nothing else — it never touches the token stream. "testing" keeps its own id; it is simply written
+as *share four bytes with the previous entry, then apply the -ing code* instead of spelling out
+`ing`. Turn S up and the stream, the grammar and every id stay byte-for-byte identical; only the
+lexicon shrinks.
 
-Candidate suffixes are found in the text rather than hardcoded, scored by what they actually save,
-and taken only when the arithmetic works: dropping a word's lexicon entry saves whatever front
-coding was charging for it, while the marker costs one byte at every occurrence. So splitting rare
-long words wins and splitting common ones loses — the feature works on the tail of the vocabulary,
-not the head. The stem must already exist as a standalone token, so this never invents words a
-concatenating decoder could not produce.
+Each entry is written as `varint shared · varint tag · [literal bytes] · [code byte]`, where the low
+two bits of the tag pick how the ending is spelled:
 
-Front coding and suffix splitting attack the same redundancy, so the scoring has to account for it.
-`lexiconRemovalGains` charges each entry what it costs *in place*: "begetting" sits right next to
-"beget" in sorted order and already shares five bytes with it, so folding it away frees far less
-than its length suggests, and the estimate subtracts what the following entry loses when its
-neighbour disappears. With the old flat cost model the planner over-valued every split and took
-roughly 40% more of them than paid off.
+```
+mode 0  literal       tag = length << 2       "begat"      share 0, add "begat"
+mode 1  code only     tag = code << 2 | 1     "begetting"  share 6, apply -ing
+mode 2  literal+code  tag = length << 2 | 2   "gnarling"   share 0, add "gnarl", apply -ing
+```
 
-Markers are ordinary terminals, which means Re-Pair can fold a stem-plus-suffix pair into a single
-rule where that is cheaper, and a marker swallowed entirely by rules does not consume a byte code.
+Mode 1 is the one that pays: the code rides inside the varint that would otherwise have held a
+length, so a coded ending costs *nothing at all* — "begetting" after "begetteth" is two bytes.
+A table of up to 32 endings keeps that tag in one byte.
 
-**Nothing about the container format changes.** A suffix code is just an escape-table entry pointing
-at a marker terminal, and the decoder concatenates during detokenization. Files written without
-suffixes and files written with them are the same format.
+Candidates come from the text rather than a hardcoded list. Front coding has already stripped what
+each entry shares with its neighbour, so `planLexiconSuffixes` looks only at what is left over —
+the tails that make sorted neighbours differ — and picks greedily with exclusive assignment, so
+overlapping endings (`ing`, `ng`, `g`) are not all paid for the same word.
 
-On the full KJV (`kjv-data.js`, 4,137,743 bytes, N=85) the effect looks like this, and the shape of
-it is the interesting part:
+Nothing here has to be a word. The prefix comes from the neighbouring entry, not from a lexicon
+lookup, so "waters" codes happily off "water…" whether or not "water" appears in the text — the
+restriction the earlier token-level splitter needed is gone.
 
-| S | total | lexicon | words folded | suffixes chosen |
-| --- | --- | --- | --- | --- |
-| 0 | 984,829 | 65,942 | 0 | — |
-| 5 | 982,287 | 61,341 | 1,212 | ing s eth ed 's |
-| 10 | 981,629 | 59,173 | 1,693 | + est ness st ites th |
-| 20 | 983,026 | 57,804 | 2,067 | + ly d er ers edst … |
-| 80 | 1,008,853 | 56,194 | 2,515 | no more ever earn a code |
+On the full KJV (`kjv-data.js`, 4,137,743 bytes, N=85):
 
-Most of the win arrives in the first five suffixes and it is flat by ten. Past that the lexicon
-still shrinks but the total climbs: every reserved code is 256 addresses out of the two-byte space,
-and at S=80 the grammar loses so much room that the stream and rules give back more than the
-lexicon saves. Before front coding the sweet spot sat nearer twenty, roughly where the cartridge
-stopped — front coding has already collected part of what suffix splitting used to be paid for.
+| S | total | lexicon | table | entries coded | codes chosen |
+| --- | --- | --- | --- | --- | --- |
+| 0 | 984,830 | 65,942 | 0 | 0 | — |
+| 5 | 977,937 | 59,034 | 15 | 4,117 | ing th ed s st |
+| 10 | 975,507 | 56,587 | 32 | 5,708 | + ness ah er on 's |
+| 20 | 972,640 | 53,695 | 57 | 8,225 | + ly es d t y r te le el n |
+| 80 | 971,023 | 51,881 | 254 | 9,190 | 80 of 80 used |
+| 255 | 970,425 | 50,970 | 567 | 10,000 | only 175 ever earn one |
+
+Raising S has no real downside: a candidate is only taken when its measured saving clears the bytes
+it costs the table, so the worst case is an empty table and one byte of header. Most of the win is
+in by twenty, roughly where the cartridge stopped — going from there to 255 buys another 2,215
+bytes on four megabytes of input, and only 175 codes ever earn their place at all.
 
 ## Deviations from the cartridge
 
@@ -102,10 +103,14 @@ stopped — front coding has already collected part of what suffix splitting use
   before one of these marks is not preserved, though a space after it still round-trips exactly —
   and the structure markers `%$#@{}` (see `build-kjv-data.js`) are always flush on *both* sides, no
   assumed space either direction.
-- **Escape table.** Suffix codes are pinned first; the rest is filled purely by frequency. The
-  original biased toward stop words, plausibly so the search code could skip them cheaply.
-- **Suffix rules.** Derived from the corpus by measured savings. The ROM implemented its suffixes in
-  code rather than as a table, so its set was fixed at build time and the same for every text.
+- **Escape table.** Filled purely by frequency. The original biased toward stop words, plausibly so
+  the search code could skip them cheaply.
+- **Suffix rules.** Derived from the corpus by measured savings and written into the container. The
+  ROM implemented its suffixes in code rather than as a table, so its set was fixed at build time
+  and the same for every text — and it spent real byte values (0x82–0x9E) on them, where this spends
+  two bits of a length varint.
+- **No skip list.** Front coding makes lexicon lookup a sequential walk. The ROM answered that with
+  a 2,625-byte index at `0x0C2A`; decoding here materializes the whole word list up front instead.
 - **Structure markers.** `%` `$` `#` `@` `{` `}` were reserved terminals for book/chapter/verse
   boundaries. Nothing here reserves them; they are ordinary tokens if they appear — which is how
   `kjv-data.js` uses `%` `$` `#` `@` to mark book/chapter/verse boundaries in place of newlines and
@@ -137,17 +142,24 @@ npx esbuild repair-codec.test.ts --bundle --platform=node --format=cjs --outfile
 - Score rules by actual savings (`(occurrences - 1) * cost - 4`) instead of raw frequency, and drop
   rules whose occurrences got eaten by overlap.
 - Let `minPairCount` fall to 2 once the id space is nearly full — the last rules are the cheap ones.
-- Allow suffix stems that do not appear standalone, paying for the new lexicon entry once. "waters"
-  without "water" is currently left alone.
-- Prefixes, and suffix chains ("-ing" then "-s"), both of which fit the same marker mechanism.
+- Suffix chains — "-ing" then "-s" — which would need a second code byte and a decoder that applies
+  endings in order.
+- Let a lexicon entry front-code against any earlier entry, not just its immediate neighbour, paying
+  a back-reference for the ones where the sorted neighbour is a poor match.
 - Reserve a second escape range for 3-byte tokens to see whether a bigger grammar pays for itself.
 
 ## Benchmarks
 
 Full KJV, 4,137,743 bytes in, 85 single-byte codes, 20 suffix codes.
 
-1. V1: No lexicon encoding — **1,012,726 total**: 84,047 lexicon, 111,108 rules, 210 escape, 817,347 stream, 14 header
-2. Front-encode lexicon — **983,026 total**: 57,804 lexicon, 107,700 rules, 210 escape, 817,298 stream, 14 header
-3. Suffix codes are mostly a lexicon lever, but not only: each marker is a stream byte at every
-   occurrence, and each reserved code costs 256 addresses of two-byte id space, which squeezes the
-   grammar at high S. Front coding shifts the best S from ~20 down to ~10 (981,629 total).... next pass
+| # | Version                                                 |       Total | Lexicon | Suffix table |   Rules | Escape |  Stream | Header |
+|---|---------------------------------------------------------|------------:|--------:|-------------:|--------:|-------:|--------:|-------:|
+| 1 | No lexicon encoding, suffix markers in the stream       |   1,012,726 |  84,047 |            — | 111,108 |    210 | 817,347 |     14 |
+| 2 | Front-coded lexicon, suffix markers still in the stream |     983,026 |  57,804 |            — | 107,700 |    210 | 817,298 |     14 |
+| 3 | Suffix codes moved into the lexicon                     | **972,640** |  53,695 |           57 | 118,840 |    170 | 799,863 |     15 |
+
+Moving the suffixes out of the stream pays three times over: the markers stop costing a byte per
+occurrence, the escape table stops spending 20 of its rows on them, and the 20 byte values they
+reserved go back to the two-byte id space, which is worth 11,140 more bytes of grammar. The lexicon
+still ends up 4,109 bytes smaller than when suffixes were splitting tokens, because a code applies
+to the front-coded remainder rather than having to remove a whole entry.
