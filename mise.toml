@@ -26,10 +26,15 @@ node test.cjs
 """
 
 [tasks.data]
-description = "Regenerate kjv-data.js from kjv.csv"
-sources = ["kjv.csv", "build-kjv-data.js"]
-outputs = ["kjv-data.js"]
-run = "node build-kjv-data.js"
+description = "Regenerate the raw and pre-encoded KJV browser data"
+depends = ["install"]
+sources = ["kjv.csv", "build-kjv-data.js", "build-kjv-preencoded.ts", "repair-codec.ts"]
+outputs = ["kjv-data.js", "kjv-preencoded.js"]
+run = """
+node build-kjv-data.js
+npx esbuild build-kjv-preencoded.ts --bundle --platform=node --format=cjs --outfile=/tmp/build-kjv-preencoded.cjs
+node /tmp/build-kjv-preencoded.cjs
+"""
 
 [tasks.serve]
 description = "Serve the repo so demo.html can load its sibling scripts"

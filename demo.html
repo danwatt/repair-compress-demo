@@ -6,6 +6,7 @@
 <title>RPR1 — Re-Pair text codec lab</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="preload" href="kjv-preencoded.js" as="script">
 <link href="https://fonts.googleapis.com/css2?family=Silkscreen:wght@400;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
 :root {
@@ -479,8 +480,8 @@ footer a { color: var(--hot); }
 <script>
 (function () {
   const {
-    encode, decode, expandToWords, sweepFromGrammar, maxTokenIdFor, describeToken, planLexiconEntries,
-    planLexiconHeaderCodebook,
+    encode, decode, decodeContainer, deserialize, readStream, tokenize, expandToWords, sweepFromGrammar,
+    maxTokenIdFor, describeToken, planLexiconEntries, planLexiconHeaderCodebook,
   } = window.RePair;
 
   const $ = (id) => document.getElementById(id);
@@ -569,7 +570,9 @@ And God said, Let there be lights in the firmament of the heaven to divide the d
   function render(result, roundTripped, encodeMs, decodeMs) {
     const s = result.stats;
     const z = s.sizes;
-    $("timing").textContent = `encode ${encodeMs.toFixed(0)} ms · decode ${decodeMs.toFixed(0)} ms`;
+    $("timing").textContent = encodeMs == null
+      ? `pre-encoded · load + decode ${decodeMs.toFixed(0)} ms`
+      : `encode ${encodeMs.toFixed(0)} ms · decode ${decodeMs.toFixed(0)} ms`;
     $("download").disabled = false;
 
     const parts = [
@@ -1336,37 +1339,81 @@ And God said, Let there be lights in the firmament of the heaven to divide the d
   $("sample-repeat").addEventListener("click", () => { $("input").value = SAMPLES.repeat; updateInputSize(); run(); });
 
   let kjvLoadPromise = null;
-  function loadFullKjv() {
-    if (window.KJV_TEXT) return Promise.resolve(window.KJV_TEXT);
+  function loadPreencodedKjv() {
+    if (window.KJV_PREENCODED) return Promise.resolve(window.KJV_PREENCODED);
     if (kjvLoadPromise) return kjvLoadPromise;
     kjvLoadPromise = new Promise((resolve, reject) => {
       const s = document.createElement("script");
-      s.src = "kjv-data.js";
-      s.onload = () => resolve(window.KJV_TEXT);
-      s.onerror = () => reject(new Error("Could not load kjv-data.js — keep it next to demo.html."));
+      s.src = "kjv-preencoded.js";
+      s.onload = () => resolve(window.KJV_PREENCODED);
+      s.onerror = () => reject(new Error("Could not load kjv-preencoded.js — run `mise run data` to generate it."));
       document.head.appendChild(s);
     });
     return kjvLoadPromise;
   }
-  $("sample-full-kjv").addEventListener("click", () => {
-    const btn = $("sample-full-kjv");
-    const label = btn.textContent;
-    btn.disabled = true;
-    btn.textContent = "Loading…";
-    loadFullKjv()
-      .then((text) => {
+
+  function bytesFromBase64(base64) {
+    const binary = atob(base64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    return bytes;
+  }
+
+  function hydratePreencodedKjv(artifact) {
+    const t0 = performance.now();
+    const bytes = bytesFromBase64(artifact.bytes);
+    const container = deserialize(bytes);
+    const text = decodeContainer(container);
+    const sequence = readStream(container.stream, container.escapeTable, container.threshold);
+    const tokens = tokenize(text);
+    const result = {
+      bytes,
+      container,
+      stages: {
+        tokens,
+        terminalIds: [],
+        sequence,
+        rules: container.rules,
+        escapeTable: container.escapeTable,
+        lexiconEntries: planLexiconEntries(container.lexicon, container.suffixes),
+      },
+      stats: artifact.stats,
+    };
+    return { result, text, elapsed: performance.now() - t0 };
+  }
+
+  function loadFullKjvIntoInput() {
+    const button = $("sample-full-kjv");
+    const label = button.textContent;
+    button.disabled = true;
+    button.textContent = "Loading…";
+    $("result").innerHTML = '<p class="empty">Loading the pre-encoded full KJV…</p>';
+    return loadPreencodedKjv()
+      .then((artifact) => {
+        const { result, text, elapsed } = hydratePreencodedKjv(artifact);
+        syncPair("n", "n-num", artifact.config.singleByteCount, 255);
+        $("minpair").value = artifact.config.minPairCount;
+        $("maxrules").value = artifact.config.maxPairs;
         $("input").value = text;
         updateInputSize();
-        run();
+        latest = result;
+        render(result, true, null, elapsed);
+        gzipSize(text).then((size) => {
+          const el = $("gzip");
+          if (el) el.textContent = size == null
+            ? "unavailable"
+            : fmt(size) + " B · " + pct(size / result.stats.originalBytes);
+        });
       })
       .catch((err) => {
         $("result").innerHTML = `<p class="empty">${err.message}</p>`;
       })
       .finally(() => {
-        btn.disabled = false;
-        btn.textContent = label;
+        button.disabled = false;
+        button.textContent = label;
       });
-  });
+  }
+  $("sample-full-kjv").addEventListener("click", loadFullKjvIntoInput);
   $("download").addEventListener("click", () => {
     if (!latest) return;
     const url = URL.createObjectURL(new Blob([latest.bytes], { type: "application/octet-stream" }));
@@ -1382,9 +1429,8 @@ And God said, Let there be lights in the firmament of the heaven to divide the d
 
   void maxTokenIdFor;
   budget();
-  $("input").value = SAMPLES.kjv;
   updateInputSize();
-  run();
+  loadFullKjvIntoInput();
 })();
 </script>
 </body>
