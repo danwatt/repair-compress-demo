@@ -238,6 +238,62 @@ td.num { text-align: right; font-variant-numeric: tabular-nums; }
 }
 .readout b { color: var(--dmg-4); font-weight: 500; }
 
+.lexicon-controls {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px;
+  margin-bottom: 10px;
+}
+.lexicon-controls label {
+  display: flex; align-items: center; gap: 8px; flex: 1; min-width: 260px;
+  color: var(--ink-soft); font-size: 11px; white-space: nowrap;
+}
+.lexicon-controls input[type=range] { flex: 1; min-width: 120px; accent-color: var(--hot); }
+.lexicon-controls input[type=number] {
+  width: 90px; padding: 5px 6px; border: 1px solid var(--rule);
+  background: var(--ground); color: var(--ink); font-family: var(--mono);
+  font-size: 12px; border-radius: 2px;
+}
+.lexicon-controls button { padding: 5px 9px; }
+.lexicon-visual {
+  padding: 14px; border: 1px solid var(--rule); background: var(--panel); border-radius: 2px;
+}
+.lexicon-step {
+  display: grid; grid-template-columns: 120px minmax(0, 1fr); gap: 12px;
+  align-items: start; padding: 9px 0;
+}
+.lexicon-step + .lexicon-step { border-top: 1px solid var(--rule); }
+.lexicon-step-label {
+  color: var(--ink-soft); font-size: 10px; letter-spacing: .06em; text-transform: uppercase;
+}
+.lexicon-step-label b { display: block; color: var(--ink); font-size: 12px; letter-spacing: 0; text-transform: none; }
+.lexicon-pieces { display: flex; flex-wrap: wrap; align-items: stretch; gap: 3px; min-width: 0; }
+.lexicon-piece {
+  display: inline-flex; flex-direction: column; justify-content: center; min-height: 38px;
+  padding: 4px 8px; border-radius: 2px; overflow-wrap: anywhere;
+}
+.lexicon-piece small { color: inherit; opacity: .78; font-size: 9px; }
+.lexicon-piece.shared { background: var(--dmg-3); color: var(--ink); }
+.lexicon-piece.literal { background: var(--sym-word); color: var(--ink); }
+.lexicon-piece.suffix { background: var(--hot); color: var(--ground); }
+.lexicon-piece.header { background: var(--dmg-1); color: var(--dmg-4); }
+.lexicon-piece.dropped {
+  background: var(--ground); color: var(--ink-soft); text-decoration: line-through;
+  border: 1px solid var(--rule);
+}
+.lexicon-piece.empty-piece { background: var(--ground); color: var(--ink-soft); border: 1px solid var(--rule); }
+.lexicon-equation { color: var(--ink-soft); align-self: center; padding: 0 2px; }
+.lexicon-readout { margin-top: 10px; }
+.lexicon-neighborhood { margin-top: 10px; max-height: 280px; }
+.lexicon-neighborhood tr.is-selected td { background: var(--dmg-1); }
+.lexicon-pick {
+  width: 100%; padding: 0; border: 0; background: transparent; color: var(--dmg-4);
+  font: inherit; text-align: left;
+}
+.lexicon-pick:hover { background: transparent; color: var(--hot); }
+@media (max-width: 600px) {
+  .lexicon-step { grid-template-columns: 1fr; gap: 5px; }
+  .lexicon-piece { min-height: 34px; }
+}
+
 .empty { color: var(--ink-soft); font-size: 12px; }
 .stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 14px 20px; }
 .stat .k { font-size: 10px; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-soft); }
@@ -359,7 +415,18 @@ footer a { color: var(--hot); }
   <section id="lexicon-section" hidden>
     <div class="stage-label"><span class="num">06</span> <span>Lexicon storage</span>
       <span class="hint" id="lexicon-hint"></span></div>
-    <div class="table-wrap">
+    <div class="lexicon-controls">
+      <button type="button" id="lexicon-prev" aria-label="Show previous lexicon entry">←</button>
+      <label>Entry
+        <input type="range" id="lexicon-position" min="0" max="0" value="0" step="1">
+        <input type="number" id="lexicon-position-num" min="0" max="0" value="0" step="1">
+      </label>
+      <button type="button" id="lexicon-next" aria-label="Show next lexicon entry">→</button>
+    </div>
+    <div class="lexicon-visual" id="lexicon-visual" role="img"
+         aria-label="How the selected lexicon entry is reconstructed from its predecessor"></div>
+    <div class="readout lexicon-readout" id="lexicon-readout"></div>
+    <div class="table-wrap lexicon-neighborhood">
       <table id="lexicon-table"></table>
     </div>
     <p class="chart-note" id="lexicon-note"></p>
@@ -386,6 +453,7 @@ footer a { color: var(--hot); }
 (function () {
   const {
     encode, decode, expandToWords, sweepFromGrammar, maxTokenIdFor, describeToken, planLexiconEntries,
+    planLexiconHeaderCodebook,
   } = window.RePair;
 
   const $ = (id) => document.getElementById(id);
@@ -408,6 +476,7 @@ And God said, Let there be lights in the firmament of the heaven to divide the d
 
   let latest = null;
   let stripState = null;
+  let lexiconState = null;
 
   function syncPair(rangeId, numId, value, max) {
     const v = Math.max(0, Math.min(max, Number(value) || 0));
@@ -459,7 +528,10 @@ And God said, Let there be lights in the firmament of the heaven to divide the d
       } catch (err) {
         $("result").innerHTML = '<p class="empty bad">' + escapeHtml(String(err.message || err)) + "</p>";
         $("sweep-section").hidden = true;
+        $("escape-section").hidden = true;
         $("stream-section").hidden = true;
+        $("lexicon-section").hidden = true;
+        $("longest-section").hidden = true;
         $("timing").textContent = "";
       } finally {
         $("run").disabled = false;
@@ -548,8 +620,57 @@ And God said, Let there be lights in the firmament of the heaven to divide the d
     drawLongestTokens(result);
   }
 
-  // How the word list is actually written: a shared prefix count, whatever bytes
-  // the entry adds, and an optional code for the ending.
+  const varintSize = (v) => (v < 0x80 ? 1 : v < 0x4000 ? 2 : 3);
+  const lexiconHeaderKey = (shared, tag) => `${shared},${tag}`;
+
+  function lexiconEntryTag(entry) {
+    if (entry.codes.length > 1) return (entry.codes[0] << 2) | 3;
+    if (entry.codes.length === 1 && entry.literal.length === 0) return (entry.codes[0] << 2) | 1;
+    if (entry.codes.length === 1) return (entry.literal.length << 2) | 2;
+    return entry.literal.length << 2;
+  }
+
+  function renderBytePiece(bytes) {
+    if (bytes.length === 0) return "∅";
+    try {
+      return describeToken(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+    } catch {
+      return Array.from(bytes, (b) => b.toString(16).toUpperCase().padStart(2, "0")).join(" ");
+    }
+  }
+
+  function lexiconPiece(kind, text, detail) {
+    return `<span class="lexicon-piece ${kind}"><span>${escapeHtml(text)}</span>` +
+      `<small>${escapeHtml(detail)}</small></span>`;
+  }
+
+  function entryStorage(entry, headerCodebook, headerIndex) {
+    const tag = lexiconEntryTag(entry);
+    const code = headerIndex.get(lexiconHeaderKey(entry.shared, tag));
+    const rawHeaderBytes = varintSize(entry.shared) + varintSize(tag);
+    const headerBytes = code === undefined
+      ? varintSize(entry.shared + headerCodebook.length) + varintSize(tag)
+      : varintSize(code);
+    return {
+      tag,
+      code,
+      headerBytes,
+      payloadBytes: entry.bytes - rawHeaderBytes,
+      totalBytes: entry.bytes - rawHeaderBytes + headerBytes,
+    };
+  }
+
+  function describeLexiconTag(tag) {
+    const mode = tag & 3;
+    const n = tag >>> 2;
+    if (mode === 0) return `literal · ${n} byte${n === 1 ? "" : "s"}`;
+    if (mode === 1) return `suffix code ${n}`;
+    if (mode === 2) return `literal · ${n} byte${n === 1 ? "" : "s"} + suffix`;
+    return `suffix chain · starts at code ${n}`;
+  }
+
+  // Show one entry as the primitive decoder sees it: take bytes from the
+  // previous word, read the stored recipe, then append literals and suffixes.
   function drawLexicon(result) {
     const lexicon = result.container.lexicon;
     const suffixes = result.container.suffixes;
@@ -557,47 +678,129 @@ And God said, Let there be lights in the firmament of the heaven to divide the d
     $("lexicon-section").hidden = false;
 
     const entries = planLexiconEntries(lexicon, suffixes);
-    const decoder = new TextDecoder();
-    // Start where the sharing does: the first stretch of a sorted list is dull.
-    let from = 0;
-    let bestRun = -1;
-    for (let i = 0; i + 24 < entries.length; i++) {
-      let run = 0;
-      for (let j = i; j < i + 24; j++) run += entries[j].shared + entries[j].codes.length * 3;
-      if (run > bestRun) { bestRun = run; from = i; }
-    }
-    const shown = entries.slice(from, from + 24);
+    const headerCodebook = planLexiconHeaderCodebook(entries);
+    const headerIndex = new Map();
+    headerCodebook.forEach(([shared, tag], i) => headerIndex.set(lexiconHeaderKey(shared, tag), i));
+    lexiconState = { lexicon, suffixes, entries, headerCodebook, headerIndex, index: 0 };
 
-    const rows = shown.map((entry, i) => {
-      const word = lexicon[from + i];
-      const literal = decoder.decode(entry.literal);
-      // Several codes may be applied in order, so this cell can hold a chain.
-      const endings = entry.codes
-        .map((c) => `<span class="tag suffix">-${escapeHtml(suffixes[c])}</span>`)
-        .join(" ");
-      return `<tr>
-        <td>${fmt(from + i)}</td>
-        <td class="words">${escapeHtml(describeToken(word))}</td>
-        <td class="num">${entry.shared}</td>
-        <td class="words">${literal === "" ? "—" : escapeHtml(describeToken(literal))}</td>
-        <td class="words">${endings === "" ? "—" : endings}</td>
-        <td class="num">${entry.bytes}</td>
+    for (const id of ["lexicon-position", "lexicon-position-num"]) $(id).max = lexicon.length - 1;
+
+    // Default to an entry that demonstrates sharing, a header code and suffix
+    // composition, rather than the usually uninteresting first word.
+    let best = 0;
+    let bestScore = -Infinity;
+    for (let i = 0; i < entries.length; i++) {
+      const entry = entries[i];
+      const tag = lexiconEntryTag(entry);
+      const coded = headerIndex.has(lexiconHeaderKey(entry.shared, tag));
+      const score = entry.shared * 2 + entry.codes.length * 12 + (coded ? 4 : 0) -
+        entry.literal.length + (i === 0 ? -100 : 0);
+      if (score > bestScore) { bestScore = score; best = i; }
+    }
+    renderLexiconEntry(best);
+  }
+
+  function renderLexiconEntry(requested) {
+    if (!lexiconState) return;
+    const { lexicon, suffixes, entries, headerCodebook, headerIndex } = lexiconState;
+    const index = Math.max(0, Math.min(lexicon.length - 1, Math.floor(Number(requested) || 0)));
+    lexiconState.index = index;
+    $("lexicon-position").value = index;
+    $("lexicon-position-num").value = index;
+    $("lexicon-prev").disabled = index === 0;
+    $("lexicon-next").disabled = index === lexicon.length - 1;
+
+    const entry = entries[index];
+    const previous = index === 0 ? "" : lexicon[index - 1];
+    const previousBytes = new TextEncoder().encode(previous);
+    const sharedBytes = previousBytes.subarray(0, entry.shared);
+    const droppedBytes = previousBytes.subarray(entry.shared);
+    const storage = entryStorage(entry, headerCodebook, headerIndex);
+    const suffixParts = entry.codes.map((code) => ({ code, text: suffixes[code] }));
+
+    const previousPieces = index === 0
+      ? lexiconPiece("empty-piece", "no predecessor", "first lexicon entry")
+      : lexiconPiece("shared", renderBytePiece(sharedBytes), `${entry.shared} shared byte${entry.shared === 1 ? "" : "s"}`) +
+        (droppedBytes.length > 0
+          ? lexiconPiece("dropped", renderBytePiece(droppedBytes), "not carried forward")
+          : "");
+    const headerText = storage.code === undefined ? "raw header" : `header code ${storage.code}`;
+    const recipePieces = lexiconPiece(
+      "header",
+      headerText,
+      `share ${entry.shared} · ${describeLexiconTag(storage.tag)}`,
+    ) + (entry.literal.length > 0
+      ? lexiconPiece("literal", renderBytePiece(entry.literal), `${entry.literal.length} literal byte${entry.literal.length === 1 ? "" : "s"}`)
+      : "") + suffixParts.map(({ code, text }, suffixIndex) =>
+        lexiconPiece(
+          "suffix",
+          `code ${code}`,
+          `${suffixIndex === 0 && entry.literal.length === 0 ? "inside header" : "1 payload byte"} · append -${describeToken(text)}`,
+        )).join("");
+    const rebuiltPieces = (sharedBytes.length > 0
+      ? lexiconPiece("shared", renderBytePiece(sharedBytes), "copied")
+      : "") + (entry.literal.length > 0
+      ? lexiconPiece("literal", renderBytePiece(entry.literal), "literal")
+      : "") + suffixParts.map(({ text }) =>
+        lexiconPiece("suffix", describeToken(text), "suffix table")).join("") ||
+      lexiconPiece("empty-piece", "∅", "empty token");
+
+    $("lexicon-visual").innerHTML = `
+      <div class="lexicon-step">
+        <div class="lexicon-step-label">Previous entry<b>${index === 0 ? "—" : `#${fmt(index - 1)}`}</b></div>
+        <div class="lexicon-pieces">${previousPieces}</div>
+      </div>
+      <div class="lexicon-step">
+        <div class="lexicon-step-label">Bytes stored<b>${fmt(storage.totalBytes)} byte${storage.totalBytes === 1 ? "" : "s"}</b></div>
+        <div class="lexicon-pieces">${recipePieces}</div>
+      </div>
+      <div class="lexicon-step">
+        <div class="lexicon-step-label">Reconstructed<b>#${fmt(index)}</b></div>
+        <div class="lexicon-pieces">${rebuiltPieces}</div>
+      </div>`;
+
+    const plainBytes = new TextEncoder().encode(lexicon[index]).length +
+      varintSize(new TextEncoder().encode(lexicon[index]).length);
+    const headerDescription = storage.code === undefined
+      ? `The first varint is raw: ${entry.shared + headerCodebook.length} − table size ${headerCodebook.length} = ${entry.shared} shared bytes; the tag follows.`
+      : `The first varint is ${storage.code}, which looks up (share ${entry.shared}, tag ${storage.tag}) in the ${headerCodebook.length}-entry header table.`;
+    $("lexicon-readout").innerHTML =
+      `<b>${escapeHtml(describeToken(lexicon[index]))}</b> · ${headerDescription} ` +
+      `This entry takes ${storage.headerBytes} header + ${storage.payloadBytes} payload = ` +
+      `<b>${storage.totalBytes} bytes</b>; spelling it independently would take ${plainBytes}.`;
+
+    const radius = 4;
+    const from = Math.max(0, Math.min(index - radius, lexicon.length - (radius * 2 + 1)));
+    const to = Math.min(lexicon.length, from + radius * 2 + 1);
+    const rows = entries.slice(from, to).map((rowEntry, local) => {
+      const id = from + local;
+      const rowStorage = entryStorage(rowEntry, headerCodebook, headerIndex);
+      const literal = renderBytePiece(rowEntry.literal);
+      const endings = rowEntry.codes.map((code) => `-${describeToken(suffixes[code])}`).join(" + ") || "—";
+      return `<tr class="${id === index ? "is-selected" : ""}">
+        <td>${fmt(id)}</td>
+        <td class="words"><button type="button" class="lexicon-pick" data-lexicon-index="${id}">${escapeHtml(describeToken(lexicon[id]))}</button></td>
+        <td>${rowStorage.code === undefined ? "raw" : `#${rowStorage.code}`}</td>
+        <td class="num">${rowEntry.shared}</td>
+        <td class="words">${rowEntry.literal.length === 0 ? "—" : escapeHtml(literal)}</td>
+        <td class="words">${escapeHtml(endings)}</td>
+        <td class="num">${rowStorage.totalBytes}</td>
       </tr>`;
     });
 
     $("lexicon-table").innerHTML = `
       <thead><tr>
-        <th>Id</th><th>Word</th><th class="num">Shares</th><th>Adds</th><th>Ending</th>
-        <th class="num">Bytes</th>
+        <th>Id</th><th>Word</th><th>Header</th><th class="num">Shares</th><th>Adds</th><th>Ending</th>
+        <th class="num">Wire bytes</th>
       </tr></thead>
       <tbody>${rows.join("")}</tbody>`;
 
-    $("lexicon-hint").textContent = `ids ${fmt(from)}–${fmt(from + shown.length - 1)} of ${fmt(lexicon.length)}`;
+    $("lexicon-hint").textContent =
+      `entry ${fmt(index)} of ${fmt(lexicon.length - 1)} · ${fmt(headerCodebook.length)} header codes`;
     $("lexicon-note").innerHTML =
-      `Every entry is written against the one above it: <b>shares</b> bytes taken from that word, then the ` +
-      `bytes it <b>adds</b>, then an <b>ending</b> from the suffix table if one fits. An ending costs nothing ` +
-      `beyond the length byte it replaces, which is why "-ing" words collapse to two bytes. Ids are positions ` +
-      `in this list, so the stream still addresses every word here individually.`;
+      `<b>Blue</b> bytes are copied from the previous sorted word, <b>green</b> bytes are stored literally, and ` +
+      `<b>yellow</b> pieces come from the suffix table. The dark header tells the decoder how to combine them. ` +
+      `Choose a nearby word or move the entry slider to follow another reconstruction.`;
   }
 
   function drawSweep(result) {
@@ -953,6 +1156,19 @@ And God said, Let there be lights in the firmament of the heaven to divide the d
   });
   $("stream-next").addEventListener("click", () => {
     if (stripState) renderStripPage(stripState.byteOffsets[stripState.endIndex]);
+  });
+
+  $("lexicon-position").addEventListener("input", (e) => renderLexiconEntry(e.target.value));
+  $("lexicon-position-num").addEventListener("change", (e) => renderLexiconEntry(e.target.value));
+  $("lexicon-prev").addEventListener("click", () => {
+    if (lexiconState) renderLexiconEntry(lexiconState.index - 1);
+  });
+  $("lexicon-next").addEventListener("click", () => {
+    if (lexiconState) renderLexiconEntry(lexiconState.index + 1);
+  });
+  $("lexicon-table").addEventListener("click", (e) => {
+    const button = e.target.closest("[data-lexicon-index]");
+    if (button) renderLexiconEntry(button.dataset.lexiconIndex);
   });
 
   $("run").addEventListener("click", run);
