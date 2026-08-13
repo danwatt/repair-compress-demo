@@ -25,12 +25,12 @@ encode(text)
   tokenize          text        -> string[]        words, punctuation, separators
   planSuffixes      string[]    -> suffix plan     which suffixes earn a byte code
   applySuffixes     string[]    -> string[]        "testing" -> "test" + -ing marker
-  buildLexicon      string[]    -> lexicon, ids    terminals ordered by frequency
+  buildLexicon      string[]    -> lexicon, ids    terminals in UTF-8 byte order
   repair            ids         -> sequence, rules fold frequent adjacent pairs
   pinSuffixCodes    sequence    -> pinned ids      suffix markers claim their codes
   assignSingleBytes sequence    -> escapeTable     top-N remaining symbols get one
   emitStream        sequence    -> Uint8Array      1 byte if < N, else 2
-  serialize         container   -> Uint8Array      header + lexicon + tables + stream
+  serialize         container   -> Uint8Array      header + front-coded lexicon + tables + stream
 
 decode(bytes)
   deserialize -> readStream -> expand -> detokenize
@@ -55,11 +55,18 @@ them: "testing" is stored as the token for "test" followed by an -ing code, so t
 one entry instead of two.
 
 Candidate suffixes are found in the text rather than hardcoded, scored by what they actually save,
-and taken only when the arithmetic works: dropping a word's lexicon entry saves `entryCost(word)`
-once, while the marker costs one byte at every occurrence. So splitting rare long words wins and
-splitting common ones loses — the feature works on the tail of the vocabulary, not the head. The
-stem must already exist as a standalone token, so this never invents words a concatenating decoder
-could not produce.
+and taken only when the arithmetic works: dropping a word's lexicon entry saves whatever front
+coding was charging for it, while the marker costs one byte at every occurrence. So splitting rare
+long words wins and splitting common ones loses — the feature works on the tail of the vocabulary,
+not the head. The stem must already exist as a standalone token, so this never invents words a
+concatenating decoder could not produce.
+
+Front coding and suffix splitting attack the same redundancy, so the scoring has to account for it.
+`lexiconRemovalGains` charges each entry what it costs *in place*: "begetting" sits right next to
+"beget" in sorted order and already shares five bytes with it, so folding it away frees far less
+than its length suggests, and the estimate subtracts what the following entry loses when its
+neighbour disappears. With the old flat cost model the planner over-valued every split and took
+roughly 40% more of them than paid off.
 
 Markers are ordinary terminals, which means Re-Pair can fold a stem-plus-suffix pair into a single
 rule where that is cheaper, and a marker swallowed entirely by rules does not consume a byte code.
@@ -68,18 +75,22 @@ rule where that is cheaper, and a marker swallowed entirely by rules does not co
 at a marker terminal, and the decoder concatenates during detokenization. Files written without
 suffixes and files written with them are the same format.
 
-On ~190 KB of English prose the effect looks like this, and the shape of it is the interesting part:
+On the full KJV (`kjv-data.js`, 4,137,743 bytes, N=85) the effect looks like this, and the shape of
+it is the interesting part:
 
 | S | total | lexicon | words folded | suffixes chosen |
 | --- | --- | --- | --- | --- |
-| 0 | 83,698 | 24,622 | 0 | — |
-| 5 | 81,796 | 21,635 | 355 | s ed ing d 's |
-| 10 | 81,471 | 21,201 | 409 | + ly er es ment ion |
-| 20 | 81,284 | 20,883 | 453 | + ness ful able est … |
-| 80 | 81,147 | 20,478 | 534 | only 63 ever earn a code |
+| 0 | 984,829 | 65,942 | 0 | — |
+| 5 | 982,287 | 61,341 | 1,212 | ing s eth ed 's |
+| 10 | 981,629 | 59,173 | 1,693 | + est ness st ites th |
+| 20 | 983,026 | 57,804 | 2,067 | + ly d er ers edst … |
+| 80 | 1,008,853 | 56,194 | 2,515 | no more ever earn a code |
 
-Most of the win arrives in the first five suffixes and it is flat by twenty, which is roughly where
-the cartridge stopped.
+Most of the win arrives in the first five suffixes and it is flat by ten. Past that the lexicon
+still shrinks but the total climbs: every reserved code is 256 addresses out of the two-byte space,
+and at S=80 the grammar loses so much room that the stream and rules give back more than the
+lexicon saves. Before front coding the sweet spot sat nearer twenty, roughly where the cartridge
+stopped — front coding has already collected part of what suffix splitting used to be paid for.
 
 ## Deviations from the cartridge
 
@@ -123,8 +134,6 @@ npx esbuild repair-codec.test.ts --bundle --platform=node --format=cjs --outfile
 
 ## Ideas worth trying
 
-- Front-code the lexicon. On short inputs it is the largest section by far, and sorted word lists
-  compress well with shared prefixes.
 - Score rules by actual savings (`(occurrences - 1) * cost - 4`) instead of raw frequency, and drop
   rules whose occurrences got eaten by overlap.
 - Let `minPairCount` fall to 2 once the id space is nearly full — the last rules are the cheap ones.
@@ -132,3 +141,13 @@ npx esbuild repair-codec.test.ts --bundle --platform=node --format=cjs --outfile
   without "water" is currently left alone.
 - Prefixes, and suffix chains ("-ing" then "-s"), both of which fit the same marker mechanism.
 - Reserve a second escape range for 3-byte tokens to see whether a bigger grammar pays for itself.
+
+## Benchmarks
+
+Full KJV, 4,137,743 bytes in, 85 single-byte codes, 20 suffix codes.
+
+1. V1: No lexicon encoding — **1,012,726 total**: 84,047 lexicon, 111,108 rules, 210 escape, 817,347 stream, 14 header
+2. Front-encode lexicon — **983,026 total**: 57,804 lexicon, 107,700 rules, 210 escape, 817,298 stream, 14 header
+3. Suffix codes are mostly a lexicon lever, but not only: each marker is a stream byte at every
+   occurrence, and each reserved code costs 256 addresses of two-byte id space, which squeezes the
+   grammar at high S. Front coding shifts the best S from ~20 down to ~10 (981,629 total).... next pass

@@ -10,11 +10,17 @@
  *
  *   ENCODE  text
  *     1 tokenize        -> string[]            words, punctuation, separators
- *     2 buildLexicon    -> lexicon + id[]      frequency-ordered terminal ids
+ *     2 buildLexicon    -> lexicon + id[]      byte-sorted terminal ids
  *     3 repair          -> sequence + rules    replace frequent adjacent pairs
  *     4 assignSingleBytes -> escape table      top-N symbols get a 1-byte code
  *     5 emitStream      -> Uint8Array          1 byte if < N, else 2 bytes
  *     6 serialize       -> Uint8Array          header + lexicon + tables + stream
+ *
+ * The lexicon is stored front-coded: entries are sorted by their UTF-8 bytes and
+ * each one records how many leading bytes it shares with its predecessor, so
+ * "beget"/"begettest"/"begetting" pay for their common stem once. That is why
+ * terminal ids are in byte order rather than frequency order — the id is the
+ * position in the stored list, and front coding needs that list sorted.
  *
  *   DECODE  bytes
  *     1 deserialize     -> container
@@ -106,6 +112,8 @@ export interface EncodeResult {
     lexiconBytesSaved: number;
     tokenCount: number;
     distinctTerminals: number;
+    /** What the lexicon would have cost stored in full, for the front-coding delta. */
+    lexiconPlainBytes: number;
     sequenceLength: number;
     ruleCount: number;
     threshold: number;
@@ -121,6 +129,40 @@ export interface EncodeResult {
 }
 
 export class CodecError extends Error {}
+
+// ---------------------------------------------------------------------------
+// Byte helpers — the lexicon is ordered and front-coded in UTF-8 byte space
+// ---------------------------------------------------------------------------
+
+const ENCODER = new TextEncoder();
+
+/** Byte order, which for UTF-8 is also code point order. */
+function compareBytes(a: Uint8Array, b: Uint8Array): number {
+  const n = Math.min(a.length, b.length);
+  for (let i = 0; i < n; i++) {
+    if (a[i] !== b[i]) return a[i] - b[i];
+  }
+  return a.length - b.length;
+}
+
+/** Length of the longest common prefix, in bytes. */
+function sharedPrefix(a: Uint8Array, b: Uint8Array): number {
+  const n = Math.min(a.length, b.length);
+  let i = 0;
+  while (i < n && a[i] === b[i]) i++;
+  return i;
+}
+
+const varintSize = (v: number): number => (v < 0x80 ? 1 : v < 0x4000 ? 2 : 3);
+
+const EMPTY = new Uint8Array(0);
+
+/** Bytes one front-coded entry occupies: two varints plus what it does not share. */
+function frontCodedCost(previous: Uint8Array, entry: Uint8Array): number {
+  const shared = sharedPrefix(previous, entry);
+  const rest = entry.length - shared;
+  return varintSize(shared) + varintSize(rest) + rest;
+}
 
 // ---------------------------------------------------------------------------
 // Stage 1 — tokenize / detokenize
@@ -245,22 +287,54 @@ export interface SuffixPlan {
   lexiconBytesSaved: number;
 }
 
-const utf8Length = (s: string): number => new TextEncoder().encode(s).length;
-/** A lexicon entry costs its UTF-8 bytes plus a varint length. */
-const entryCost = (s: string): number => {
-  const n = utf8Length(s);
-  return n + (n < 0x80 ? 1 : 2);
-};
+const utf8Length = (s: string): number => ENCODER.encode(s).length;
+
+/**
+ * What a suffix marker costs the lexicon. Markers all begin with NUL, so they
+ * sort together and every one after the first shares that byte: two varints
+ * plus the suffix itself.
+ */
+const markerCost = (suffix: string): number => 2 + utf8Length(suffix);
+
+/**
+ * Bytes the lexicon reclaims by dropping each word, given front coding.
+ *
+ * Two terms: the entry's own cost, minus what its successor loses. Removing a
+ * word leaves the one after it front-coding against the word before instead, and
+ * that neighbour is further away, so part of the saving is handed straight back.
+ * That is exactly why splitting "begetting" into "beget" + -ing is worth much
+ * less than its length suggests — the two sat next to each other already.
+ *
+ * Exact for one removal at a time, an estimate when several neighbours go
+ * together, which is the same footing the rest of the suffix scoring is on.
+ */
+function lexiconRemovalGains(words: Iterable<string>): Map<string, number> {
+  const entries = [...words].map((word) => ({ word, bytes: ENCODER.encode(word) }));
+  entries.sort((a, b) => compareBytes(a.bytes, b.bytes));
+
+  const gains = new Map<string, number>();
+  for (let i = 0; i < entries.length; i++) {
+    const before = i > 0 ? entries[i - 1].bytes : EMPTY;
+    const own = frontCodedCost(before, entries[i].bytes);
+    const successor = entries[i + 1];
+    const penalty = successor
+      ? frontCodedCost(before, successor.bytes) - frontCodedCost(entries[i].bytes, successor.bytes)
+      : 0;
+    gains.set(entries[i].word, own - penalty);
+  }
+  return gains;
+}
 
 /**
  * Pick the suffixes worth reserving a byte code for, the way the cartridge did:
  * "testing" becomes the token for "test" followed by an -ing marker, so the
  * lexicon carries one entry instead of two.
  *
- * A split is only taken when it pays. Dropping a word's lexicon entry saves
- * entryCost(word) bytes once; the marker costs one byte at every occurrence. So
- * splitting rare long words wins and splitting common ones loses, which is why
- * this helps the tail of the vocabulary rather than the head.
+ * A split is only taken when it pays. Dropping a word's lexicon entry saves what
+ * front coding was charging for it (see lexiconRemovalGains) once; the marker
+ * costs one byte at every occurrence. So splitting rare long words wins and
+ * splitting common ones loses, which is why this helps the tail of the
+ * vocabulary rather than the head.
  *
  * The stem must already exist as a standalone token — this never invents
  * vocabulary, matching a decoder that just concatenates.
@@ -287,6 +361,11 @@ export function planSuffixes(
     counts.set(token, (counts.get(token) ?? 0) + 1);
   }
 
+  // What each entry is actually worth once the lexicon is front-coded. Built
+  // over every distinct token, separators included, because that is the list
+  // serialize() will sort and delta-encode.
+  const removalGains = lexiconRemovalGains(new Set(tokens));
+
   // Candidate splits, grouped by suffix, keeping only the ones that pay.
   type Candidate = { word: string; stem: string; gain: number };
   const candidates = new Map<string, Candidate[]>();
@@ -296,7 +375,7 @@ export function planSuffixes(
       const stem = word.slice(0, word.length - len);
       if (!counts.has(stem)) continue;
       const suffix = word.slice(word.length - len);
-      const gain = entryCost(word) - count;
+      const gain = (removalGains.get(word) ?? 0) - count;
       if (gain <= 0) continue;
       const list = candidates.get(suffix);
       if (list) list.push({ word, stem, gain });
@@ -309,7 +388,7 @@ export function planSuffixes(
     .map(([suffix, list]) => ({
       suffix,
       list,
-      score: list.reduce((sum, c) => sum + c.gain, 0) - entryCost(SUFFIX_MARK + suffix) - 2,
+      score: list.reduce((sum, c) => sum + c.gain, 0) - markerCost(suffix) - 2,
     }))
     .filter((s) => s.score > 0)
     .sort((a, b) => b.score - a.score || a.suffix.length - b.suffix.length)
@@ -331,9 +410,9 @@ export function planSuffixes(
   let lexiconBytesSaved = 0;
   for (const word of mapping.keys()) {
     splitOccurrences += counts.get(word) ?? 0;
-    lexiconBytesSaved += entryCost(word);
+    lexiconBytesSaved += removalGains.get(word) ?? 0;
   }
-  for (const { suffix } of scored) lexiconBytesSaved -= entryCost(SUFFIX_MARK + suffix);
+  for (const { suffix } of scored) lexiconBytesSaved -= markerCost(suffix);
 
   return {
     suffixes: scored.map((s) => s.suffix),
@@ -363,17 +442,19 @@ export function applySuffixes(tokens: string[], mapping: Map<string, [string, st
 // ---------------------------------------------------------------------------
 
 /**
- * Assign terminal ids ordered by descending frequency, so the commonest words sit
- * at the low end of the id space. (The ROM does the same: 0x0248 "And", 0x3018 "the".)
+ * Assign terminal ids in UTF-8 byte order, which puts words sharing a stem next
+ * to each other so serialize() can front-code them. An id is a position in this
+ * list, so the sort order is part of the format, not a presentation choice.
+ *
+ * The ROM ordered its ids by frequency instead (0x0248 "And", 0x3018 "the") and
+ * front-coded a separately sorted word list. Nothing here reads ids as a
+ * frequency ranking — the escape table carries that — so one ordering does both
+ * jobs and no mapping table is needed.
  */
 export function buildLexicon(tokens: string[]): { lexicon: string[]; ids: number[] } {
-  const counts = new Map<string, number>();
-  for (const token of tokens) counts.set(token, (counts.get(token) ?? 0) + 1);
-
-  const lexicon = [...counts.keys()].sort((a, b) => {
-    const diff = counts.get(b)! - counts.get(a)!;
-    return diff !== 0 ? diff : a < b ? -1 : 1;
-  });
+  const entries = [...new Set(tokens)].map((word) => ({ word, bytes: ENCODER.encode(word) }));
+  entries.sort((a, b) => compareBytes(a.bytes, b.bytes));
+  const lexicon = entries.map((e) => e.word);
 
   const index = new Map<string, number>();
   lexicon.forEach((word, i) => index.set(word, i));
@@ -697,6 +778,8 @@ export function expandToWords(token: number, container: Container): string[] {
 // ---------------------------------------------------------------------------
 
 const MAGIC = [0x52, 0x50, 0x52, 0x31]; // "RPR1"
+/** 2 front-codes the lexicon; 1 stored every entry in full. */
+const FORMAT_VERSION = 2;
 const HEADER_BYTES = 14;
 
 class ByteWriter {
@@ -758,12 +841,23 @@ class ByteReader {
   }
 }
 
+/** Lexicon size without front coding: every entry in full, varint length each. */
+export function plainLexiconBytes(lexicon: readonly string[]): number {
+  let total = 0;
+  for (const word of lexicon) {
+    const len = ENCODER.encode(word).length;
+    total += len + varintSize(len);
+  }
+  return total;
+}
+
 export function measure(container: Container): SectionSizes {
-  const encoder = new TextEncoder();
   let lexicon = 0;
+  let previous = EMPTY;
   for (const word of container.lexicon) {
-    const len = encoder.encode(word).length;
-    lexicon += len + (len < 0x80 ? 1 : 2);
+    const bytes = ENCODER.encode(word);
+    lexicon += frontCodedCost(previous, bytes);
+    previous = bytes;
   }
   const escapeTable = container.escapeTable.length * 2;
   const rules = container.rules.length * 4;
@@ -780,17 +874,21 @@ export function measure(container: Container): SectionSizes {
 
 export function serialize(container: Container): Uint8Array {
   const w = new ByteWriter();
-  const encoder = new TextEncoder();
   for (const b of MAGIC) w.u8(b);
-  w.u8(1); // format version
+  w.u8(FORMAT_VERSION);
   w.u8(container.threshold);
   w.u16(container.lexicon.length);
   w.u16(container.rules.length);
   w.u32(container.stream.length);
+  // Front-coded: shared prefix length, then the bytes this entry adds.
+  let previous = EMPTY;
   for (const word of container.lexicon) {
-    const bytes = encoder.encode(word);
-    w.varint(bytes.length);
-    w.raw(bytes);
+    const bytes = ENCODER.encode(word);
+    const shared = sharedPrefix(previous, bytes);
+    w.varint(shared);
+    w.varint(bytes.length - shared);
+    w.raw(bytes.subarray(shared));
+    previous = bytes;
   }
   for (const id of container.escapeTable) w.u16(id);
   for (const [left, right] of container.rules) {
@@ -807,7 +905,13 @@ export function deserialize(bytes: Uint8Array): Container {
     if (r.u8() !== expected) throw new CodecError("not an RPR1 container");
   }
   const version = r.u8();
-  if (version !== 1) throw new CodecError(`unsupported version ${version}`);
+  if (version !== FORMAT_VERSION) {
+    throw new CodecError(
+      version === 1
+        ? "version 1 containers stored the lexicon uncompressed; re-encode to read them"
+        : `unsupported version ${version}`,
+    );
+  }
   const threshold = r.u8();
   const lexiconSize = r.u16();
   const ruleCount = r.u16();
@@ -815,9 +919,18 @@ export function deserialize(bytes: Uint8Array): Container {
 
   const decoder = new TextDecoder();
   const lexicon: string[] = [];
+  let previous = EMPTY;
   for (let i = 0; i < lexiconSize; i++) {
-    const len = r.varint();
-    lexicon.push(decoder.decode(r.raw(len)));
+    const shared = r.varint();
+    const rest = r.varint();
+    if (shared > previous.length) {
+      throw new CodecError(`lexicon entry ${i} shares ${shared} bytes with a ${previous.length}-byte entry`);
+    }
+    const bytes = new Uint8Array(shared + rest);
+    bytes.set(previous.subarray(0, shared));
+    bytes.set(r.raw(rest), shared);
+    lexicon.push(decoder.decode(bytes));
+    previous = bytes;
   }
   const escapeTable: number[] = [];
   for (let i = 0; i < threshold; i++) escapeTable.push(r.u16());
@@ -882,7 +995,7 @@ export function encode(text: string, config: Partial<CodecConfig> = {}): EncodeR
   const container: Container = { threshold, lexicon, escapeTable, rules, stream };
   const bytes = serialize(container);
   const sizes = measure(container);
-  const originalBytes = new TextEncoder().encode(text).length;
+  const originalBytes = ENCODER.encode(text).length;
   const { maxDepth, maxWidth } = expand(sequence, rules, lexicon.length);
 
   return {
@@ -899,6 +1012,7 @@ export function encode(text: string, config: Partial<CodecConfig> = {}): EncodeR
       lexiconBytesSaved: plan.lexiconBytesSaved,
       tokenCount: tokens.length,
       distinctTerminals: lexicon.length,
+      lexiconPlainBytes: plainLexiconBytes(lexicon),
       sequenceLength: sequence.length,
       ruleCount: rules.length,
       threshold,

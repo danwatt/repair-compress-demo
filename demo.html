@@ -207,10 +207,10 @@ footer a { color: var(--hot); }
   <h1>Compression lab</h1>
   <p class="thesis">
     A generic rebuild of the text compression in the 1993 Game Boy KJV: tokenize into words, fold
-    frequent adjacent pairs into grammar rules, split common suffixes off their stems, then reserve
-    low byte values as one-byte codes for the hottest symbols. The cartridge reserved 0x55 of them
-    and roughly 20 more for suffixes. Paste text, move the knobs, and watch every byte get
-    counted — lexicon and tables included.
+    frequent adjacent pairs into grammar rules, split common suffixes off their stems, front-code
+    the sorted word list, then reserve low byte values as one-byte codes for the hottest symbols.
+    The cartridge reserved 0x55 of them and roughly 20 more for suffixes. Paste text, move the
+    knobs, and watch every byte get counted — lexicon and tables included.
   </p>
 
   <hr class="hr">
@@ -362,6 +362,7 @@ footer a { color: var(--hot); }
     maxTokenIdFor: () => maxTokenIdFor,
     measure: () => measure,
     pinSuffixCodes: () => pinSuffixCodes,
+    plainLexiconBytes: () => plainLexiconBytes,
     planSuffixes: () => planSuffixes,
     readStream: () => readStream,
     repair: () => repair,
@@ -381,6 +382,27 @@ footer a { color: var(--hot); }
   };
   var CodecError = class extends Error {
   };
+  var ENCODER = new TextEncoder();
+  function compareBytes(a, b) {
+    const n = Math.min(a.length, b.length);
+    for (let i = 0; i < n; i++) {
+      if (a[i] !== b[i]) return a[i] - b[i];
+    }
+    return a.length - b.length;
+  }
+  function sharedPrefix(a, b) {
+    const n = Math.min(a.length, b.length);
+    let i = 0;
+    while (i < n && a[i] === b[i]) i++;
+    return i;
+  }
+  var varintSize = (v) => v < 128 ? 1 : v < 16384 ? 2 : 3;
+  var EMPTY = new Uint8Array(0);
+  function frontCodedCost(previous, entry) {
+    const shared = sharedPrefix(previous, entry);
+    const rest = entry.length - shared;
+    return varintSize(shared) + varintSize(rest) + rest;
+  }
   var TOKEN_RE = /\s+|[\p{L}\p{N}]+(?:['\u2019][\p{L}\p{N}]+)*|[^\s\p{L}\p{N}]/gu;
   var ATTACHED_PUNCTUATION = /* @__PURE__ */ new Set([",", ".", ";", ":", "!", "?"]);
   var STRUCTURE_MARKERS = /* @__PURE__ */ new Set(["%", "$", "#", "@", "{", "}"]);
@@ -443,11 +465,21 @@ footer a { color: var(--hot); }
     if (token === "") return "\u2400";
     return token.replace(/\n/g, "\u23CE").replace(/\t/g, "\u21E5");
   }
-  var utf8Length = (s) => new TextEncoder().encode(s).length;
-  var entryCost = (s) => {
-    const n = utf8Length(s);
-    return n + (n < 128 ? 1 : 2);
-  };
+  var utf8Length = (s) => ENCODER.encode(s).length;
+  var markerCost = (suffix) => 2 + utf8Length(suffix);
+  function lexiconRemovalGains(words) {
+    const entries = [...words].map((word) => ({ word, bytes: ENCODER.encode(word) }));
+    entries.sort((a, b) => compareBytes(a.bytes, b.bytes));
+    const gains = /* @__PURE__ */ new Map();
+    for (let i = 0; i < entries.length; i++) {
+      const before = i > 0 ? entries[i - 1].bytes : EMPTY;
+      const own = frontCodedCost(before, entries[i].bytes);
+      const successor = entries[i + 1];
+      const penalty = successor ? frontCodedCost(before, successor.bytes) - frontCodedCost(entries[i].bytes, successor.bytes) : 0;
+      gains.set(entries[i].word, own - penalty);
+    }
+    return gains;
+  }
   function planSuffixes(tokens, options) {
     const empty = {
       suffixes: [],
@@ -464,6 +496,7 @@ footer a { color: var(--hot); }
       if (isSeparator(token)) continue;
       counts.set(token, (counts.get(token) ?? 0) + 1);
     }
+    const removalGains = lexiconRemovalGains(new Set(tokens));
     const candidates = /* @__PURE__ */ new Map();
     for (const [word, count] of counts) {
       for (let len = 1; len <= maxLen; len++) {
@@ -471,7 +504,7 @@ footer a { color: var(--hot); }
         const stem = word.slice(0, word.length - len);
         if (!counts.has(stem)) continue;
         const suffix = word.slice(word.length - len);
-        const gain = entryCost(word) - count;
+        const gain = (removalGains.get(word) ?? 0) - count;
         if (gain <= 0) continue;
         const list = candidates.get(suffix);
         if (list) list.push({ word, stem, gain });
@@ -481,7 +514,7 @@ footer a { color: var(--hot); }
     const scored = [...candidates.entries()].map(([suffix, list]) => ({
       suffix,
       list,
-      score: list.reduce((sum, c) => sum + c.gain, 0) - entryCost(SUFFIX_MARK + suffix) - 2
+      score: list.reduce((sum, c) => sum + c.gain, 0) - markerCost(suffix) - 2
     })).filter((s) => s.score > 0).sort((a, b) => b.score - a.score || a.suffix.length - b.suffix.length).slice(0, options.count);
     const mapping = /* @__PURE__ */ new Map();
     const bestLength = /* @__PURE__ */ new Map();
@@ -496,9 +529,9 @@ footer a { color: var(--hot); }
     let lexiconBytesSaved = 0;
     for (const word of mapping.keys()) {
       splitOccurrences += counts.get(word) ?? 0;
-      lexiconBytesSaved += entryCost(word);
+      lexiconBytesSaved += removalGains.get(word) ?? 0;
     }
-    for (const { suffix } of scored) lexiconBytesSaved -= entryCost(SUFFIX_MARK + suffix);
+    for (const { suffix } of scored) lexiconBytesSaved -= markerCost(suffix);
     return {
       suffixes: scored.map((s) => s.suffix),
       mapping,
@@ -521,12 +554,9 @@ footer a { color: var(--hot); }
     return out;
   }
   function buildLexicon(tokens) {
-    const counts = /* @__PURE__ */ new Map();
-    for (const token of tokens) counts.set(token, (counts.get(token) ?? 0) + 1);
-    const lexicon = [...counts.keys()].sort((a, b) => {
-      const diff = counts.get(b) - counts.get(a);
-      return diff !== 0 ? diff : a < b ? -1 : 1;
-    });
+    const entries = [...new Set(tokens)].map((word) => ({ word, bytes: ENCODER.encode(word) }));
+    entries.sort((a, b) => compareBytes(a.bytes, b.bytes));
+    const lexicon = entries.map((e) => e.word);
     const index = /* @__PURE__ */ new Map();
     lexicon.forEach((word, i) => index.set(word, i));
     return { lexicon, ids: tokens.map((t) => index.get(t)) };
@@ -744,6 +774,7 @@ footer a { color: var(--hot); }
     return terminals.map((t) => container.lexicon[t]);
   }
   var MAGIC = [82, 80, 82, 49];
+  var FORMAT_VERSION = 2;
   var HEADER_BYTES = 14;
   var ByteWriter = class {
     constructor() {
@@ -778,7 +809,7 @@ footer a { color: var(--hot); }
   };
   var ByteReader = class {
     constructor(data) {
-      __publicField(this, "data", data);
+      this.data = data;
       __publicField(this, "offset", 0);
     }
     u8() {
@@ -806,12 +837,21 @@ footer a { color: var(--hot); }
       return slice;
     }
   };
+  function plainLexiconBytes(lexicon) {
+    let total = 0;
+    for (const word of lexicon) {
+      const len = ENCODER.encode(word).length;
+      total += len + varintSize(len);
+    }
+    return total;
+  }
   function measure(container) {
-    const encoder = new TextEncoder();
     let lexicon = 0;
+    let previous = EMPTY;
     for (const word of container.lexicon) {
-      const len = encoder.encode(word).length;
-      lexicon += len + (len < 128 ? 1 : 2);
+      const bytes = ENCODER.encode(word);
+      lexicon += frontCodedCost(previous, bytes);
+      previous = bytes;
     }
     const escapeTable = container.escapeTable.length * 2;
     const rules = container.rules.length * 4;
@@ -827,17 +867,20 @@ footer a { color: var(--hot); }
   }
   function serialize(container) {
     const w = new ByteWriter();
-    const encoder = new TextEncoder();
     for (const b of MAGIC) w.u8(b);
-    w.u8(1);
+    w.u8(FORMAT_VERSION);
     w.u8(container.threshold);
     w.u16(container.lexicon.length);
     w.u16(container.rules.length);
     w.u32(container.stream.length);
+    let previous = EMPTY;
     for (const word of container.lexicon) {
-      const bytes = encoder.encode(word);
-      w.varint(bytes.length);
-      w.raw(bytes);
+      const bytes = ENCODER.encode(word);
+      const shared = sharedPrefix(previous, bytes);
+      w.varint(shared);
+      w.varint(bytes.length - shared);
+      w.raw(bytes.subarray(shared));
+      previous = bytes;
     }
     for (const id of container.escapeTable) w.u16(id);
     for (const [left, right] of container.rules) {
@@ -853,16 +896,29 @@ footer a { color: var(--hot); }
       if (r.u8() !== expected) throw new CodecError("not an RPR1 container");
     }
     const version = r.u8();
-    if (version !== 1) throw new CodecError(`unsupported version ${version}`);
+    if (version !== FORMAT_VERSION) {
+      throw new CodecError(
+        version === 1 ? "version 1 containers stored the lexicon uncompressed; re-encode to read them" : `unsupported version ${version}`
+      );
+    }
     const threshold = r.u8();
     const lexiconSize = r.u16();
     const ruleCount = r.u16();
     const streamLength = r.u32();
     const decoder = new TextDecoder();
     const lexicon = [];
+    let previous = EMPTY;
     for (let i = 0; i < lexiconSize; i++) {
-      const len = r.varint();
-      lexicon.push(decoder.decode(r.raw(len)));
+      const shared = r.varint();
+      const rest = r.varint();
+      if (shared > previous.length) {
+        throw new CodecError(`lexicon entry ${i} shares ${shared} bytes with a ${previous.length}-byte entry`);
+      }
+      const bytes2 = new Uint8Array(shared + rest);
+      bytes2.set(previous.subarray(0, shared));
+      bytes2.set(r.raw(rest), shared);
+      lexicon.push(decoder.decode(bytes2));
+      previous = bytes2;
     }
     const escapeTable = [];
     for (let i = 0; i < threshold; i++) escapeTable.push(r.u16());
@@ -914,7 +970,7 @@ footer a { color: var(--hot); }
     const container = { threshold, lexicon, escapeTable, rules, stream };
     const bytes = serialize(container);
     const sizes = measure(container);
-    const originalBytes = new TextEncoder().encode(text).length;
+    const originalBytes = ENCODER.encode(text).length;
     const { maxDepth, maxWidth } = expand(sequence, rules, lexicon.length);
     return {
       bytes,
@@ -930,6 +986,7 @@ footer a { color: var(--hot); }
         lexiconBytesSaved: plan.lexiconBytesSaved,
         tokenCount: tokens.length,
         distinctTerminals: lexicon.length,
+        lexiconPlainBytes: plainLexiconBytes(lexicon),
         sequenceLength: sequence.length,
         ruleCount: rules.length,
         threshold,
@@ -1144,6 +1201,12 @@ And God said, Let there be lights in the firmament of the heaven to divide the d
         : (latestConfig && latestConfig.suffixCount > 0
           ? `<p class="chart-note">No suffix paid for itself here. A split saves one lexicon entry but costs a byte per occurrence, so it needs a long tail of vocabulary to win.</p>`
           : "")}
+      <p class="chart-note">The lexicon is sorted and front-coded — each entry stores only what it does
+        not share with the one before it, so a run like <b>beget</b> / <b>begets</b> / <b>begetting</b>
+        pays for its stem once. ${s.lexiconPlainBytes > 0
+          ? `Written out in full it would be ${fmt(s.lexiconPlainBytes)} bytes; here it is ${fmt(z.lexicon)}
+             (${pct(z.lexicon / s.lexiconPlainBytes)}).`
+          : ""}</p>
       ${z.lexicon > z.total * 0.35 ? `<p class="chart-note">The lexicon is ${pct(z.lexicon / z.total)} of the output here. On the cartridge one lexicon covered the whole Bible, so paste more text to see the tables amortize.</p>` : ""}
       <div class="grid" style="margin-top:22px">
         <div class="stat-grid">

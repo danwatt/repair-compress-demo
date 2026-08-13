@@ -9,6 +9,11 @@ import {
   applySuffixes,
   tokenize as tok,
   describeToken,
+  buildLexicon,
+  serialize,
+  deserialize,
+  plainLexiconBytes,
+  CodecError,
 } from "./repair-codec";
 
 let failures = 0;
@@ -102,6 +107,57 @@ for (const [name, text] of Object.entries(samples)) {
     );
   }
 }
+
+// Front coding: the lexicon must be in UTF-8 byte order, since an id is a
+// position in that list and each entry is a delta against the one before it.
+const utf8 = (s: string) => new TextEncoder().encode(s);
+const byteOrder = (a: Uint8Array, b: Uint8Array): number => {
+  for (let i = 0; i < Math.min(a.length, b.length); i++) if (a[i] !== b[i]) return a[i] - b[i];
+  return a.length - b.length;
+};
+const stemmy = "begat beget begets begetting begotten beginning begin " +
+  "café cafés caffeine 🎵 🎶 zebra".repeat(2);
+const { lexicon: sortedLexicon } = buildLexicon(tok(stemmy));
+check(
+  "lexicon is in byte order",
+  sortedLexicon.every((w, i) => i === 0 || byteOrder(utf8(sortedLexicon[i - 1]), utf8(w)) < 0),
+  sortedLexicon.map((w) => JSON.stringify(w)).join(" "),
+);
+
+// Shared stems have to actually pay: the KJV-ish sample above is the case for it.
+const stemResult = encode(stemmy);
+check(
+  "front coding shrinks a stem-heavy lexicon",
+  stemResult.stats.sizes.lexicon < stemResult.stats.lexiconPlainBytes,
+  `${stemResult.stats.lexiconPlainBytes} -> ${stemResult.stats.sizes.lexicon}`,
+);
+check("stem-heavy round trip", decode(stemResult.bytes) === stemmy);
+
+// A prefix boundary can fall inside a multi-byte character ("café"/"cafés" share
+// four bytes of a five-byte string). Reassembly is in byte space, so that is fine.
+check(
+  "multi-byte prefixes round trip",
+  decode(encode("café cafés naïve naïveté 🎵 🎵🎶").bytes) === "café cafés naïve naïveté 🎵 🎵🎶",
+);
+
+// Container-level checks: the serializer is the only thing that front-codes, so
+// deserialize has to rebuild the exact strings, and a v1 file must be rejected.
+const roundTrippedLexicon = deserialize(serialize(stemResult.container)).lexicon;
+check(
+  "deserialize rebuilds every entry",
+  roundTrippedLexicon.length === sortedLexicon.length &&
+    roundTrippedLexicon.every((w, i) => w === stemResult.container.lexicon[i]),
+);
+const v1 = Uint8Array.from(stemResult.bytes);
+v1[4] = 1;
+let rejected = "";
+try {
+  deserialize(v1);
+} catch (e) {
+  rejected = e instanceof CodecError ? e.message : "wrong error type";
+}
+check("rejects a version 1 container", rejected.includes("version 1"), rejected);
+check("plainLexiconBytes measures the old format", plainLexiconBytes(["ab", "cd"]) === 6);
 
 // A big synthetic corpus: repeated structure, the case Re-Pair is built for.
 const words = ["and", "the", "of", "God", "said", "unto", "him", "shall", "be", "a", "man"];

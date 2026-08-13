@@ -207,10 +207,10 @@ footer a { color: var(--hot); }
   <h1>Compression lab</h1>
   <p class="thesis">
     A generic rebuild of the text compression in the 1993 Game Boy KJV: tokenize into words, fold
-    frequent adjacent pairs into grammar rules, split common suffixes off their stems, then reserve
-    low byte values as one-byte codes for the hottest symbols. The cartridge reserved 0x55 of them
-    and roughly 20 more for suffixes. Paste text, move the knobs, and watch every byte get
-    counted — lexicon and tables included.
+    frequent adjacent pairs into grammar rules, split common suffixes off their stems, front-code
+    the sorted word list, then reserve low byte values as one-byte codes for the hottest symbols.
+    The cartridge reserved 0x55 of them and roughly 20 more for suffixes. Paste text, move the
+    knobs, and watch every byte get counted — lexicon and tables included.
   </p>
 
   <hr class="hr">
@@ -447,6 +447,12 @@ And God said, Let there be lights in the firmament of the heaven to divide the d
         : (latestConfig && latestConfig.suffixCount > 0
           ? `<p class="chart-note">No suffix paid for itself here. A split saves one lexicon entry but costs a byte per occurrence, so it needs a long tail of vocabulary to win.</p>`
           : "")}
+      <p class="chart-note">The lexicon is sorted and front-coded — each entry stores only what it does
+        not share with the one before it, so a run like <b>beget</b> / <b>begets</b> / <b>begetting</b>
+        pays for its stem once. ${s.lexiconPlainBytes > 0
+          ? `Written out in full it would be ${fmt(s.lexiconPlainBytes)} bytes; here it is ${fmt(z.lexicon)}
+             (${pct(z.lexicon / s.lexiconPlainBytes)}).`
+          : ""}</p>
       ${z.lexicon > z.total * 0.35 ? `<p class="chart-note">The lexicon is ${pct(z.lexicon / z.total)} of the output here. On the cartridge one lexicon covered the whole Bible, so paste more text to see the tables amortize.</p>` : ""}
       <div class="grid" style="margin-top:22px">
         <div class="stat-grid">
