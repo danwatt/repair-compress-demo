@@ -1,0 +1,791 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RPR1 — Re-Pair text codec lab</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Silkscreen:wght@400;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root {
+  --ground: #0a0e1a;
+  --panel: #121a2e;
+  --ink: #f2f4fa;
+  --ink-soft: #8b96b3;
+  --rule: #253253;
+  --dmg-4: #5b9dff;
+  --dmg-3: #3d7fd9;
+  --dmg-2: #2a5aa8;
+  --dmg-1: #163262;
+  --hot: #e8b923;
+  --hot-soft: #f6d878;
+  --warn: #ffb454;
+  --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --pixel: "Silkscreen", "IBM Plex Mono", monospace;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--ground);
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+.wrap { max-width: 1080px; margin: 0 auto; padding: 32px 20px 80px; }
+
+.eyebrow {
+  font-family: var(--pixel);
+  font-size: 10px;
+  letter-spacing: .12em;
+  color: var(--dmg-3);
+  text-transform: uppercase;
+  margin: 0 0 14px;
+}
+
+h1 {
+  font-family: var(--pixel);
+  font-weight: 400;
+  font-size: clamp(20px, 4.4vw, 34px);
+  line-height: 1.25;
+  margin: 0 0 12px;
+  color: var(--dmg-4);
+}
+
+.thesis { max-width: 62ch; margin: 0 0 8px; color: var(--ink-soft); }
+.thesis a { color: var(--hot); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+
+.hr { height: 1px; background: var(--rule); border: 0; margin: 28px 0; }
+
+section { margin-top: 30px; }
+
+.stage-label {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  font-family: var(--pixel);
+  font-size: 10px;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: var(--dmg-3);
+  margin-bottom: 12px;
+}
+.stage-label .num { color: var(--hot); }
+.stage-label .hint {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--ink-soft);
+  margin-left: auto;
+}
+
+.grid { display: grid; grid-template-columns: 1fr 300px; gap: 20px; align-items: start; }
+@media (max-width: 760px) { .grid { grid-template-columns: 1fr; } }
+
+textarea {
+  width: 100%;
+  min-height: 190px;
+  resize: vertical;
+  padding: 12px;
+  border: 1px solid var(--rule);
+  background: var(--panel);
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 13px;
+  line-height: 1.6;
+  border-radius: 2px;
+}
+textarea:focus-visible, input:focus-visible, button:focus-visible {
+  outline: 2px solid var(--hot);
+  outline-offset: 2px;
+}
+
+.panel { background: var(--panel); border: 1px solid var(--rule); border-radius: 2px; padding: 14px; }
+
+.knob { margin-bottom: 16px; }
+.knob:last-child { margin-bottom: 0; }
+.knob label { display: block; font-size: 11px; color: var(--ink-soft); margin-bottom: 5px; }
+.knob .row { display: flex; align-items: center; gap: 10px; }
+.knob input[type=number] {
+  width: 74px; padding: 5px 6px; border: 1px solid var(--rule);
+  background: var(--ground); color: var(--ink); font-family: var(--mono); font-size: 13px; border-radius: 2px;
+}
+.knob input[type=range] { flex: 1; accent-color: var(--hot); min-width: 0; }
+.knob .note { font-size: 10px; color: var(--ink-soft); margin-top: 5px; }
+
+.actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+
+button {
+  font-family: var(--mono); font-size: 12px; font-weight: 500;
+  padding: 8px 14px; border-radius: 2px; cursor: pointer;
+  border: 1px solid var(--dmg-4); background: var(--ground); color: var(--dmg-4);
+}
+button:hover { background: var(--dmg-1); }
+button.primary { background: var(--hot); border-color: var(--hot); color: var(--ground); }
+button.primary:hover { background: var(--hot-soft); }
+button[disabled] { opacity: .5; cursor: default; }
+
+.headline-figure { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 18px; margin-bottom: 14px; }
+.big { font-size: clamp(30px, 7vw, 48px); font-weight: 600; line-height: 1; color: var(--dmg-4); }
+.big small { font-size: 15px; font-weight: 400; color: var(--ink-soft); margin-left: 4px; }
+.verdict { font-size: 12px; color: var(--ink-soft); }
+.verdict b { color: var(--hot); font-weight: 600; }
+.bad { color: var(--warn); }
+
+.bar { display: flex; height: 34px; border: 1px solid var(--rule); border-radius: 2px; overflow: hidden; }
+.bar div { display: flex; align-items: center; justify-content: center; font-size: 10px; color: #fff; min-width: 0; overflow: hidden; }
+.legend { display: flex; flex-wrap: wrap; gap: 4px 18px; margin-top: 10px; font-size: 11px; }
+.legend span { display: flex; align-items: center; gap: 6px; color: var(--ink-soft); }
+.legend i { width: 10px; height: 10px; display: inline-block; border-radius: 1px; }
+.legend b { color: var(--ink); font-weight: 500; }
+
+table { width: 100%; border-collapse: collapse; font-size: 12px; }
+th, td { text-align: left; padding: 5px 8px 5px 0; border-bottom: 1px solid var(--rule); }
+th { font-weight: 500; color: var(--ink-soft); }
+td.num { text-align: right; font-variant-numeric: tabular-nums; }
+
+.table-wrap {
+  max-height: 400px; overflow: auto;
+  border: 1px solid var(--rule); background: var(--panel); border-radius: 2px;
+}
+.table-wrap table { font-size: 12px; }
+.table-wrap th, .table-wrap td { padding: 5px 10px; white-space: nowrap; }
+.table-wrap thead th {
+  position: sticky; top: 0; background: var(--panel);
+  box-shadow: inset 0 -1px 0 var(--rule); z-index: 1;
+}
+.table-wrap td.words { white-space: normal; word-break: break-word; min-width: 220px; color: var(--dmg-4); }
+.table-wrap td.pairs { white-space: normal; word-break: break-word; min-width: 260px; color: var(--ink-soft); }
+.table-wrap tr:last-child td { border-bottom: 0; }
+.tag {
+  display: inline-block; padding: 1px 6px; border-radius: 2px;
+  font-size: 10px; color: #fff; letter-spacing: .04em;
+}
+.tag.suffix { background: var(--hot); color: var(--ground); }
+.tag.word { background: var(--dmg-3); }
+.tag.rule { background: var(--dmg-2); color: var(--dmg-4); }
+
+.chart { width: 100%; height: 220px; display: block; }
+.chart-note { font-size: 11px; color: var(--ink-soft); margin-top: 8px; }
+
+.strip { display: flex; flex-wrap: wrap; gap: 2px; margin-bottom: 10px; }
+.cell { height: 16px; border-radius: 1px; cursor: default; }
+.cell.b1 { width: 8px; background: var(--dmg-4); }
+.cell.b2t { width: 18px; background: var(--dmg-3); }
+.cell.b2r { width: 18px; background: var(--dmg-2); }
+.cell.s1 { width: 8px; background: var(--hot); }
+.cell.s2 { width: 18px; background: var(--hot-soft); }
+.cell.carries { box-shadow: inset 0 -4px 0 var(--hot); }
+.readout {
+  min-height: 44px; padding: 8px 10px; background: var(--panel);
+  border: 1px solid var(--rule); border-radius: 2px; font-size: 12px; color: var(--ink-soft);
+}
+.readout b { color: var(--dmg-4); font-weight: 500; }
+
+.empty { color: var(--ink-soft); font-size: 12px; }
+.stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 14px 20px; }
+.stat .k { font-size: 10px; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-soft); }
+.stat .v { font-size: 19px; font-variant-numeric: tabular-nums; }
+footer { margin-top: 44px; font-size: 11px; color: var(--ink-soft); }
+footer a { color: var(--hot); }
+
+@media (prefers-reduced-motion: no-preference) {
+  .sweep-line { stroke-dasharray: 3000; stroke-dashoffset: 3000; animation: draw .7s ease-out forwards; }
+  @keyframes draw { to { stroke-dashoffset: 0; } }
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <p class="eyebrow">RPR1 · Re-Pair word codec</p>
+  <h1>Compression lab</h1>
+  <p class="thesis">
+    A generic rebuild of the text compression in the 1993 Game Boy KJV: tokenize into words, fold
+    frequent adjacent pairs into grammar rules, split common suffixes off their stems, then reserve
+    low byte values as one-byte codes for the hottest symbols. The cartridge reserved 0x55 of them
+    and roughly 20 more for suffixes. Paste text, move the knobs, and watch every byte get
+    counted — lexicon and tables included.
+  </p>
+
+  <hr class="hr">
+
+  <section>
+    <div class="stage-label"><span class="num">01</span> <span>Input</span>
+      <span class="hint" id="input-size">0 bytes</span></div>
+    <div class="grid">
+      <div>
+        <textarea id="input" spellcheck="false" placeholder="Paste text here."></textarea>
+        <div class="actions">
+          <button class="primary" id="run">Compress</button>
+          <button id="sample-kjv">Load Genesis 1</button>
+          <button id="sample-repeat">Load repetitive text</button>
+          <button id="sample-full-kjv">Load full KJV</button>
+          <button id="download" disabled>Download .rpr1</button>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="knob">
+          <label for="n">Single-byte codes — N</label>
+          <div class="row">
+            <input type="range" id="n" min="0" max="255" value="85">
+            <input type="number" id="n-num" min="0" max="255" value="85">
+          </div>
+          <p class="note">Each reserved byte removes 256 addresses from the two-byte space.</p>
+        </div>
+        <div class="knob">
+          <label for="suffix">Suffix codes — S</label>
+          <div class="row">
+            <input type="range" id="suffix" min="0" max="64" value="20">
+            <input type="number" id="suffix-num" min="0" max="64" value="20">
+          </div>
+          <p class="note">"test" + a suffix code instead of a second entry for "testing".</p>
+        </div>
+        <div class="knob">
+          <label for="minpair">Minimum pair occurrences</label>
+          <div class="row"><input type="number" id="minpair" min="2" max="50" value="3"></div>
+          <p class="note">A pair must repeat this often to earn a 4-byte rule.</p>
+        </div>
+        <div class="knob">
+          <label for="maxrules">Maximum rules</label>
+          <div class="row"><input type="number" id="maxrules" min="0" max="65535" value="65535"></div>
+          <p class="note">Also capped by whatever id space N leaves.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <hr class="hr">
+
+  <section>
+    <div class="stage-label"><span class="num">02</span> <span>Result</span>
+      <span class="hint" id="timing"></span></div>
+    <div id="result">
+      <p class="empty">Nothing compressed yet. Paste text and press Compress.</p>
+    </div>
+  </section>
+
+  <section id="sweep-section" hidden>
+    <div class="stage-label"><span class="num">03</span> <span>Cost across every N</span>
+      <span class="hint">one grammar, all 256 thresholds</span></div>
+    <svg class="chart" id="chart" viewBox="0 0 1000 220" preserveAspectRatio="none" role="img"
+         aria-label="Total compressed size against number of reserved single-byte codes"></svg>
+    <p class="chart-note" id="chart-note"></p>
+  </section>
+
+  <section id="escape-section" hidden>
+    <div class="stage-label"><span class="num">04</span> <span>Reserved single bytes</span>
+      <span class="hint" id="escape-hint"></span></div>
+    <div class="table-wrap">
+      <table id="escape-table"></table>
+    </div>
+    <p class="chart-note" id="escape-note"></p>
+  </section>
+
+  <section id="stream-section" hidden>
+    <div class="stage-label"><span class="num">05</span> <span>Stream</span>
+      <span class="hint">first 1024 symbols · cell width = bytes on the wire</span></div>
+    <div class="strip" id="strip"></div>
+    <div class="readout" id="readout">Hover or tap a cell to expand it back to words.</div>
+    <div class="legend">
+      <span><i style="background:var(--dmg-4)"></i><b>1 byte</b> escape code</span>
+      <span><i style="background:var(--dmg-3)"></i><b>2 bytes</b> single word</span>
+      <span><i style="background:var(--dmg-2)"></i><b>2 bytes</b> grammar rule</span>
+      <span><i style="background:var(--hot)"></i><b>1 byte</b> suffix code</span>
+      <span><i style="background:var(--hot-soft)"></i><b>2 bytes</b> suffix marker</span>
+      <span><i style="background:var(--dmg-2);box-shadow:inset 0 -4px 0 var(--hot)"></i><b>underlined</b> rule carrying a suffix</span>
+    </div>
+  </section>
+
+  <section id="longest-section" hidden>
+    <div class="stage-label"><span class="num">06</span> <span>Longest tokens</span>
+      <span class="hint">top 20 grammar rules by words when fully expanded</span></div>
+    <div class="table-wrap">
+      <table id="longest-table"></table>
+    </div>
+    <p class="chart-note" id="longest-note"></p>
+  </section>
+
+  <footer>
+    Algorithm reverse engineered by Dan Watt —
+    <a href="https://www.danwatt.org/2024/10/decoding-text-compression-on-a-gameboy/">Decoding text compression on a Game Boy</a>.
+    Everything runs locally; nothing is uploaded.
+  </footer>
+</div>
+
+<script>/*__CODEC__*/</script>
+<script>
+(function () {
+  const {
+    encode, decode, expandToWords, sweepFromGrammar, maxTokenIdFor, describeToken, isSuffixMarker,
+  } = window.RePair;
+
+  const $ = (id) => document.getElementById(id);
+  const fmt = (n) => n.toLocaleString("en-US");
+  const pct = (n) => (n * 100).toFixed(1) + "%";
+
+  const SAMPLES = {
+    kjv: `In the beginning God created the heaven and the earth. And the earth was without form, and void; and darkness was upon the face of the deep. And the Spirit of God moved upon the face of the waters. And God said, Let there be light: and there was light. And God saw the light, that it was good: and God divided the light from the darkness. And God called the light Day, and the darkness he called Night. And the evening and the morning were the first day.
+And God said, Let there be a firmament in the midst of the waters, and let it divide the waters from the waters. And God made the firmament, and divided the waters which were under the firmament from the waters which were above the firmament: and it was so. And God called the firmament Heaven. And the evening and the morning were the second day.
+And God said, Let the waters under the heaven be gathered together unto one place, and let the dry land appear: and it was so. And God called the dry land Earth; and the gathering together of the waters called he Seas: and God saw that it was good. And God said, Let the earth bring forth grass, the herb yielding seed, and the fruit tree yielding fruit after his kind, whose seed is in itself, upon the earth: and it was so. And the earth brought forth grass, and herb yielding seed after his kind, and the tree yielding fruit, whose seed was in itself, after his kind: and God saw that it was good. And the evening and the morning were the third day.
+And God said, Let there be lights in the firmament of the heaven to divide the day from the night; and let them be for signs, and for seasons, and for days, and years: and let them be for lights in the firmament of the heaven to give light upon the earth: and it was so. And God made two great lights; the greater light to rule the day, and the lesser light to rule the night: he made the stars also. And God set them in the firmament of the heaven to give light upon the earth, and to rule over the day and over the night, and to divide the light from the darkness: and God saw that it was good. And the evening and the morning were the fourth day.`,
+    repeat: (() => {
+      let out = "";
+      for (let i = 5; i < 32; i++) {
+        out += `And Seth lived after he begat Enos eight hundred and seven years, and begat sons and daughters: ${i} And all the days of Seth were nine hundred and twelve years: and he died.\n`;
+      }
+      return out;
+    })(),
+  };
+
+  let latest = null;
+  let latestConfig = null;
+  let stripState = null;
+
+  function syncPair(rangeId, numId, value, max) {
+    const v = Math.max(0, Math.min(max, Number(value) || 0));
+    $(rangeId).value = v;
+    $(numId).value = v;
+    return v;
+  }
+
+  function budget() {
+    const suffix = syncPair("suffix", "suffix-num", $("suffix").value, 64);
+    const n = syncPair("n", "n-num", $("n").value, 255 - suffix);
+    $("n").max = 255 - suffix;
+    return { n, suffix };
+  }
+
+  function updateInputSize() {
+    const bytes = new TextEncoder().encode($("input").value).length;
+    $("input-size").textContent = fmt(bytes) + " bytes";
+  }
+
+  function run() {
+    const text = $("input").value;
+    if (!text) {
+      $("result").innerHTML = '<p class="empty">Nothing to compress yet — paste some text first.</p>';
+      return;
+    }
+    const { n, suffix } = budget();
+    const config = {
+      singleByteCount: n,
+      suffixCount: suffix,
+      minPairCount: Math.max(2, Number($("minpair").value) || 3),
+      maxPairs: Math.max(0, Number($("maxrules").value) || 0),
+    };
+    latestConfig = config;
+    $("run").disabled = true;
+    $("timing").textContent = "working…";
+
+    setTimeout(() => {
+      try {
+        const t0 = performance.now();
+        const result = encode(text, config);
+        const t1 = performance.now();
+        const back = decode(result.bytes);
+        const t2 = performance.now();
+        latest = result;
+        render(result, back === text, t1 - t0, t2 - t1);
+        gzipSize(text).then((size) => {
+          const el = $("gzip");
+          if (!el) return;
+          el.textContent = size == null
+            ? "unavailable"
+            : fmt(size) + " B · " + pct(size / result.stats.originalBytes);
+        });
+      } catch (err) {
+        $("result").innerHTML = '<p class="empty bad">' + escapeHtml(String(err.message || err)) + "</p>";
+        $("sweep-section").hidden = true;
+        $("stream-section").hidden = true;
+        $("timing").textContent = "";
+      } finally {
+        $("run").disabled = false;
+      }
+    }, 20);
+  }
+
+  function render(result, roundTripped, encodeMs, decodeMs) {
+    const s = result.stats;
+    const z = s.sizes;
+    $("timing").textContent = `encode ${encodeMs.toFixed(0)} ms · decode ${decodeMs.toFixed(0)} ms`;
+    $("download").disabled = false;
+
+    const parts = [
+      { key: "lexicon", label: "Lexicon", color: "var(--dmg-4)", bytes: z.lexicon },
+      { key: "rules", label: "Rules", color: "var(--dmg-3)", bytes: z.rules },
+      { key: "escapeTable", label: "Escape table", color: "var(--dmg-2)", bytes: z.escapeTable },
+      { key: "stream", label: "Stream", color: "var(--hot)", bytes: z.stream },
+      { key: "header", label: "Header", color: "var(--ink-soft)", bytes: z.header },
+    ];
+
+    $("result").innerHTML = `
+      <div class="headline-figure">
+        <div class="big">${pct(s.ratio)}<small>of the original ${fmt(s.originalBytes)} bytes</small></div>
+        <div class="verdict">
+          ${fmt(z.total)} bytes total ·
+          stream alone ${fmt(z.stream)} (${pct(s.streamOnlyRatio)}) ·
+          gzip <span id="gzip">…</span><br>
+          ${roundTripped
+            ? "Round trip verified — decoding reproduces the input exactly."
+            : '<span class="bad">Round trip failed. That is a bug worth catching.</span>'}
+        </div>
+      </div>
+      <div class="bar">
+        ${parts.map((p) => `<div style="background:${p.color};flex:${p.bytes} 0 0" title="${p.label}: ${fmt(p.bytes)} bytes"></div>`).join("")}
+      </div>
+      <div class="legend">
+        ${parts.map((p) => `<span><i style="background:${p.color}"></i><b>${p.label}</b> ${fmt(p.bytes)} B</span>`).join("")}
+      </div>
+      ${s.suffixCodesUsed > 0
+        ? `<p class="chart-note">Suffix codes in use: ${s.suffixes.slice(0, s.suffixCodesUsed).map((x) => "<b>-" + escapeHtml(x) + "</b>").join(" ")} — folding ${fmt(s.wordsFolded)} words into stems and reclaiming ${fmt(s.lexiconBytesSaved)} lexicon bytes, at ${fmt(s.splitOccurrences)} marker bytes in the stream.</p>`
+        : (latestConfig && latestConfig.suffixCount > 0
+          ? `<p class="chart-note">No suffix paid for itself here. A split saves one lexicon entry but costs a byte per occurrence, so it needs a long tail of vocabulary to win.</p>`
+          : "")}
+      ${z.lexicon > z.total * 0.35 ? `<p class="chart-note">The lexicon is ${pct(z.lexicon / z.total)} of the output here. On the cartridge one lexicon covered the whole Bible, so paste more text to see the tables amortize.</p>` : ""}
+      <div class="grid" style="margin-top:22px">
+        <div class="stat-grid">
+          <div class="stat"><div class="k">Tokens in</div><div class="v">${fmt(s.tokenCount)}</div></div>
+          <div class="stat"><div class="k">Symbols out</div><div class="v">${fmt(s.sequenceLength)}</div></div>
+          <div class="stat"><div class="k">Distinct words</div><div class="v">${fmt(s.distinctTerminals)}</div></div>
+          <div class="stat"><div class="k">Grammar rules</div><div class="v">${fmt(s.ruleCount)}</div></div>
+          <div class="stat"><div class="k">Deepest expansion</div><div class="v">${fmt(s.maxExpansionDepth)}</div></div>
+          <div class="stat"><div class="k">Widest stack</div><div class="v">${fmt(s.maxExpansionWidth)}</div></div>
+        </div>
+        <div class="panel">
+          <table>
+            <tr><th>Threshold in use</th><td class="num">${fmt(s.threshold)}</td></tr>
+            <tr><th>1-byte symbols</th><td class="num">${fmt(s.singleByteTokens)}</td></tr>
+            <tr><th>2-byte symbols</th><td class="num">${fmt(s.twoByteTokens)}</td></tr>
+            <tr><th>Highest id used</th><td class="num">${fmt(s.distinctTerminals + s.ruleCount - 1)}</td></tr>
+            <tr><th>Id ceiling at N</th><td class="num">${fmt(s.maxTokenId)}</td></tr>
+          </table>
+        </div>
+      </div>`;
+
+    drawSweep(result);
+    drawEscapeTable(result);
+    drawStrip(result);
+    drawLongestTokens(result);
+  }
+
+  function drawSweep(result) {
+    const { points } = sweepFromGrammar(
+      result.container.lexicon,
+      result.stages.sequence,
+      result.stages.rules,
+      {
+        pinned: result.container.escapeTable.slice(0, result.stats.suffixCodesUsed),
+        reserved: latestConfig ? latestConfig.suffixCount : result.stats.suffixCodesUsed,
+      },
+    );
+    const usable = points.filter((p) => p.fits);
+    if (usable.length < 2) { $("sweep-section").hidden = true; return; }
+    $("sweep-section").hidden = false;
+
+    const W = 1000, H = 220, padL = 8, padR = 8, padT = 14, padB = 26;
+    const min = Math.min(...usable.map((p) => p.total));
+    const max = Math.max(...usable.map((p) => p.total));
+    const span = Math.max(1, max - min);
+    const x = (n) => padL + (n / 255) * (W - padL - padR);
+    const y = (v) => padT + (1 - (v - min) / span) * (H - padT - padB);
+
+    const best = usable.reduce((a, b) => (b.total < a.total ? b : a));
+    const nNow = result.stats.threshold - result.stats.suffixCodesUsed;
+    const current = points.find((p) => p.n === nNow) || points[0];
+    const cartridge = points.find((p) => p.n === 0x55);
+
+    const path = usable.map((p, i) => `${i === 0 ? "M" : "L"}${x(p.n).toFixed(1)},${y(p.total).toFixed(1)}`).join(" ");
+    const marks = [
+      { p: best, color: "var(--hot)", label: `best N=${best.n}` },
+      { p: cartridge && cartridge.fits ? cartridge : null, color: "var(--dmg-3)", label: "0x55" },
+      { p: current, color: "var(--dmg-4)", label: `now N=${current.n}` },
+    ].filter((m) => m.p);
+
+    $("chart").innerHTML = `
+      <rect x="0" y="0" width="${W}" height="${H}" fill="var(--panel)" stroke="var(--rule)"/>
+      ${marks.map((m) => `
+        <line x1="${x(m.p.n)}" y1="${padT}" x2="${x(m.p.n)}" y2="${H - padB}"
+              stroke="${m.color}" stroke-width="1.5" stroke-dasharray="4 4" opacity=".8"/>
+        <text x="${Math.min(W - 70, x(m.p.n) + 6)}" y="${padT + 12}" font-size="11"
+              font-family="IBM Plex Mono, monospace" fill="${m.color}">${m.label}</text>`).join("")}
+      <path class="sweep-line" d="${path}" fill="none" stroke="var(--dmg-4)" stroke-width="2.5"/>
+      <text x="${padL}" y="${H - 8}" font-size="11" font-family="IBM Plex Mono, monospace" fill="var(--ink-soft)">N = 0</text>
+      <text x="${W - padR}" y="${H - 8}" font-size="11" text-anchor="end"
+            font-family="IBM Plex Mono, monospace" fill="var(--ink-soft)">N = ${usable[usable.length - 1].n}</text>
+      <text x="${padL}" y="${padT + 12}" font-size="11" font-family="IBM Plex Mono, monospace" fill="var(--ink-soft)">${fmt(max)} B</text>
+      <text x="${padL}" y="${H - padB - 4}" font-size="11" font-family="IBM Plex Mono, monospace" fill="var(--ink-soft)">${fmt(min)} B</text>`;
+
+    const delta = current.total - best.total;
+    $("chart-note").innerHTML =
+      `Cheapest at <b>N = ${best.n}</b> (${fmt(best.total)} bytes). ` +
+      (delta > 0
+        ? `Your N = ${current.n} costs ${fmt(delta)} bytes more.`
+        : `You are on the optimum.`) +
+      (cartridge && cartridge.fits ? ` The cartridge's 0x55 would cost ${fmt(cartridge.total)}.` : "") +
+      (usable.length < points.length
+        ? ` Above N = ${usable[usable.length - 1].n} the grammar no longer fits the id space.`
+        : "");
+  }
+
+  function drawEscapeTable(result) {
+    const table = result.container.escapeTable;
+    if (table.length === 0) {
+      $("escape-section").hidden = true;
+      return;
+    }
+    $("escape-section").hidden = false;
+
+    const lexicon = result.container.lexicon;
+    const lexSize = lexicon.length;
+    const suffixCodes = result.stats.suffixCodesUsed;
+    const uses = new Map();
+    for (const id of result.stages.sequence) uses.set(id, (uses.get(id) ?? 0) + 1);
+
+    const hex = (v, width) => "0x" + v.toString(16).toUpperCase().padStart(width, "0");
+    const rows = table.map((id, code) => {
+      const words = expandToWords(id, result.container).map(describeToken);
+      const isSuffix = code < suffixCodes;
+      const kind = isSuffix ? "suffix" : id < lexSize ? "word" : "rule";
+      const label = isSuffix ? "suffix" : id < lexSize ? "word" : words.length + " words";
+      const count = uses.get(id) ?? 0;
+      let text = words.join(" ");
+      if (text.length > 90) text = text.slice(0, 88) + "…";
+      return `<tr>
+        <td>${hex(code, 2)}</td>
+        <td>${hex(id, 4)}</td>
+        <td><span class="tag ${kind}">${label}</span></td>
+        <td class="words">${escapeHtml(text)}</td>
+        <td class="num">${fmt(count)}</td>
+        <td class="num${count - 2 < 0 ? " bad" : ""}">${count - 2 >= 0 ? "+" : ""}${fmt(count - 2)}</td>
+      </tr>`;
+    });
+
+    $("escape-table").innerHTML = `
+      <thead><tr>
+        <th>Byte</th><th>Token id</th><th>Kind</th><th>Decodes to</th>
+        <th class="num">Uses</th><th class="num">Net bytes</th>
+      </tr></thead>
+      <tbody>${rows.join("")}</tbody>`;
+
+    const covered = table.reduce((sum, id) => sum + (uses.get(id) ?? 0), 0);
+    const net = covered - table.length * 2;
+    const losers = table.filter((id) => (uses.get(id) ?? 0) < 2).length;
+    $("escape-hint").textContent = hex(0, 2) + "–" + hex(table.length - 1, 2);
+    $("escape-note").innerHTML =
+      `A lead byte below <b>${hex(table.length, 2)}</b> is a row in this table. Anything at or above it ` +
+      `takes a second byte, and the token is <b>((lead − ${hex(table.length, 2)}) &lt;&lt; 8) | next</b>. ` +
+      `These ${fmt(table.length)} rows cover ${fmt(covered)} symbols, saving ${fmt(covered)} bytes in the ` +
+      `stream for ${fmt(table.length * 2)} bytes of table — <b>${net >= 0 ? "+" : ""}${fmt(net)} bytes</b> net.` +
+      (losers > 0
+        ? ` ${fmt(losers)} row${losers === 1 ? " does" : "s do"} not earn back the 2 bytes of table space; lowering N drops them first.`
+        : "");
+  }
+
+  function drawStrip(result) {
+    const seq = result.stages.sequence.slice(0, 1024);
+    const lexicon = result.container.lexicon;
+    const lexSize = lexicon.length;
+    const rules = result.stages.rules;
+    const escapes = new Set(result.container.escapeTable);
+
+    // Does this symbol expand to anything with a suffix marker in it?
+    const carries = new Map();
+    const carriesSuffix = (id) => {
+      const seen = carries.get(id);
+      if (seen !== undefined) return seen;
+      let answer;
+      if (id < lexSize) {
+        answer = isSuffixMarker(lexicon[id]);
+      } else {
+        carries.set(id, false); // guard, the grammar is acyclic anyway
+        const rule = rules[id - lexSize];
+        answer = carriesSuffix(rule[0]) || carriesSuffix(rule[1]);
+      }
+      carries.set(id, answer);
+      return answer;
+    };
+
+    stripState = { seq, lexSize, escapes, container: result.container };
+    $("stream-section").hidden = false;
+    $("strip").innerHTML = seq
+      .map((id, i) => {
+        const oneByte = escapes.has(id);
+        const marker = id < lexSize && isSuffixMarker(lexicon[id]);
+        let cls;
+        if (marker) cls = oneByte ? "s1" : "s2";
+        else cls = oneByte ? "b1" : id < lexSize ? "b2t" : "b2r";
+        if (!marker && carriesSuffix(id)) cls += " carries";
+        return `<div class="cell ${cls}" data-i="${i}" tabindex="0"></div>`;
+      })
+      .join("");
+    $("readout").textContent = "Hover or tap a cell to expand it back to words.";
+  }
+
+  function drawLongestTokens(result) {
+    const container = result.container;
+    const lexicon = container.lexicon;
+    const lexSize = lexicon.length;
+    const rules = container.rules;
+    if (rules.length === 0) {
+      $("longest-section").hidden = true;
+      return;
+    }
+    $("longest-section").hidden = false;
+
+    // Word count per token id, bottom-up: rules only ever reference lower ids.
+    const wordCount = new Float64Array(lexSize + rules.length);
+    for (let i = 0; i < lexSize; i++) wordCount[i] = 1;
+    for (let i = 0; i < rules.length; i++) {
+      const [l, r] = rules[i];
+      wordCount[lexSize + i] = wordCount[l] + wordCount[r];
+    }
+
+    const ruleIds = [];
+    for (let i = 0; i < rules.length; i++) ruleIds.push(lexSize + i);
+    ruleIds.sort((a, b) => wordCount[b] - wordCount[a]);
+    const top = ruleIds.slice(0, 20);
+
+    const hex = (v, width) => "0x" + v.toString(16).toUpperCase().padStart(width, "0");
+    const bytesOf = (id) => {
+      const code = container.escapeTable.indexOf(id);
+      if (code !== -1) return hex(code, 2);
+      const hi = (id >> 8) + container.threshold;
+      return hex(hi, 2) + " " + hex(id & 0xff, 2);
+    };
+    const pairTree = (id) => {
+      if (id < lexSize) return escapeHtml(describeToken(lexicon[id]));
+      const [l, r] = rules[id - lexSize];
+      return `(${pairTree(l)} ${pairTree(r)})`;
+    };
+
+    const uses = new Map();
+    for (const id of result.stages.sequence) uses.set(id, (uses.get(id) ?? 0) + 1);
+
+    const rows = top.map((id) => {
+      const words = expandToWords(id, container).map(describeToken);
+      let text = words.join(" ");
+      if (text.length > 300) text = text.slice(0, 298) + "…";
+      return `<tr>
+        <td>${bytesOf(id)}</td>
+        <td class="num">${fmt(wordCount[id])}</td>
+        <td class="num">${fmt(uses.get(id) ?? 0)}</td>
+        <td class="pairs">${pairTree(id)}</td>
+        <td class="words">${escapeHtml(text)}</td>
+      </tr>`;
+    });
+
+    $("longest-table").innerHTML = `
+      <thead><tr>
+        <th>Bytes</th><th class="num">Words</th><th class="num">Uses</th>
+        <th>Recursive pairs</th><th>Decoded</th>
+      </tr></thead>
+      <tbody>${rows.join("")}</tbody>`;
+    $("longest-note").textContent =
+      `Top ${fmt(top.length)} of ${fmt(rules.length)} grammar rules, ranked by words when fully expanded. ` +
+      `"Uses" is how often the id itself appears in the compressed stream — 0 means every occurrence got ` +
+      `folded into a still-larger rule.`;
+  }
+
+  function showCell(i) {
+    if (!stripState) return;
+    const { seq, lexSize, escapes, container } = stripState;
+    const id = seq[i];
+    const words = expandToWords(id, container);
+    const marker = id < lexSize && isSuffixMarker(container.lexicon[id]);
+    const kind = marker
+      ? (escapes.has(id) ? "1-byte suffix code" : "2-byte suffix marker")
+      : escapes.has(id) ? "1-byte escape" : id < lexSize ? "2-byte word" : "2-byte rule";
+    $("readout").innerHTML =
+      `<b>#${i} · id ${id} · ${kind} · ${words.length} word${words.length === 1 ? "" : "s"}</b><br>` +
+      escapeHtml(words.map(describeToken).join(" · "));
+  }
+
+  async function gzipSize(text) {
+    if (typeof CompressionStream === "undefined") return null;
+    try {
+      const stream = new Blob([text]).stream().pipeThrough(new CompressionStream("gzip"));
+      return (await new Response(stream).arrayBuffer()).byteLength;
+    } catch {
+      return null;
+    }
+  }
+
+  function escapeHtml(str) {
+    return str.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+  }
+
+  for (const evt of ["mouseover", "focusin", "click"]) {
+    $("strip").addEventListener(evt, (e) => {
+      const cell = e.target.closest(".cell");
+      if (cell) showCell(Number(cell.dataset.i));
+    });
+  }
+
+  $("run").addEventListener("click", run);
+  for (const id of ["n", "n-num", "suffix", "suffix-num"]) {
+    $(id).addEventListener("input", budget);
+  }
+  $("input").addEventListener("input", updateInputSize);
+  $("sample-kjv").addEventListener("click", () => { $("input").value = SAMPLES.kjv; updateInputSize(); run(); });
+  $("sample-repeat").addEventListener("click", () => { $("input").value = SAMPLES.repeat; updateInputSize(); run(); });
+
+  let kjvLoadPromise = null;
+  function loadFullKjv() {
+    if (window.KJV_TEXT) return Promise.resolve(window.KJV_TEXT);
+    if (kjvLoadPromise) return kjvLoadPromise;
+    kjvLoadPromise = new Promise((resolve, reject) => {
+      const s = document.createElement("script");
+      s.src = "kjv-data.js";
+      s.onload = () => resolve(window.KJV_TEXT);
+      s.onerror = () => reject(new Error("Could not load kjv-data.js — keep it next to demo.html."));
+      document.head.appendChild(s);
+    });
+    return kjvLoadPromise;
+  }
+  $("sample-full-kjv").addEventListener("click", () => {
+    const btn = $("sample-full-kjv");
+    const label = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = "Loading…";
+    loadFullKjv()
+      .then((text) => {
+        $("input").value = text;
+        updateInputSize();
+        run();
+      })
+      .catch((err) => {
+        $("result").innerHTML = `<p class="empty">${err.message}</p>`;
+      })
+      .finally(() => {
+        btn.disabled = false;
+        btn.textContent = label;
+      });
+  });
+  $("download").addEventListener("click", () => {
+    if (!latest) return;
+    const url = URL.createObjectURL(new Blob([latest.bytes], { type: "application/octet-stream" }));
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "text.rpr1";
+    a.click();
+    URL.revokeObjectURL(url);
+  });
+  document.addEventListener("keydown", (e) => {
+    if ((e.metaKey || e.ctrlKey) && e.key === "Enter") run();
+  });
+
+  void maxTokenIdFor;
+  budget();
+  $("input").value = SAMPLES.kjv;
+  updateInputSize();
+  run();
+})();
+</script>
+</body>
+</html>
