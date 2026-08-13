@@ -1,0 +1,8 @@
+{
+  "name": "repair-demo",
+  "private": true,
+  "description": "RPR1 — a generic Re-Pair word codec",
+  "devDependencies": {
+    "esbuild": "^0.28.2"
+  }
+}

@@ -1,0 +1,41 @@
+[tools]
+node = "24"
+
+[tasks.install]
+description = "Install the build toolchain (esbuild)"
+run = "npm install --no-audit --no-fund"
+sources = ["package.json"]
+outputs = ["node_modules/.package-lock.json"]
+
+[tasks.build]
+description = "Bundle repair-codec.ts to repair-codec.js for the browser"
+depends = ["install"]
+sources = ["repair-codec.ts"]
+outputs = ["repair-codec.js"]
+run = """
+npx esbuild repair-codec.ts --bundle --format=iife --global-name=RePair --target=es2020 \
+  --outfile=repair-codec.js
+"""
+
+[tasks.test]
+description = "Round-trip tests across the config space, plus a timing run"
+depends = ["install"]
+run = """
+npx esbuild repair-codec.test.ts --bundle --platform=node --format=cjs --outfile=test.cjs
+node test.cjs
+"""
+
+[tasks.data]
+description = "Regenerate kjv-data.js from kjv.csv"
+sources = ["kjv.csv", "build-kjv-data.js"]
+outputs = ["kjv-data.js"]
+run = "node build-kjv-data.js"
+
+[tasks.serve]
+description = "Serve the repo so demo.html can load its sibling scripts"
+depends = ["build"]
+run = "npx --yes serve . -l 8080"
+
+[tasks.clean]
+description = "Remove generated build output"
+run = "rm -f repair-codec.js test.cjs"
