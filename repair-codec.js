@@ -24,6 +24,7 @@ var RePair = (() => {
   __export(repair_codec_exports, {
     CodecError: () => CodecError,
     DEFAULT_CONFIG: () => DEFAULT_CONFIG,
+    SUFFIX_CODE_COUNT: () => SUFFIX_CODE_COUNT,
     assignSingleBytes: () => assignSingleBytes,
     buildLexicon: () => buildLexicon,
     decode: () => decode,
@@ -48,9 +49,9 @@ var RePair = (() => {
     sweepSingleByteCount: () => sweepSingleByteCount,
     tokenize: () => tokenize
   });
+  var SUFFIX_CODE_COUNT = 158 - 130 + 1;
   var DEFAULT_CONFIG = {
     singleByteCount: 85,
-    suffixCount: 20,
     minPairCount: 3,
     maxPairs: 65535,
     maxSuffixLength: 4
@@ -376,11 +377,11 @@ var RePair = (() => {
     }
     return entries;
   }
-  function planLexiconSuffixes(lexicon, options) {
-    if (options.count <= 0 || lexicon.length === 0) return [];
+  function planLexiconSuffixes(lexicon, options = {}) {
+    if (lexicon.length === 0) return [];
     const maxChars = options.maxSuffixLength ?? 4;
     const decoder = new TextDecoder();
-    const codeTagSize = varintSize(options.count - 1 << 2 | MODE_SUFFIX);
+    const codeTagSize = varintSize(SUFFIX_CODE_COUNT - 1 << 2 | MODE_SUFFIX);
     const matches = [];
     const totals = /* @__PURE__ */ new Map();
     let previous = EMPTY;
@@ -406,7 +407,7 @@ var RePair = (() => {
     }
     const chosen = [];
     const spokenFor = new Uint8Array(lexicon.length);
-    for (let round = 0; round < options.count; round++) {
+    for (let round = 0; round < SUFFIX_CODE_COUNT; round++) {
       let best = "";
       let bestScore = 0;
       for (const [suffix, total] of totals) {
@@ -625,14 +626,11 @@ var RePair = (() => {
   }
   function encode(text, config = {}) {
     const cfg = { ...DEFAULT_CONFIG, ...config };
-    if (cfg.singleByteCount < 0 || cfg.suffixCount < 0) {
+    if (cfg.singleByteCount < 0) {
       throw new CodecError("byte budgets cannot be negative");
     }
     if (cfg.singleByteCount > 255) {
       throw new CodecError(`${cfg.singleByteCount} single-byte codes leaves no room for two-byte tokens`);
-    }
-    if (cfg.suffixCount > 255) {
-      throw new CodecError("the suffix table holds at most 255 codes");
     }
     const tokens = tokenize(text);
     const { lexicon, ids } = buildLexicon(tokens);
@@ -651,10 +649,7 @@ var RePair = (() => {
     const escapeTable = assignSingleBytes(sequence, cfg.singleByteCount);
     const threshold = escapeTable.length;
     const { stream, singleByteTokens, twoByteTokens } = emitStream(sequence, escapeTable, threshold);
-    const suffixes = planLexiconSuffixes(lexicon, {
-      count: cfg.suffixCount,
-      maxSuffixLength: cfg.maxSuffixLength
-    });
+    const suffixes = planLexiconSuffixes(lexicon, { maxSuffixLength: cfg.maxSuffixLength });
     const container = { threshold, suffixes, lexicon, escapeTable, rules, stream };
     const lexiconEntries = planLexiconEntries(lexicon, suffixes);
     const bytes = serialize(container);
@@ -718,10 +713,7 @@ var RePair = (() => {
       maxTokenId: maxTokenIdFor(range.from ?? 0),
       firstRuleId: lexicon.length
     });
-    const suffixes = planLexiconSuffixes(lexicon, {
-      count: cfg.suffixCount,
-      maxSuffixLength: cfg.maxSuffixLength
-    });
+    const suffixes = planLexiconSuffixes(lexicon, { maxSuffixLength: cfg.maxSuffixLength });
     return sweepFromGrammar(lexicon, sequence, rules, { ...range, suffixes });
   }
   function sweepFromGrammar(lexicon, sequence, rules, options = {}) {

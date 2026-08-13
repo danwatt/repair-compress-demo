@@ -231,8 +231,8 @@ footer a { color: var(--hot); }
     A generic rebuild of the text compression in the 1993 Game Boy KJV: tokenize into words, fold
     frequent adjacent pairs into grammar rules, store the sorted word list front-coded with a
     suffix code for common endings, then reserve low byte values as one-byte codes for the hottest
-    symbols. The cartridge reserved 0x55 of those and had roughly 20 suffixes. Paste text, move the
-    knobs, and watch every byte get counted — lexicon and tables included.
+    symbols. The cartridge reserved 0x55 of those and spent 0x82–0x9E on suffixes. Paste text, move
+    the knobs, and watch every byte get counted — lexicon and tables included.
   </p>
 
   <hr class="hr">
@@ -259,14 +259,6 @@ footer a { color: var(--hot); }
             <input type="number" id="n-num" min="0" max="255" value="85">
           </div>
           <p class="note">Each reserved byte removes 256 addresses from the two-byte space.</p>
-        </div>
-        <div class="knob">
-          <label for="suffix">Suffix codes — S</label>
-          <div class="row">
-            <input type="range" id="suffix" min="0" max="255" value="20">
-            <input type="number" id="suffix-num" min="0" max="255" value="20">
-          </div>
-          <p class="note">Lexicon only: "testing" is stored as "share 4, then -ing". Costs N nothing.</p>
         </div>
         <div class="knob">
           <label for="minpair">Minimum pair occurrences</label>
@@ -373,7 +365,6 @@ And God said, Let there be lights in the firmament of the heaven to divide the d
   };
 
   let latest = null;
-  let latestConfig = null;
   let stripState = null;
 
   function syncPair(rangeId, numId, value, max) {
@@ -384,11 +375,7 @@ And God said, Let there be lights in the firmament of the heaven to divide the d
   }
 
   function budget() {
-    // Suffix codes live in the lexicon, so they cost N nothing.
-    return {
-      suffix: syncPair("suffix", "suffix-num", $("suffix").value, 255),
-      n: syncPair("n", "n-num", $("n").value, 255),
-    };
+    return { n: syncPair("n", "n-num", $("n").value, 255) };
   }
 
   function updateInputSize() {
@@ -402,14 +389,12 @@ And God said, Let there be lights in the firmament of the heaven to divide the d
       $("result").innerHTML = '<p class="empty">Nothing to compress yet — paste some text first.</p>';
       return;
     }
-    const { n, suffix } = budget();
+    const { n } = budget();
     const config = {
       singleByteCount: n,
-      suffixCount: suffix,
       minPairCount: Math.max(2, Number($("minpair").value) || 3),
       maxPairs: Math.max(0, Number($("maxrules").value) || 0),
     };
-    latestConfig = config;
     $("run").disabled = true;
     $("timing").textContent = "working…";
 
@@ -485,10 +470,8 @@ And God said, Let there be lights in the firmament of the heaven to divide the d
            spelling the ending of ${fmt(s.entriesSuffixed)} of ${fmt(s.distinctTerminals)} entries with a code instead of letters,
            worth ${fmt(s.lexiconBytesSaved)} bytes after the ${fmt(z.suffixTable)}-byte table. <b>The stream is untouched:</b>
            "testing" is still one id, it is just cheaper to store.</p>`
-        : (latestConfig && latestConfig.suffixCount > 0
-          ? `<p class="chart-note">No ending repeated often enough to earn a code. Front coding had already taken the shared
-             prefixes, and what is left over here is too varied to be worth a table.</p>`
-          : "")}
+        : `<p class="chart-note">No ending repeated often enough to earn a code. Front coding had already taken the shared
+             prefixes, and what is left over here is too varied to be worth a table.</p>`}
       ${z.lexicon > z.total * 0.35 ? `<p class="chart-note">The lexicon is ${pct(z.lexicon / z.total)} of the output here. On the cartridge one lexicon covered the whole Bible, so paste more text to see the tables amortize.</p>` : ""}
       <div class="grid" style="margin-top:22px">
         <div class="stat-grid">
@@ -809,7 +792,7 @@ And God said, Let there be lights in the firmament of the heaven to divide the d
   }
 
   $("run").addEventListener("click", run);
-  for (const id of ["n", "n-num", "suffix", "suffix-num"]) {
+  for (const id of ["n", "n-num"]) {
     $(id).addEventListener("input", budget);
   }
   $("input").addEventListener("input", updateInputSize);

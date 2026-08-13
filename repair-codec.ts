@@ -45,14 +45,18 @@
 // Types
 // ---------------------------------------------------------------------------
 
+/**
+ * Size of the lexicon's suffix table, fixed at the byte range the original set
+ * aside for endings: 0x82–0x9E, so 29 codes. Not a knob. The table costs nothing
+ * in the token stream — these codes live in the lexicon section — and the writer
+ * stops early anyway once no remaining ending pays for its own table entry, so
+ * there is nothing to tune: taking the whole range can only help.
+ */
+export const SUFFIX_CODE_COUNT = 0x9e - 0x82 + 1;
+
 export interface CodecConfig {
   /** Reserved single-byte codes for whole symbols. The original used 0x55 (85). */
   singleByteCount: number;
-  /**
-   * Size of the lexicon's suffix table. Costs nothing in the token stream — these
-   * codes live in the lexicon section. The cartridge had roughly 20 (0x82–0x9E).
-   */
-  suffixCount: number;
   /** A pair must occur at least this many times to earn a rule. Original: 3. */
   minPairCount: number;
   /** Hard cap on grammar rules, on top of the cap implied by the id space. */
@@ -63,7 +67,6 @@ export interface CodecConfig {
 
 export const DEFAULT_CONFIG: CodecConfig = {
   singleByteCount: 0x55,
-  suffixCount: 20,
   minPairCount: 3,
   maxPairs: 65535,
   maxSuffixLength: 4,
@@ -588,8 +591,9 @@ export interface LexiconEntry {
 /**
  * Two bits of the length varint say how the rest of the entry is spelled:
  * literal bytes, a suffix code alone, or literal bytes then a code. A code in
- * MODE_SUFFIX rides in the varint itself, so a table of up to 32 endings makes
- * "testing" cost two bytes after "tested": share 4, apply -ing.
+ * MODE_SUFFIX rides in the varint itself, and a table of up to 32 endings keeps
+ * that varint one byte — which is why SUFFIX_CODE_COUNT's 29 is free. So
+ * "testing" costs two bytes after "tested": share 4, apply -ing.
  */
 const MODE_LITERAL = 0;
 const MODE_SUFFIX = 1;
@@ -673,13 +677,13 @@ export function planLexiconEntries(
  */
 export function planLexiconSuffixes(
   lexicon: readonly string[],
-  options: { count: number; maxSuffixLength?: number },
+  options: { maxSuffixLength?: number } = {},
 ): string[] {
-  if (options.count <= 0 || lexicon.length === 0) return [];
+  if (lexicon.length === 0) return [];
   const maxChars = options.maxSuffixLength ?? 4;
   const decoder = new TextDecoder();
   // What a code will cost inside the tag once the table is full.
-  const codeTagSize = varintSize(((options.count - 1) << 2) | MODE_SUFFIX);
+  const codeTagSize = varintSize(((SUFFIX_CODE_COUNT - 1) << 2) | MODE_SUFFIX);
 
   type Match = { suffix: string; saving: number };
   const matches: Match[][] = [];
@@ -712,7 +716,7 @@ export function planLexiconSuffixes(
 
   const chosen: string[] = [];
   const spokenFor = new Uint8Array(lexicon.length);
-  for (let round = 0; round < options.count; round++) {
+  for (let round = 0; round < SUFFIX_CODE_COUNT; round++) {
     let best = "";
     let bestScore = 0;
     for (const [suffix, total] of totals) {
@@ -955,14 +959,11 @@ export function maxTokenIdFor(threshold: number): number {
 
 export function encode(text: string, config: Partial<CodecConfig> = {}): EncodeResult {
   const cfg = { ...DEFAULT_CONFIG, ...config };
-  if (cfg.singleByteCount < 0 || cfg.suffixCount < 0) {
+  if (cfg.singleByteCount < 0) {
     throw new CodecError("byte budgets cannot be negative");
   }
   if (cfg.singleByteCount > 255) {
     throw new CodecError(`${cfg.singleByteCount} single-byte codes leaves no room for two-byte tokens`);
-  }
-  if (cfg.suffixCount > 255) {
-    throw new CodecError("the suffix table holds at most 255 codes");
   }
 
   const tokens = tokenize(text);
@@ -989,10 +990,7 @@ export function encode(text: string, config: Partial<CodecConfig> = {}): EncodeR
   const threshold = escapeTable.length;
   const { stream, singleByteTokens, twoByteTokens } = emitStream(sequence, escapeTable, threshold);
 
-  const suffixes = planLexiconSuffixes(lexicon, {
-    count: cfg.suffixCount,
-    maxSuffixLength: cfg.maxSuffixLength,
-  });
+  const suffixes = planLexiconSuffixes(lexicon, { maxSuffixLength: cfg.maxSuffixLength });
   const container: Container = { threshold, suffixes, lexicon, escapeTable, rules, stream };
   const lexiconEntries = planLexiconEntries(lexicon, suffixes);
   const bytes = serialize(container);
@@ -1086,10 +1084,7 @@ export function sweepSingleByteCount(
     maxTokenId: maxTokenIdFor(range.from ?? 0),
     firstRuleId: lexicon.length,
   });
-  const suffixes = planLexiconSuffixes(lexicon, {
-    count: cfg.suffixCount,
-    maxSuffixLength: cfg.maxSuffixLength,
-  });
+  const suffixes = planLexiconSuffixes(lexicon, { maxSuffixLength: cfg.maxSuffixLength });
   return sweepFromGrammar(lexicon, sequence, rules, { ...range, suffixes });
 }
 

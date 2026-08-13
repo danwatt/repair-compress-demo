@@ -12,6 +12,7 @@ import {
   buildLexicon,
   serialize,
   deserialize,
+  measure,
   plainLexiconBytes,
   CodecError,
 } from "./repair-codec";
@@ -65,11 +66,11 @@ check("marker spacing normalized", detokenize(tok("a % b")) === "a%b");
 // Vary the knobs.
 for (const n of [0, 1, 16, 85, 128, 200, 235]) {
   for (const minPairCount of [2, 3, 5]) {
-    for (const suffixCount of [0, 8, 20]) {
+    for (const maxSuffixLength of [1, 4, 8]) {
       const text = samples.genesis + samples.repetitive;
-      const result = encode(text, { singleByteCount: n, minPairCount, suffixCount });
+      const result = encode(text, { singleByteCount: n, minPairCount, maxSuffixLength });
       check(
-        `round trip N=${n} min=${minPairCount} suffix=${suffixCount}`,
+        `round trip N=${n} min=${minPairCount} suffixLen=${maxSuffixLength}`,
         decode(result.bytes) === text,
         `threshold=${result.stats.threshold}`,
       );
@@ -91,33 +92,33 @@ const morph =
   "test tests tested testing walk walks walked walking talk talks talked talking " +
   "jump jumps jumped jumping work works worked working ".repeat(3);
 const morphLexicon = buildLexicon(tok(morph)).lexicon;
-const morphSuffixes = planLexiconSuffixes(morphLexicon, { count: 20 });
+const morphSuffixes = planLexiconSuffixes(morphLexicon);
 check("finds -ing / -ed / -s", ["ing", "ed", "s"].every((s) => morphSuffixes.includes(s)), morphSuffixes.join(","));
 check("glue token renders readably", describeToken("") === "␀");
 
-// Suffix codes are a lexicon device. Turning the table on must not move a single
-// byte of the token stream — only what the lexicon costs to store.
+// Suffix codes are a lexicon device. The same grammar stored without the table
+// must give byte-for-byte the same stream, and must never come out smaller.
 for (const [name, text] of Object.entries(samples)) {
-  const withSuffix = encode(text, { suffixCount: 20 });
-  const without = encode(text, { suffixCount: 0 });
+  const withSuffix = encode(text);
+  const bare = { ...withSuffix.container, suffixes: [] };
+  const without = measure(bare);
   check(`suffix round trip: ${name}`, decode(withSuffix.bytes) === text);
+  check(`suffix-free round trip: ${name}`, decode(serialize(bare)) === text);
   check(
     `suffix table leaves the stream alone: ${name}`,
-    withSuffix.stats.sizes.stream === without.stats.sizes.stream &&
-      withSuffix.stats.sequenceLength === without.stats.sequenceLength &&
-      withSuffix.stats.ruleCount === without.stats.ruleCount,
-    `${without.stats.sizes.stream} vs ${withSuffix.stats.sizes.stream}`,
+    withSuffix.stats.sizes.stream === without.stream,
+    `${without.stream} vs ${withSuffix.stats.sizes.stream}`,
   );
   check(
     `suffix table never costs bytes: ${name}`,
-    withSuffix.stats.sizes.total <= without.stats.sizes.total,
-    `${without.stats.sizes.total} -> ${withSuffix.stats.sizes.total}`,
+    withSuffix.stats.sizes.total <= without.total,
+    `${without.total} -> ${withSuffix.stats.sizes.total}`,
   );
   if (text.length > 200) {
     console.log(
       `     ${name}: suffixes ${withSuffix.stats.suffixes.slice(0, 6).join(" ") || "none"} · ` +
         `${withSuffix.stats.entriesSuffixed} entries coded · ` +
-        `${without.stats.sizes.total} -> ${withSuffix.stats.sizes.total} bytes`,
+        `${without.total} -> ${withSuffix.stats.sizes.total} bytes`,
     );
   }
 }
@@ -125,7 +126,7 @@ for (const [name, text] of Object.entries(samples)) {
 // All three storage modes have to survive the round trip, including
 // literal-plus-code, where an ending is coded onto bytes that are spelled out.
 const modeSample = "testing tested tester zooming boomed loomed gnarling flying";
-const modeResult = encode(modeSample, { suffixCount: 8 });
+const modeResult = encode(modeSample);
 const modeEntries = planLexiconEntries(modeResult.container.lexicon, modeResult.container.suffixes);
 check(
   "planLexiconEntries sizes match what serialize writes",
