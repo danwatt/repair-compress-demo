@@ -21,6 +21,14 @@
   --hot: #e8b923;
   --hot-soft: #f6d878;
   --warn: #ffb454;
+  /* Stream strip: one hue per symbol kind, each a 10-step ramp by words encoded. */
+  --sym-esc: #ffb454;
+  --sym-word: #008a63;
+  --sym-rule: #163262;
+  --sym-esc-lo: color-mix(in oklab, var(--sym-esc) 62%, var(--ground));
+  --sym-esc-hi: color-mix(in oklab, var(--sym-esc) 55%, #ffffff);
+  --sym-rule-lo: color-mix(in oklab, var(--sym-rule) 62%, var(--ground));
+  --sym-rule-hi: color-mix(in oklab, var(--sym-rule) 55%, #ffffff);
   --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
   --pixel: "Silkscreen", "IBM Plex Mono", monospace;
 }
@@ -143,6 +151,7 @@ button[disabled] { opacity: .5; cursor: default; }
 .legend { display: flex; flex-wrap: wrap; gap: 4px 18px; margin-top: 10px; font-size: 11px; }
 .legend span { display: flex; align-items: center; gap: 6px; color: var(--ink-soft); }
 .legend i { width: 10px; height: 10px; display: inline-block; border-radius: 1px; }
+.legend i.ramp { width: 34px; background: linear-gradient(to right, var(--lo), var(--hi)); }
 .legend b { color: var(--ink); font-weight: 500; }
 
 table { width: 100%; border-collapse: collapse; font-size: 12px; }
@@ -175,10 +184,26 @@ td.num { text-align: right; font-variant-numeric: tabular-nums; }
 .chart-note { font-size: 11px; color: var(--ink-soft); margin-top: 8px; }
 
 .strip { display: flex; flex-wrap: wrap; gap: 2px; margin-bottom: 10px; }
-.cell { height: 16px; border-radius: 1px; cursor: default; }
-.cell.b1 { width: 8px; background: var(--dmg-4); }
-.cell.b2t { width: 18px; background: var(--dmg-3); }
-.cell.b2r { width: 18px; background: var(--dmg-2); }
+.cell {
+  height: 16px; border-radius: 1px; cursor: default;
+  --t: 0;
+  background: var(--base);
+  background: color-mix(in oklab, var(--hi) calc(var(--t) * 100%), var(--lo));
+}
+.cell.b1 { width: 8px; --base: var(--sym-esc); --lo: var(--sym-esc-lo); --hi: var(--sym-esc-hi); }
+/* Single word is always exactly one word — flat tone, no ramp. */
+.cell.b2t { width: 18px; background: var(--sym-word); }
+.cell.b2r { width: 18px; --base: var(--sym-rule); --lo: var(--sym-rule-lo); --hi: var(--sym-rule-hi); }
+.cell.s0 { --t: 0; }
+.cell.s1 { --t: .111; }
+.cell.s2 { --t: .222; }
+.cell.s3 { --t: .333; }
+.cell.s4 { --t: .444; }
+.cell.s5 { --t: .556; }
+.cell.s6 { --t: .667; }
+.cell.s7 { --t: .778; }
+.cell.s8 { --t: .889; }
+.cell.s9 { --t: 1; }
 .readout {
   min-height: 44px; padding: 8px 10px; background: var(--panel);
   border: 1px solid var(--rule); border-radius: 2px; font-size: 12px; color: var(--ink-soft);
@@ -290,9 +315,10 @@ footer a { color: var(--hot); }
     <div class="strip" id="strip"></div>
     <div class="readout" id="readout">Hover or tap a cell to expand it back to words.</div>
     <div class="legend">
-      <span><i style="background:var(--dmg-4)"></i><b>1 byte</b> escape code</span>
-      <span><i style="background:var(--dmg-3)"></i><b>2 bytes</b> single word</span>
-      <span><i style="background:var(--dmg-2)"></i><b>2 bytes</b> grammar rule</span>
+      <span><i class="ramp" style="--lo:var(--sym-esc-lo);--hi:var(--sym-esc-hi)"></i><b>1 byte</b> escape code</span>
+      <span><i style="background:var(--sym-word)"></i><b>2 bytes</b> single word</span>
+      <span><i class="ramp" style="--lo:var(--sym-rule-lo);--hi:var(--sym-rule-hi)"></i><b>2 bytes</b> grammar rule</span>
+      <span id="shade-legend"></span>
     </div>
   </section>
 
@@ -652,17 +678,36 @@ And God said, Let there be lights in the firmament of the heaven to divide the d
     const seq = result.stages.sequence.slice(0, 1024);
     const lexicon = result.container.lexicon;
     const lexSize = lexicon.length;
-    const rules = result.stages.rules;
+    const rules = result.container.rules;
     const escapes = new Set(result.container.escapeTable);
+
+    // Words per token id, bottom-up: rules only ever reference lower ids.
+    const wordCount = new Float64Array(lexSize + rules.length);
+    for (let i = 0; i < lexSize; i++) wordCount[i] = 1;
+    for (let i = 0; i < rules.length; i++) {
+      const [l, r] = rules[i];
+      wordCount[lexSize + i] = wordCount[l] + wordCount[r];
+    }
+
+    // 10-step ramp, log-scaled so the long tail of huge rules doesn't flatten the rest.
+    const maxWords = seq.reduce((m, id) => Math.max(m, wordCount[id] ?? 1), 1);
+    const span = Math.log(maxWords);
+    const shade = (words) =>
+      span <= 0 ? 4 : Math.max(0, Math.min(9, Math.round((Math.log(words) / span) * 9)));
 
     stripState = { seq, lexSize, escapes, container: result.container };
     $("stream-section").hidden = false;
     $("strip").innerHTML = seq
       .map((id, i) => {
-        const cls = escapes.has(id) ? "b1" : id < lexSize ? "b2t" : "b2r";
-        return `<div class="cell ${cls}" data-i="${i}" tabindex="0"></div>`;
+        const single = !escapes.has(id) && id < lexSize;
+        const cls = escapes.has(id) ? "b1" : single ? "b2t" : "b2r";
+        // b2t is always one word, so it gets no shade class.
+        const step = single ? "" : ` s${shade(wordCount[id] ?? 1)}`;
+        return `<div class="cell ${cls}${step}" data-i="${i}" tabindex="0"></div>`;
       })
       .join("");
+    $("shade-legend").textContent =
+      `shade = words encoded (1 → ${fmt(maxWords)})`;
     $("readout").textContent = "Hover or tap a cell to expand it back to words.";
   }
 
