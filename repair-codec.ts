@@ -15,7 +15,8 @@
  *     4 assignSingleBytes -> escape table      top-N symbols get a 1-byte code
  *     5 emitStream      -> Uint8Array          1 byte if < N, else 2 bytes
  *     6 planLexiconSuffixes -> suffix table    endings worth a code of their own
- *     7 serialize       -> Uint8Array          header + lexicon + tables + stream
+ *     7 planLexiconHeaderCodebook              repeated entry headers get a code
+ *     8 serialize       -> Uint8Array          header + lexicon + tables + stream
  *
  * The lexicon is stored front-coded: entries are sorted by their UTF-8 bytes and
  * each one records how many leading bytes it shares with its predecessor, so
@@ -128,6 +129,10 @@ export interface EncodeResult {
     entriesChained: number;
     /** Lexicon bytes the suffix table saves, net of what the table itself costs. */
     lexiconBytesSaved: number;
+    /** Distinct (shared-prefix, tag) pairs carried by the lexicon header codebook. */
+    lexiconHeaderCodes: number;
+    /** Lexicon bytes saved by that codebook, including its own entries. */
+    lexiconHeaderBytesSaved: number;
     tokenCount: number;
     distinctTerminals: number;
     /** What the lexicon would have cost stored in full, for the front-coding delta. */
@@ -619,7 +624,7 @@ export interface LexiconEntry {
   literal: Uint8Array;
   /** Suffix table indices, applied in order. Empty when the entry uses none. */
   codes: number[];
-  /** Encoded size, including the varints and any code bytes. */
+  /** Encoded size before the repeated header pair is replaced by a code. */
   bytes: number;
 }
 
@@ -643,6 +648,113 @@ const MODE_CHAIN = 3;
 /** Chained codes are written as raw bytes, so bit 7 is the continuation flag. */
 const CHAIN_MORE = 0x80;
 const MAX_CHAINABLE_CODE = 0x7f;
+
+/**
+ * The lexicon repeats the same (shared-prefix, tag) headers heavily. A small
+ * codebook turns the hottest pairs into a one-byte varint. Keeping this below
+ * 128 means every code is exactly one byte even on an 8-bit decoder.
+ */
+export const MAX_LEXICON_HEADER_CODES = 0x7f;
+
+/** One decoded lexicon-entry header: shared prefix length and tagged payload. */
+export type LexiconHeader = readonly [shared: number, tag: number];
+
+function lexiconEntryTag(entry: LexiconEntry): number {
+  if (entry.codes.length > 1) return (entry.codes[0] << 2) | MODE_CHAIN;
+  if (entry.codes.length === 1 && entry.literal.length === 0) {
+    return (entry.codes[0] << 2) | MODE_SUFFIX;
+  }
+  if (entry.codes.length === 1) return (entry.literal.length << 2) | MODE_BOTH;
+  return (entry.literal.length << 2) | MODE_LITERAL;
+}
+
+const lexiconHeaderKey = (shared: number, tag: number): string => `${shared},${tag}`;
+
+interface HeaderCandidate {
+  shared: number;
+  tag: number;
+  count: number;
+}
+
+/**
+ * Pick the header-codebook size and contents that minimize the serialized
+ * lexicon exactly. A lexicon entry begins with one varint. Values below K are
+ * codebook indices; all other values carry `shared + K`, followed by the raw
+ * tag. The offset leaves the two cases unambiguous without an escape byte.
+ *
+ * Trying all K <= 127 is encoder-only work. Decoding is one comparison and
+ * either a two-field table lookup or one subtraction plus a second varint.
+ */
+export function planLexiconHeaderCodebook(entries: readonly LexiconEntry[]): LexiconHeader[] {
+  const byKey = new Map<string, HeaderCandidate>();
+  for (const entry of entries) {
+    const tag = lexiconEntryTag(entry);
+    const key = lexiconHeaderKey(entry.shared, tag);
+    const candidate = byKey.get(key);
+    if (candidate) candidate.count++;
+    else byKey.set(key, { shared: entry.shared, tag, count: 1 });
+  }
+
+  const candidates = [...byKey.values()];
+  let best: HeaderCandidate[] = [];
+  let bestBytes = Infinity;
+  const limit = Math.min(MAX_LEXICON_HEADER_CODES, candidates.length);
+
+  for (let count = 0; count <= limit; count++) {
+    const ranked = candidates
+      .map((candidate) => {
+        const rawBytes = varintSize(candidate.shared + count) + varintSize(candidate.tag);
+        const tableBytes = varintSize(candidate.shared) + varintSize(candidate.tag);
+        return {
+          candidate,
+          saving: candidate.count * (rawBytes - 1) - tableBytes,
+        };
+      })
+      .sort((a, b) =>
+        (b.saving - a.saving) ||
+        (b.candidate.count - a.candidate.count) ||
+        (a.candidate.shared - b.candidate.shared) ||
+        (a.candidate.tag - b.candidate.tag));
+    const chosen = ranked.slice(0, count);
+    const chosenKeys = new Set(chosen.map(({ candidate }) => lexiconHeaderKey(candidate.shared, candidate.tag)));
+
+    let bytes = 0;
+    for (const candidate of candidates) {
+      if (chosenKeys.has(lexiconHeaderKey(candidate.shared, candidate.tag))) {
+        bytes += varintSize(candidate.shared) + varintSize(candidate.tag) + candidate.count;
+      } else {
+        bytes += candidate.count *
+          (varintSize(candidate.shared + count) + varintSize(candidate.tag));
+      }
+    }
+    if (bytes < bestBytes) {
+      bestBytes = bytes;
+      best = chosen.map(({ candidate }) => candidate);
+    }
+  }
+
+  return best.map(({ shared, tag }) => [shared, tag] as const);
+}
+
+function measureLexiconStorage(
+  entries: readonly LexiconEntry[],
+  codebook: readonly LexiconHeader[],
+): number {
+  const index = new Map<string, number>();
+  codebook.forEach(([shared, tag], i) => index.set(lexiconHeaderKey(shared, tag), i));
+  let bytes = 0;
+  for (const [shared, tag] of codebook) bytes += varintSize(shared) + varintSize(tag);
+  for (const entry of entries) {
+    const tag = lexiconEntryTag(entry);
+    const code = index.get(lexiconHeaderKey(entry.shared, tag));
+    const oldHeaderBytes = varintSize(entry.shared) + varintSize(tag);
+    const newHeaderBytes = code === undefined
+      ? varintSize(entry.shared + codebook.length) + varintSize(tag)
+      : varintSize(code);
+    bytes += entry.bytes - oldHeaderBytes + newHeaderBytes;
+  }
+  return bytes;
+}
 
 function matchesAt(haystack: Uint8Array, offset: number, needle: Uint8Array): boolean {
   if (needle.length === 0 || offset < 0 || offset + needle.length > haystack.length) return false;
@@ -883,8 +995,7 @@ export function planLexiconSuffixes(
 
   const chosen: string[] = [];
   let plan = planLexicon(lexicon, chosen, true);
-  let total = 0;
-  for (const entry of plan.entries) total += entry.bytes;
+  let total = measureLexiconStorage(plan.entries, planLexiconHeaderCodebook(plan.entries));
 
   for (let round = 0; round < SUFFIX_CODE_COUNT; round++) {
     let best = "";
@@ -932,8 +1043,7 @@ export function planLexiconSuffixes(
     // The score is an estimate: it prices one code against a plan that does not
     // have it yet. Confirm against the real plan, and stop if it did not pay.
     const trial = planLexicon(lexicon, [...chosen, best], true);
-    let trialTotal = 0;
-    for (const entry of trial.entries) trialTotal += entry.bytes;
+    const trialTotal = measureLexiconStorage(trial.entries, planLexiconHeaderCodebook(trial.entries));
     if (trialTotal + suffixTableCost(best) >= total) break;
 
     chosen.push(best);
@@ -949,9 +1059,9 @@ export function planLexiconSuffixes(
 // ---------------------------------------------------------------------------
 
 const MAGIC = [0x52, 0x50, 0x52, 0x31]; // "RPR1"
-/** 4 chains suffix codes; 3 added the table; 2 front-coded only; 1 stored entries in full. */
-const FORMAT_VERSION = 4;
-const HEADER_BYTES = 15;
+/** 5 codes lexicon headers; 4 chains suffix codes; 3 added the suffix table. */
+const FORMAT_VERSION = 5;
+const HEADER_BYTES = 16;
 
 class ByteWriter {
   private bytes: number[] = [];
@@ -1024,8 +1134,8 @@ export function plainLexiconBytes(lexicon: readonly string[]): number {
 
 export function measure(container: Container, entries?: readonly LexiconEntry[]): SectionSizes {
   const planned = entries ?? planLexiconEntries(container.lexicon, container.suffixes);
-  let lexicon = 0;
-  for (const entry of planned) lexicon += entry.bytes;
+  const headerCodebook = planLexiconHeaderCodebook(planned);
+  const lexicon = measureLexiconStorage(planned, headerCodebook);
   let suffixTable = 0;
   for (const suffix of container.suffixes) suffixTable += suffixTableCost(suffix);
   const escapeTable = container.escapeTable.length * 2;
@@ -1043,6 +1153,11 @@ export function measure(container: Container, entries?: readonly LexiconEntry[])
 }
 
 export function serialize(container: Container): Uint8Array {
+  const entries = planLexiconEntries(container.lexicon, container.suffixes);
+  const headerCodebook = planLexiconHeaderCodebook(entries);
+  const headerIndex = new Map<string, number>();
+  headerCodebook.forEach(([shared, tag], i) => headerIndex.set(lexiconHeaderKey(shared, tag), i));
+
   const w = new ByteWriter();
   for (const b of MAGIC) w.u8(b);
   w.u8(FORMAT_VERSION);
@@ -1052,28 +1167,34 @@ export function serialize(container: Container): Uint8Array {
   w.u32(container.stream.length);
   if (container.suffixes.length > 255) throw new CodecError("the suffix table holds at most 255 codes");
   w.u8(container.suffixes.length);
+  w.u8(headerCodebook.length);
   for (const suffix of container.suffixes) {
     const bytes = ENCODER.encode(suffix);
     w.varint(bytes.length);
     w.raw(bytes);
   }
-  // Front-coded: shared prefix length, then a tagged length, then the rest.
-  for (const entry of planLexiconEntries(container.lexicon, container.suffixes)) {
-    w.varint(entry.shared);
+  for (const [shared, tag] of headerCodebook) {
+    w.varint(shared);
+    w.varint(tag);
+  }
+  // Front-coded: a codebook index or offset shared-prefix length, then the tag
+  // on the raw path, followed by the entry payload.
+  for (const entry of entries) {
+    const tag = lexiconEntryTag(entry);
+    const headerCode = headerIndex.get(lexiconHeaderKey(entry.shared, tag));
+    if (headerCode === undefined) {
+      w.varint(entry.shared + headerCodebook.length);
+      w.varint(tag);
+    } else {
+      w.varint(headerCode);
+    }
     if (entry.codes.length > 1) {
-      w.varint((entry.codes[0] << 2) | MODE_CHAIN);
       for (let i = 1; i < entry.codes.length; i++) {
         w.u8(entry.codes[i] | (i < entry.codes.length - 1 ? CHAIN_MORE : 0));
       }
-    } else if (entry.codes.length === 1 && entry.literal.length === 0) {
-      w.varint((entry.codes[0] << 2) | MODE_SUFFIX);
-    } else if (entry.codes.length === 1) {
-      w.varint((entry.literal.length << 2) | MODE_BOTH);
-      w.raw(entry.literal);
-      w.u8(entry.codes[0]);
     } else {
-      w.varint((entry.literal.length << 2) | MODE_LITERAL);
       w.raw(entry.literal);
+      if (entry.codes.length === 1 && entry.literal.length > 0) w.u8(entry.codes[0]);
     }
   }
   for (const id of container.escapeTable) w.u16(id);
@@ -1105,6 +1226,10 @@ export function deserialize(bytes: Uint8Array): Container {
 
   const decoder = new TextDecoder();
   const suffixCount = r.u8();
+  const headerCodeCount = r.u8();
+  if (headerCodeCount > MAX_LEXICON_HEADER_CODES) {
+    throw new CodecError(`lexicon header table has ${headerCodeCount} codes; maximum is ${MAX_LEXICON_HEADER_CODES}`);
+  }
   const suffixBytes: Uint8Array[] = [];
   const suffixes: string[] = [];
   for (let i = 0; i < suffixCount; i++) {
@@ -1112,15 +1237,24 @@ export function deserialize(bytes: Uint8Array): Container {
     suffixBytes.push(bytes);
     suffixes.push(decoder.decode(bytes));
   }
+  const headerCodebook: LexiconHeader[] = [];
+  for (let i = 0; i < headerCodeCount; i++) headerCodebook.push([r.varint(), r.varint()]);
 
   const lexicon: string[] = [];
   let previous = EMPTY;
   for (let i = 0; i < lexiconSize; i++) {
-    const shared = r.varint();
+    const header = r.varint();
+    let shared: number;
+    let tag: number;
+    if (header < headerCodeCount) {
+      [shared, tag] = headerCodebook[header];
+    } else {
+      shared = header - headerCodeCount;
+      tag = r.varint();
+    }
     if (shared > previous.length) {
       throw new CodecError(`lexicon entry ${i} shares ${shared} bytes with a ${previous.length}-byte entry`);
     }
-    const tag = r.varint();
     const mode = tag & 3;
     const n = tag >>> 2;
     const ending = (code: number): Uint8Array => {
@@ -1211,14 +1345,20 @@ export function encode(text: string, config: Partial<CodecConfig> = {}): EncodeR
   const suffixes = planLexiconSuffixes(lexicon, { maxSuffixLength: cfg.maxSuffixLength });
   const container: Container = { threshold, suffixes, lexicon, escapeTable, rules, stream };
   const lexiconEntries = planLexiconEntries(lexicon, suffixes);
+  const lexiconHeaderCodebook = planLexiconHeaderCodebook(lexiconEntries);
   const bytes = serialize(container);
   const sizes = measure(container, lexiconEntries);
   const originalBytes = ENCODER.encode(text).length;
   const { maxDepth, maxWidth } = expand(sequence, rules, lexicon.length);
 
   // What the suffix table bought, against front coding alone.
-  let frontCodedOnly = 0;
-  for (const entry of planLexiconEntries(lexicon, [])) frontCodedOnly += entry.bytes;
+  const frontCodedEntries = planLexiconEntries(lexicon, []);
+  const frontCodedOnly = measureLexiconStorage(
+    frontCodedEntries,
+    planLexiconHeaderCodebook(frontCodedEntries),
+  );
+  let uncodedLexicon = 0;
+  for (const entry of lexiconEntries) uncodedLexicon += entry.bytes;
   const codesUsed = new Set<number>();
   let entriesSuffixed = 0;
   let entriesChained = 0;
@@ -1240,6 +1380,8 @@ export function encode(text: string, config: Partial<CodecConfig> = {}): EncodeR
       entriesSuffixed,
       entriesChained,
       lexiconBytesSaved: frontCodedOnly - sizes.lexicon - sizes.suffixTable,
+      lexiconHeaderCodes: lexiconHeaderCodebook.length,
+      lexiconHeaderBytesSaved: uncodedLexicon - sizes.lexicon,
       tokenCount: tokens.length,
       distinctTerminals: lexicon.length,
       lexiconPlainBytes: plainLexiconBytes(lexicon),

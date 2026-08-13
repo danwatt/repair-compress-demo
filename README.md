@@ -32,6 +32,7 @@ encode(text)
   planLexiconSuffixes lexicon   -> suffix table    endings worth a code of their own
                                                    (re-plans entries every round)
   planLexiconEntries  lexicon   -> per-entry plan  shared prefix + literal + endings
+  planLexiconHeaderCodebook     -> header table    repeated (shared, tag) pairs
   serialize           container -> Uint8Array      header + tables + lexicon + stream
 
 decode(bytes)
@@ -74,8 +75,8 @@ stream. "testing" keeps its own id; it is simply written as *share four bytes wi
 entry, then apply the -ing code* instead of spelling out `ing`. Drop the table entirely and the
 stream, the grammar and every id stay byte-for-byte identical; only the lexicon grows.
 
-Each entry is written as `varint shared · varint tag · [literal bytes] · [code bytes]`, where the low
-two bits of the tag pick how the ending is spelled:
+Logically, each entry has `shared · tag · [literal bytes] · [code bytes]`, where the low two bits of
+the tag pick how the ending is spelled:
 
 ```
 mode 0  literal       tag = length << 2       "begat"      share 0, add "begat"
@@ -83,6 +84,30 @@ mode 1  code only     tag = code << 2 | 1     "begetting"  share 6, apply -ing
 mode 2  literal+code  tag = length << 2 | 2   "gnarling"   share 0, add "gnarl", apply -ing
 mode 3  code chain    tag = code << 2 | 3     "Aramitess"  share 4, apply -ites, then -s
 ```
+
+### Header codebook
+
+The `(shared, tag)` pair itself repeats heavily across a large lexicon: many neighbouring words
+share the same number of bytes and leave the same literal length or suffix operation. A small
+encoder-selected codebook stores the hottest pairs once and writes them as one-byte indices.
+
+If the table has `K` entries, each lexicon entry starts with one varint. A value below `K` is a
+codebook index. Any other value is `shared + K`, followed by the raw tag varint. The offset makes
+the paths unambiguous without spending an escape byte:
+
+```
+head < K    shared, tag = header_table[head]
+head >= K   shared = head - K; tag = read_varint()
+```
+
+`planLexiconHeaderCodebook` tries every `K` up to 127 and includes the cost of the table and of raw
+fallbacks, so it picks the exact smallest representation. The 127-entry ceiling keeps every table
+index to one byte. This is encoder-only optimization; the reader adds one comparison and either a
+two-field lookup or one subtraction.
+
+On the full KJV, it picks 117 pairs and reduces the lexicon from 49,213 to 39,485 bytes. The complete
+container falls from 968,187 to 958,460 bytes: 9,727 bytes saved after the extra one-byte table-count
+field is included.
 
 Mode 1 is the one that pays: the code rides inside the varint that would otherwise have held a
 length, so a coded ending costs *nothing at all* — "begetting" after "begetteth" is two bytes.
@@ -291,8 +316,6 @@ mise run clean            # drop generated build output
 
 Full KJV, 4,137,743 bytes in, 85 single-byte codes, 29 suffix codes.
 
-This is still not quite as good as what the GB code could accomplish - its lexicon was around 45kb.
-
 | # | Version                                                 |       Total | Lexicon | Suffix table |   Rules | Escape |  Stream | Header |
 |---|---------------------------------------------------------|------------:|--------:|-------------:|--------:|-------:|--------:|-------:|
 | 1 | No lexicon encoding, suffix markers in the stream       |   1,012,726 |  84,047 |            — | 111,108 |    210 | 817,347 |     14 |
@@ -300,5 +323,5 @@ This is still not quite as good as what the GB code could accomplish - its lexic
 | 3 | Suffix codes moved into the lexicon                     |     971,163 |  52,189 |           86 | 118,840 |    170 | 799,863 |     15 |
 | 4 | Entries may under-share to reach a code                 |     970,470 |  51,488 |           94 | 118,840 |    170 | 799,863 |     15 |
 | 5 | Chained suffix codes                                    |     969,528 |  50,546 |           94 | 118,840 |    170 | 799,863 |     15 |
-| 6 | Table and entry plans chosen together                   | **968,187** |  49,213 |           86 | 118,840 |    170 | 799,863 |     15 |
-
+| 6 | Table and entry plans chosen together                   |     968,187 |  49,213 |           86 | 118,840 |    170 | 799,863 |     15 |
+| 7 | Lexicon-header codebook                                 | **958,460** |  39,485 |           86 | 118,840 |    170 | 799,863 |     15 | 

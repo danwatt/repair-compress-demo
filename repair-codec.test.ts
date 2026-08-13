@@ -7,6 +7,7 @@ import {
   sweepSingleByteCount,
   planLexiconSuffixes,
   planLexiconEntries,
+  planLexiconHeaderCodebook,
   tokenize as tok,
   describeToken,
   buildLexicon,
@@ -140,8 +141,8 @@ const modeSample = "testing tested tester zooming boomed loomed gnarling flying"
 const modeResult = encode(modeSample);
 const modeEntries = planLexiconEntries(modeResult.container.lexicon, modeResult.container.suffixes);
 check(
-  "planLexiconEntries sizes match what serialize writes",
-  modeEntries.reduce((n, e) => n + e.bytes, 0) === modeResult.stats.sizes.lexicon,
+  "serialized size accounting includes mixed lexicon modes",
+  modeResult.bytes.length === modeResult.stats.sizes.total,
 );
 check(
   "every storage mode gets exercised",
@@ -175,8 +176,8 @@ check(
 );
 check("chained entries round trip", decode(chained.bytes) === chainSample);
 check(
-  "planLexiconEntries sizes match what serialize writes, with chains",
-  chainEntries.reduce((n, e) => n + e.bytes, 0) === chained.stats.sizes.lexicon,
+  "serialized size accounting includes chained lexicon modes",
+  chained.bytes.length === chained.stats.sizes.total,
 );
 check(
   "chains are counted in the stats",
@@ -212,6 +213,37 @@ check(
     e.shared <= (i === 0 ? 0 : lcpBytes(undershare.container.lexicon[i - 1], undershare.container.lexicon[i]))),
 );
 check("under-shared entries round trip", decode(undershare.bytes) === undershareSample);
+
+// Lexicon headers repeat independently of their literal payloads. The planner
+// should code a hot (shared, tag) pair while leaving a rare pair on the raw
+// path; both paths use the same first varint and must coexist in one lexicon.
+const repeatedHeaderEntries = Array.from({ length: 20 }, () => ({
+  shared: 3,
+  literal: Uint8Array.of(1, 2),
+  codes: [] as number[],
+  bytes: 4,
+}));
+repeatedHeaderEntries.push({
+  shared: 0,
+  literal: Uint8Array.of(1, 2, 3),
+  codes: [],
+  bytes: 5,
+});
+const headerCodebook = planLexiconHeaderCodebook(repeatedHeaderEntries);
+check(
+  "lexicon header codebook takes a repeated header but not a rare one",
+  headerCodebook.length === 1 && headerCodebook[0][0] === 3 && headerCodebook[0][1] === 8,
+  JSON.stringify(headerCodebook),
+);
+check(
+  "lexicon header codebook is used when it pays",
+  chained.stats.lexiconHeaderCodes > 0 && chained.stats.lexiconHeaderBytesSaved > 0,
+  `${chained.stats.lexiconHeaderCodes} codes save ${chained.stats.lexiconHeaderBytesSaved}`,
+);
+check(
+  "lexicon header codebook never grows the lexicon",
+  chained.stats.sizes.lexicon <= chainEntries.reduce((n, entry) => n + entry.bytes, 0),
+);
 
 // Front coding: the lexicon must be in UTF-8 byte order, since an id is a
 // position in that list and each entry is a delta against the one before it.
@@ -254,7 +286,7 @@ check(
     roundTrippedLexicon.every((w, i) => w === stemResult.container.lexicon[i]),
 );
 const older = Uint8Array.from(stemResult.bytes);
-older[4] = 2;
+older[4] = 4;
 let rejected = "";
 try {
   deserialize(older);
@@ -262,6 +294,15 @@ try {
   rejected = e instanceof CodecError ? e.message : "wrong error type";
 }
 check("rejects an older container", rejected.includes("re-encode"), rejected);
+const oversizedHeaderTable = Uint8Array.from(stemResult.bytes);
+oversizedHeaderTable[15] = 128;
+let badHeaderTable = "";
+try {
+  deserialize(oversizedHeaderTable);
+} catch (e) {
+  badHeaderTable = e instanceof CodecError ? e.message : "wrong error type";
+}
+check("rejects an oversized lexicon header table", badHeaderTable.includes("maximum is 127"), badHeaderTable);
 check("plainLexiconBytes measures the old format", plainLexiconBytes(["ab", "cd"]) === 6);
 
 // A big synthetic corpus: repeated structure, the case Re-Pair is built for.
