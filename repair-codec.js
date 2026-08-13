@@ -363,9 +363,13 @@ var RePair = (() => {
     return varintSize(n) + n;
   };
   function planLexiconEntries(lexicon, suffixes) {
+    return planLexicon(lexicon, suffixes, false).entries;
+  }
+  function planLexicon(lexicon, suffixes, keepLinks) {
     const table = suffixes.map((s) => ENCODER.encode(s));
     const chainable = table.length > 0 && table.length - 1 <= MAX_CHAINABLE_CODE;
     const entries = [];
+    const allLinks = [];
     let previous = EMPTY;
     const links = [];
     const choice = [];
@@ -424,65 +428,105 @@ var RePair = (() => {
           }
         }
       }
+      if (keepLinks) {
+        const kept = new Int16Array(bytes.length + 1).fill(-1);
+        if (chainable) {
+          const unreachable = bytes.length + 1;
+          for (let pos = 0; pos <= bytes.length; pos++) {
+            if (links[pos] !== unreachable) kept[pos] = links[pos];
+          }
+        } else {
+          kept[bytes.length] = 0;
+        }
+        allLinks.push(kept);
+      }
       entries.push({ shared, literal: bytes.subarray(shared, literalEnd), codes, bytes: size });
       previous = bytes;
     }
-    return entries;
+    return { entries, links: allLinks };
   }
   function planLexiconSuffixes(lexicon, options = {}) {
     if (lexicon.length === 0) return [];
     const maxChars = options.maxSuffixLength ?? 4;
     const decoder = new TextDecoder();
     const codeTagSize = varintSize(SUFFIX_CODE_COUNT - 1 << 2 | MODE_SUFFIX);
-    const matches = [];
-    const totals = /* @__PURE__ */ new Map();
-    let previous = EMPTY;
-    for (const word of lexicon) {
-      const bytes = ENCODER.encode(word);
-      const maxShared = sharedPrefix(previous, bytes);
-      previous = bytes;
-      const rest = bytes.length - maxShared;
-      const literalCost = varintSize(maxShared) + varintSize(rest << 2 | MODE_LITERAL) + rest;
-      const list = [];
+    const words = lexicon.map((w) => ENCODER.encode(w));
+    const maxShared = words.map((w, i) => i === 0 ? 0 : sharedPrefix(words[i - 1], w));
+    const endings = /* @__PURE__ */ new Set();
+    for (const bytes of words) {
       let chars = 0;
       for (let start = bytes.length - 1; start >= 0 && chars < maxChars; start--) {
         if ((bytes[start] & 192) === 128) continue;
         chars++;
-        const shared = Math.min(maxShared, start);
-        const remainder = start - shared;
-        const coded = remainder === 0 ? varintSize(shared) + codeTagSize : varintSize(shared) + varintSize(remainder << 2 | MODE_BOTH) + remainder + 1;
-        const saving = literalCost - coded;
-        if (saving <= 0) continue;
-        const suffix = decoder.decode(bytes.subarray(start));
-        list.push({ suffix, saving });
-        totals.set(suffix, (totals.get(suffix) ?? 0) + saving);
+        endings.add(decoder.decode(bytes.subarray(start)));
       }
-      matches.push(list);
     }
+    const SITE_SCALE = 256;
+    const sites = /* @__PURE__ */ new Map();
+    for (let i = 0; i < words.length; i++) {
+      const bytes = words[i];
+      for (let start = 0; start < bytes.length && start < SITE_SCALE; start++) {
+        if ((bytes[start] & 192) === 128) continue;
+        let chars = 0;
+        for (let end = start + 1; end <= bytes.length && chars < maxChars; end++) {
+          if (end < bytes.length && (bytes[end] & 192) === 128) continue;
+          chars++;
+          const piece = decoder.decode(bytes.subarray(start, end));
+          if (!endings.has(piece)) continue;
+          let list = sites.get(piece);
+          if (!list) sites.set(piece, list = []);
+          list.push(i * SITE_SCALE + start);
+        }
+      }
+    }
+    for (const [piece, list] of sites) if (list.length < 2) sites.delete(piece);
     const chosen = [];
-    const spokenFor = new Uint8Array(lexicon.length);
+    let plan = planLexicon(lexicon, chosen, true);
+    let total = 0;
+    for (const entry of plan.entries) total += entry.bytes;
     for (let round = 0; round < SUFFIX_CODE_COUNT; round++) {
       let best = "";
       let bestScore = 0;
-      for (const [suffix, total] of totals) {
-        const score = total - suffixTableCost(suffix);
-        if (score < bestScore) continue;
-        if (score > bestScore || best === "" || suffix.length > best.length || suffix.length === best.length && suffix < best) {
+      for (const [piece, list] of sites) {
+        const length = ENCODER.encode(piece).length;
+        let score = -suffixTableCost(piece);
+        let entry = -1;
+        let bestHere = 0;
+        for (const site of list) {
+          const i = site / SITE_SCALE | 0;
+          if (i !== entry) {
+            score += bestHere;
+            bestHere = 0;
+            entry = i;
+          }
+          const at = site % SITE_SCALE;
+          const rest = plan.links[i][at + length];
+          if (rest < 0) continue;
+          const count = rest + 1;
+          let cost = at <= maxShared[i] ? varintSize(at) + codeTagSize + (count - 1) : Infinity;
+          if (count === 1) {
+            const shared = Math.min(maxShared[i], at);
+            const remainder = at - shared;
+            cost = Math.min(cost, varintSize(shared) + varintSize(remainder << 2 | MODE_BOTH) + remainder + 1);
+          }
+          const saving = plan.entries[i].bytes - cost;
+          if (saving > bestHere) bestHere = saving;
+        }
+        score += bestHere;
+        if (score > bestScore || score === bestScore && best !== "" && (piece.length > best.length || piece.length === best.length && piece < best)) {
           bestScore = score;
-          best = suffix;
+          best = piece;
         }
       }
-      if (best === "" || bestScore <= 0) break;
+      if (best === "") break;
+      const trial = planLexicon(lexicon, [...chosen, best], true);
+      let trialTotal = 0;
+      for (const entry of trial.entries) trialTotal += entry.bytes;
+      if (trialTotal + suffixTableCost(best) >= total) break;
       chosen.push(best);
-      totals.delete(best);
-      for (let i = 0; i < matches.length; i++) {
-        if (spokenFor[i] || !matches[i].some((m) => m.suffix === best)) continue;
-        spokenFor[i] = 1;
-        for (const m of matches[i]) {
-          const remaining = totals.get(m.suffix);
-          if (remaining !== void 0) totals.set(m.suffix, remaining - m.saving);
-        }
-      }
+      sites.delete(best);
+      plan = trial;
+      total = trialTotal;
     }
     return chosen;
   }

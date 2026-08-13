@@ -30,7 +30,8 @@ encode(text)
   assignSingleBytes   sequence  -> escapeTable     top-N symbols get a one-byte code
   emitStream          sequence  -> Uint8Array      1 byte if < N, else 2
   planLexiconSuffixes lexicon   -> suffix table    endings worth a code of their own
-  planLexiconEntries  lexicon   -> per-entry plan  shared prefix + literal + ending
+                                                   (re-plans entries every round)
+  planLexiconEntries  lexicon   -> per-entry plan  shared prefix + literal + endings
   serialize           container -> Uint8Array      header + tables + lexicon + stream
 
 decode(bytes)
@@ -97,14 +98,13 @@ can keep rather than only against the leftovers of maximal sharing, and writes w
 smaller. Nothing in the format moves — a smaller `shared` is one the reader already accepted.
 
 Candidates come from the text rather than a hardcoded list, and they are not confined to what
-maximal sharing left over either, for the same reason: `planLexiconSuffixes` walks the tails of the
-whole word, scoring each at the prefix it survives with. It then picks greedily with exclusive
-assignment, so overlapping endings (`ing`, `ng`, `g`) are not all paid for the same word.
+maximal sharing left over either, for the same reason: `planLexiconSuffixes` scores an ending at the
+deepest prefix it survives with, not only against the leftovers.
 
 Worth 693 bytes on the KJV — 229 from letting entries under-share against the table they already
-had, and 464 more once the table itself is chosen knowing they can. `ites`, `ite`, `ers`, `re` and
-`ve` earn codes that were previously invisible, since the tails that would have justified them were
-hidden inside shared prefixes.
+had, and 464 more once the table itself is chosen knowing they can. Endings earn codes that were
+previously invisible, because the tails that would have justified them were hidden inside shared
+prefixes.
 
 Nothing here has to be a word. The prefix comes from the neighbouring entry, not from a lexicon
 lookup, so "waters" codes happily off "water…" whether or not "water" appears in the text — the
@@ -121,8 +121,9 @@ table stays under 128 codes, so a chain is any length rather than exactly two.
 What limits chains is the sort, not the format. `-ing` then `-s` almost never fires, because if
 "blessing" is in the text at all it sorts immediately before "blessings" and hands over the whole
 stem for free — one code, two bytes, already cheaper than any chain. A chain only pays where the
-*intermediate* form is missing, which is why the KJV's 641 chained entries are mostly proper nouns
-and rare derivations: "Aramitess" without "Aramites", "Anakims" without "Anakim".
+*intermediate* form is missing, which is why chained entries are mostly proper nouns and rare
+derivations: "Aramitess" without "Aramites", "Anakims" without "Anakim". Against a table picked one
+code at a time, 641 entries chained, for 942 bytes:
 
 | chain length | entries | running total saved |
 | --- | ---: | ---: |
@@ -131,10 +132,37 @@ and rare derivations: "Aramitess" without "Aramites", "Anakims" without "Anakim"
 | 4 codes | 17 | 938 |
 | 5 codes | 2 | 942 |
 
-Chains do not make any code redundant — they are a 3-byte spelling competing with a coded ending's
-2 — so `planLexiconSuffixes` still scores candidates one code at a time. That is an approximation,
-and a measurably harmless one: dropping any single code from the table the KJV picks costs between
-118 bytes (`ers`, which chains as `-er` + `-s`) and 2,114 (`ing`).
+### One table, chosen for the entries that will use it
+
+Those numbers are what chains are worth when the table was picked without knowing they exist, which
+was the arrangement until the planner was turned inside out. `planLexiconSuffixes` used to score
+every candidate up front against a fixed idea of each entry's cost, then bookkeep an exclusive
+assignment so `ing`, `ng` and `g` did not all bill the same word. It now takes one code per round and
+**re-plans the entire lexicon** against the codes already taken, so a candidate is scored on what it
+saves *given* them. The exclusivity bookkeeping disappears: once `ing` is taken, the entries it
+covers are already cheap, so `ng` scores low without anyone having to arrange it.
+
+Two things fall out of scoring against a real plan. A candidate can be priced as a *chain link*
+rather than only as a final ending — the planning pass hands back `links[p]`, the fewest codes that
+cover a word from byte `p` on, so a code landing at `p` is known to finish the entry in
+`1 + links[p + len]` codes. And a code no longer has to be some word's whole tail; it only has to be
+a piece that a chain can reach the end from.
+
+The table it picks is visibly different — shorter, more composable, `tion` and `ite` and bare `e`,
+`i`, `m`, `o`, `r` in place of `ites`, `ers`, `ment`, `nce`:
+
+```
+one code at a time   ing ed th s st er ah ness on ly 's ites ite es y le el n se en us nce ment …
+chosen against plans ing ed th s st er ah ness ite on ly 's e t tion en le i y r el m an us o …
+```
+
+Worth 1,341 bytes, and chained entries go from 641 to 2,225 — the codes now compose on purpose. It
+costs about 0.6s on the KJV: 29 rounds, each re-planning 13,773 entries. A brute-force version of
+the same idea (exact forward search over a shortlist, 291 full evaluations) found only 606 bytes and
+took four times as long, because a shortlist scored the old way never surfaces the composable codes.
+
+Each pick is confirmed against the exact plan and dropped if it did not actually pay, so the table
+still cannot cost bytes — the worst case is no codes and one byte of header.
 
 ### Why the base is always the neighbour
 
@@ -253,9 +281,11 @@ mise run clean            # drop generated build output
 
 ## Ideas worth trying
 
+- Look ahead more than one code. The planner is still greedy round to round, so it cannot find a
+  pair of codes that only pays as a pair — the second half of a chain nobody has a use for yet.
+- Re-plan incrementally. A round only changes entries whose word contains the new code, so the 29
+  full passes over the lexicon are mostly recomputing entries that cannot have moved.
 - Reserve a second escape range for 3-byte tokens to see whether a bigger grammar pays for itself.
-- Let the suffix table and the entry plans be chosen together rather than in sequence, so a code is
-  scored knowing which entries will chain past it.
 
 ## Benchmarks
 
@@ -269,5 +299,6 @@ This is still not quite as good as what the GB code could accomplish - its lexic
 | 2 | Front-coded lexicon, suffix markers still in the stream |     983,026 |  57,804 |            — | 107,700 |    210 | 817,298 |     14 |
 | 3 | Suffix codes moved into the lexicon                     |     971,163 |  52,189 |           86 | 118,840 |    170 | 799,863 |     15 |
 | 4 | Entries may under-share to reach a code                 |     970,470 |  51,488 |           94 | 118,840 |    170 | 799,863 |     15 |
-| 5 | Chained suffix codes                                    | **969,528** |  50,546 |           94 | 118,840 |    170 | 799,863 |     15 |
+| 5 | Chained suffix codes                                    |     969,528 |  50,546 |           94 | 118,840 |    170 | 799,863 |     15 |
+| 6 | Table and entry plans chosen together                   | **968,187** |  49,213 |           86 | 118,840 |    170 | 799,863 |     15 |
 

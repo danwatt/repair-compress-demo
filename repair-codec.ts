@@ -685,10 +685,31 @@ export function planLexiconEntries(
   lexicon: readonly string[],
   suffixes: readonly string[],
 ): LexiconEntry[] {
+  return planLexicon(lexicon, suffixes, false).entries;
+}
+
+/** What one planning pass produces. `links` is only filled in when asked for. */
+interface PlannedLexicon {
+  entries: LexiconEntry[];
+  /**
+   * Per entry, the fewest codes that can cover the word from each byte position
+   * to its end, or -1 where no chain reaches. planLexiconSuffixes scores a
+   * candidate against these: a code landing at `p` finishes the entry in
+   * `1 + links[p + code.length]` codes, which is what "chains past it" means.
+   */
+  links: Int16Array[];
+}
+
+function planLexicon(
+  lexicon: readonly string[],
+  suffixes: readonly string[],
+  keepLinks: boolean,
+): PlannedLexicon {
   const table = suffixes.map((s) => ENCODER.encode(s));
   // Chained codes are written as bare bytes, so bit 7 has to stay a flag.
   const chainable = table.length > 0 && table.length - 1 <= MAX_CHAINABLE_CODE;
   const entries: LexiconEntry[] = [];
+  const allLinks: Int16Array[] = [];
   let previous = EMPTY;
 
   // Scratch for the chain pass; only the first bytes.length + 1 cells are live.
@@ -760,10 +781,23 @@ export function planLexiconEntries(
       }
     }
 
+    if (keepLinks) {
+      const kept = new Int16Array(bytes.length + 1).fill(-1);
+      if (chainable) {
+        const unreachable = bytes.length + 1;
+        for (let pos = 0; pos <= bytes.length; pos++) {
+          if (links[pos] !== unreachable) kept[pos] = links[pos];
+        }
+      } else {
+        kept[bytes.length] = 0;
+      }
+      allLinks.push(kept);
+    }
+
     entries.push({ shared, literal: bytes.subarray(shared, literalEnd), codes, bytes: size });
     previous = bytes;
   }
-  return entries;
+  return { entries, links: allLinks };
 }
 
 /**
@@ -775,23 +809,24 @@ export function planLexiconEntries(
  * at all, since a MODE_SUFFIX code rides inside the varint that would have held
  * the length.
  *
- * Candidates are not limited to that rest, though, because planLexiconEntries is
- * free to share fewer bytes than it could. An ending that reaches back into the
- * shared prefix is scored at the deepest prefix it still leaves intact — the
- * "ness" of "Harness" is a candidate even though the entry before it, "Harnepher",
- * shares the "n".
+ * Candidates are not limited to that rest, because planLexiconEntries is free to
+ * share fewer bytes than it could, nor to the end of a word, because codes chain.
+ * An ending is scored wherever it can land: as the whole tail, as a tail reaching
+ * back into the shared prefix — the "ness" of "Harness", whose neighbour
+ * "Harnepher" shares the "n" — or as a link some later code chains past, the
+ * "ites" of "Aramitess". The `links` array from a planning pass gives the fewest
+ * codes covering a word from any position on, so what a candidate costs where it
+ * lands is arithmetic rather than a guess.
  *
- * Greedy with exclusive assignment: score every candidate by what it would save
- * across the entries it covers, take the best, then subtract those entries from
- * every other candidate's score so overlapping endings ("ing", "ng", "g") do not
- * all get counted for the same word.
+ * Greedy, one code per round, with the table and the entry plans chosen together:
+ * each round re-plans the whole lexicon against the codes taken so far, so a
+ * candidate is scored on what it saves *given* them. That is what replaced the
+ * exclusive-assignment bookkeeping this used to need — overlapping endings
+ * ("ing", "ng", "g") stop competing over the same word by construction, since
+ * once "ing" is taken the entries it covers are already cheap.
  *
- * Scoring stays single-code even though planLexiconEntries will go on to chain
- * them, which is a genuine approximation — an entry that ends up chaining was
- * scored here as if only one code could reach it. It costs nothing measurable:
- * chaining is a 3-byte spelling against a coded ending's 2, so it never makes a
- * code redundant. Dropping any one code from the table the KJV chooses costs
- * between 118 and 2,114 bytes, well past the 3 or 4 a table entry is worth.
+ * A pick is then confirmed against the exact plan and dropped if it did not
+ * really pay, so the table cannot cost bytes: the worst case is no codes at all.
  *
  * Unlike the token-level splitter this replaced, nothing here has to exist as a
  * word. The prefix comes from the neighbouring entry rather than from a lexicon
@@ -805,66 +840,106 @@ export function planLexiconSuffixes(
   if (lexicon.length === 0) return [];
   const maxChars = options.maxSuffixLength ?? 4;
   const decoder = new TextDecoder();
-  // What a code will cost inside the tag once the table is full.
+  // What a code costs inside the tag once the table is full.
   const codeTagSize = varintSize(((SUFFIX_CODE_COUNT - 1) << 2) | MODE_SUFFIX);
 
-  type Match = { suffix: string; saving: number };
-  const matches: Match[][] = [];
-  const totals = new Map<string, number>();
+  const words = lexicon.map((w) => ENCODER.encode(w));
+  const maxShared = words.map((w, i) => (i === 0 ? 0 : sharedPrefix(words[i - 1], w)));
 
-  let previous = EMPTY;
-  for (const word of lexicon) {
-    const bytes = ENCODER.encode(word);
-    const maxShared = sharedPrefix(previous, bytes);
-    previous = bytes;
-
-    const rest = bytes.length - maxShared;
-    const literalCost = varintSize(maxShared) + varintSize((rest << 2) | MODE_LITERAL) + rest;
-    const list: Match[] = [];
+  // Only a string some word actually ends with can be an ending. A code may still
+  // land mid-word as a chain link, but the chain it starts has to reach the end.
+  const endings = new Set<string>();
+  for (const bytes of words) {
     let chars = 0;
     for (let start = bytes.length - 1; start >= 0 && chars < maxChars; start--) {
       if ((bytes[start] & 0xc0) === 0x80) continue; // mid-character, not a boundary
       chars++;
-      const shared = Math.min(maxShared, start); // what survives once this ending is coded
-      const remainder = start - shared; // bytes left over in between
-      const coded = remainder === 0
-        ? varintSize(shared) + codeTagSize
-        : varintSize(shared) + varintSize((remainder << 2) | MODE_BOTH) + remainder + 1;
-      const saving = literalCost - coded;
-      if (saving <= 0) continue;
-      const suffix = decoder.decode(bytes.subarray(start));
-      list.push({ suffix, saving });
-      totals.set(suffix, (totals.get(suffix) ?? 0) + saving);
+      endings.add(decoder.decode(bytes.subarray(start)));
     }
-    matches.push(list);
   }
 
+  // Every position each of those could be applied at, packed as
+  // entry * SITE_SCALE + offset and built in entry order, so one scan sees a
+  // given entry's sites together and can keep only its best.
+  const SITE_SCALE = 256;
+  const sites = new Map<string, number[]>();
+  for (let i = 0; i < words.length; i++) {
+    const bytes = words[i];
+    for (let start = 0; start < bytes.length && start < SITE_SCALE; start++) {
+      if ((bytes[start] & 0xc0) === 0x80) continue;
+      let chars = 0;
+      for (let end = start + 1; end <= bytes.length && chars < maxChars; end++) {
+        if (end < bytes.length && (bytes[end] & 0xc0) === 0x80) continue;
+        chars++;
+        const piece = decoder.decode(bytes.subarray(start, end));
+        if (!endings.has(piece)) continue;
+        let list = sites.get(piece);
+        if (!list) sites.set(piece, (list = []));
+        list.push(i * SITE_SCALE + start);
+      }
+    }
+  }
+  for (const [piece, list] of sites) if (list.length < 2) sites.delete(piece);
+
   const chosen: string[] = [];
-  const spokenFor = new Uint8Array(lexicon.length);
+  let plan = planLexicon(lexicon, chosen, true);
+  let total = 0;
+  for (const entry of plan.entries) total += entry.bytes;
+
   for (let round = 0; round < SUFFIX_CODE_COUNT; round++) {
     let best = "";
     let bestScore = 0;
-    for (const [suffix, total] of totals) {
-      const score = total - suffixTableCost(suffix);
-      if (score < bestScore) continue;
-      if (score > bestScore || best === "" || suffix.length > best.length ||
-          (suffix.length === best.length && suffix < best)) {
+
+    for (const [piece, list] of sites) {
+      const length = ENCODER.encode(piece).length;
+      let score = -suffixTableCost(piece);
+      let entry = -1;
+      let bestHere = 0; // the best this code can do for the entry being scanned
+
+      for (const site of list) {
+        const i = (site / SITE_SCALE) | 0;
+        if (i !== entry) {
+          score += bestHere;
+          bestHere = 0;
+          entry = i;
+        }
+        const at = site % SITE_SCALE;
+        const rest = plan.links[i][at + length];
+        if (rest < 0) continue; // nothing in the table finishes the word from here
+        const count = rest + 1;
+
+        // Share up to this point, then let the chain carry the rest.
+        let cost = at <= maxShared[i] ? varintSize(at) + codeTagSize + (count - 1) : Infinity;
+        if (count === 1) {
+          // A lone code can also ride behind bytes that are spelled out.
+          const shared = Math.min(maxShared[i], at);
+          const remainder = at - shared;
+          cost = Math.min(cost, varintSize(shared) + varintSize((remainder << 2) | MODE_BOTH) + remainder + 1);
+        }
+        const saving = plan.entries[i].bytes - cost;
+        if (saving > bestHere) bestHere = saving;
+      }
+      score += bestHere;
+
+      if (score > bestScore || (score === bestScore && best !== "" &&
+          (piece.length > best.length || (piece.length === best.length && piece < best)))) {
         bestScore = score;
-        best = suffix;
+        best = piece;
       }
     }
-    if (best === "" || bestScore <= 0) break;
+    if (best === "") break;
+
+    // The score is an estimate: it prices one code against a plan that does not
+    // have it yet. Confirm against the real plan, and stop if it did not pay.
+    const trial = planLexicon(lexicon, [...chosen, best], true);
+    let trialTotal = 0;
+    for (const entry of trial.entries) trialTotal += entry.bytes;
+    if (trialTotal + suffixTableCost(best) >= total) break;
 
     chosen.push(best);
-    totals.delete(best);
-    for (let i = 0; i < matches.length; i++) {
-      if (spokenFor[i] || !matches[i].some((m) => m.suffix === best)) continue;
-      spokenFor[i] = 1;
-      for (const m of matches[i]) {
-        const remaining = totals.get(m.suffix);
-        if (remaining !== undefined) totals.set(m.suffix, remaining - m.saving);
-      }
-    }
+    sites.delete(best);
+    plan = trial;
+    total = trialTotal;
   }
   return chosen;
 }
