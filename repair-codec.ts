@@ -57,7 +57,12 @@ export const SUFFIX_CODE_COUNT = 0x9e - 0x82 + 1;
 export interface CodecConfig {
   /** Reserved single-byte codes for whole symbols. The original used 0x55 (85). */
   singleByteCount: number;
-  /** A pair must occur at least this many times to earn a rule. Original: 3. */
+  /**
+   * A pair must occur at least this many times to earn a rule. Original: 3,
+   * which is also where a rule first pays for itself — two replacements save
+   * exactly the four bytes the table entry costs — so setting this below 3 buys
+   * nothing: repair() drops the break-even rules on savings anyway.
+   */
   minPairCount: number;
   /** Hard cap on grammar rules, on top of the cap implied by the id space. */
   maxPairs: number;
@@ -117,8 +122,10 @@ export interface EncodeResult {
     suffixes: string[];
     /** Table entries at least one lexicon entry actually references. */
     suffixCodesUsed: number;
-    /** Lexicon entries written with a suffix code. */
+    /** Lexicon entries written with at least one suffix code. */
     entriesSuffixed: number;
+    /** Of those, the ones that apply two or more codes in sequence. */
+    entriesChained: number;
     /** Lexicon bytes the suffix table saves, net of what the table itself costs. */
     lexiconBytesSaved: number;
     tokenCount: number;
@@ -284,6 +291,16 @@ export function buildLexicon(tokens: string[]): { lexicon: string[]; ids: number
 // Stage 3 — Re-Pair
 // ---------------------------------------------------------------------------
 
+/** What one rule costs in section B: two ids, two bytes each. */
+const RULE_BYTES = 4;
+
+/**
+ * What one symbol costs in the stream, before the escape table shortens the
+ * hottest ones to a single byte. Every replacement a rule makes drops one
+ * symbol, so this is also what a replacement earns.
+ */
+const SYMBOL_BYTES = 2;
+
 /** Lazily-validated max-heap over (count, pairKey). */
 class PairHeap {
   private counts: number[] = [];
@@ -350,6 +367,14 @@ export interface RepairResult {
  * linked list over the sequence with an occurrence index per pair, so each
  * replacement costs time proportional to the number of occurrences, not the
  * length of the text.
+ *
+ * Selection is by raw frequency, but a candidate has to clear its table entry
+ * on measured savings before it is taken. Ranking by savings instead was tried
+ * and lost: scoring a pair by what its symbols really cost in the stream — one
+ * byte once the escape table gets to them, not two — demotes exactly the hot
+ * stop-word pairs, and the grammar that comes back is 36–45 KB worse on the KJV.
+ * The escape table is picked after this stage and wants short symbols to point
+ * at, so folding the hot pairs feeds it rather than competing with it.
  */
 export function repair(ids: number[], options: RepairOptions): RepairResult {
   const n = ids.length;
@@ -415,9 +440,24 @@ export function repair(ids: number[], options: RepairOptions): RepairResult {
     const left = Math.floor(key / KEY_SHIFT);
     const right = key % KEY_SHIFT;
     const occurrences = [...positions.get(key)!].sort((a, b) => a - b);
+
+    // The index counts occurrences; the pass below can only take some of them,
+    // because a self-overlapping pair ("aa" inside "aaa") eats its own next
+    // occurrence. Score the rule on what will really be replaced. The pair stays
+    // in the index when it fails — it costs nothing there, and a later merge can
+    // grow it back into contention.
+    let replaceable = 0;
+    let eaten = -1;
+    for (const i of occurrences) {
+      if (i === eaten || !alive[i] || sym[i] !== left) continue;
+      const j = next[i];
+      if (j === -1 || !alive[j] || sym[j] !== right) continue;
+      replaceable++;
+      eaten = j;
+    }
+    if (replaceable * SYMBOL_BYTES - RULE_BYTES <= 0) continue;
     positions.delete(key);
 
-    let replaced = 0;
     for (const i of occurrences) {
       if (!alive[i] || sym[i] !== left) continue;
       const j = next[i];
@@ -435,13 +475,8 @@ export function repair(ids: number[], options: RepairOptions): RepairResult {
 
       if (before !== -1) addOccurrence(sym[before], newId, before);
       if (after !== -1) addOccurrence(newId, sym[after], i);
-      replaced++;
     }
 
-    if (replaced < minCount) {
-      // Overlaps ate some occurrences; the rule is not worth its 4 bytes.
-      if (replaced === 0) continue;
-    }
     rules.push([left, right]);
   }
 
@@ -575,37 +610,50 @@ export function expandToWords(token: number, container: Container): string[] {
 
 /**
  * How one lexicon entry is written. Rebuilt as
- * `previous[0 .. shared] + literal + (suffix < 0 ? "" : suffixes[suffix])`.
+ * `previous[0 .. shared] + literal + codes.map(c => suffixes[c]).join("")`.
  */
 export interface LexiconEntry {
   /** Leading bytes taken from the entry before this one. */
   shared: number;
   /** Bytes spelled out. */
   literal: Uint8Array;
-  /** Index into the suffix table, or -1. */
-  suffix: number;
-  /** Encoded size, including both varints and the code byte where there is one. */
+  /** Suffix table indices, applied in order. Empty when the entry uses none. */
+  codes: number[];
+  /** Encoded size, including the varints and any code bytes. */
   bytes: number;
 }
 
 /**
  * Two bits of the length varint say how the rest of the entry is spelled:
- * literal bytes, a suffix code alone, or literal bytes then a code. A code in
- * MODE_SUFFIX rides in the varint itself, and a table of up to 32 endings keeps
- * that varint one byte — which is why SUFFIX_CODE_COUNT's 29 is free. So
- * "testing" costs two bytes after "tested": share 4, apply -ing.
+ * literal bytes, a suffix code alone, literal bytes then a code, or a chain of
+ * codes. A code in MODE_SUFFIX rides in the varint itself, and a table of up to
+ * 32 endings keeps that varint one byte — which is why SUFFIX_CODE_COUNT's 29 is
+ * free. So "testing" costs two bytes after "tested": share 4, apply -ing.
+ *
+ * MODE_CHAIN spends the same varint on the first code and follows it with one
+ * byte per further code, so "Aramitess" is share 4, then -ites, then -s. The high
+ * bit of a code byte says another follows, which is free while the table stays
+ * under 128 codes — chains are therefore any length, not just two.
  */
 const MODE_LITERAL = 0;
 const MODE_SUFFIX = 1;
 const MODE_BOTH = 2;
+const MODE_CHAIN = 3;
 
-function endsWith(haystack: Uint8Array, needle: Uint8Array): boolean {
-  if (needle.length === 0 || needle.length > haystack.length) return false;
-  const offset = haystack.length - needle.length;
+/** Chained codes are written as raw bytes, so bit 7 is the continuation flag. */
+const CHAIN_MORE = 0x80;
+const MAX_CHAINABLE_CODE = 0x7f;
+
+function matchesAt(haystack: Uint8Array, offset: number, needle: Uint8Array): boolean {
+  if (needle.length === 0 || offset < 0 || offset + needle.length > haystack.length) return false;
   for (let i = 0; i < needle.length; i++) {
     if (haystack[offset + i] !== needle[i]) return false;
   }
   return true;
+}
+
+function endsWith(haystack: Uint8Array, needle: Uint8Array): boolean {
+  return matchesAt(haystack, haystack.length - needle.length, needle);
 }
 
 /** What a suffix costs to carry in the table. */
@@ -618,39 +666,101 @@ const suffixTableCost = (suffix: string): number => {
  * Decide how every lexicon entry is written, given the suffix table. Pure
  * arithmetic: for each entry take the cheapest of the three modes. serialize()
  * and measure() both go through here, so what is counted is what is written.
+ *
+ * The shared prefix is a maximum, not an obligation. Sharing every byte on
+ * offer is the cheapest way to spell an entry out, but it can bury the ending
+ * a code would have paid for: "Harness" after "Harnepher" shares "Harn", which
+ * leaves "ess" — and no code, so three bytes. Give one byte back and the rest is
+ * "ness", which has a code, so two. So each ending is measured at the deepest
+ * prefix it can keep rather than only against what maximal sharing left over,
+ * and the entry takes whichever spelling is smaller. Nothing in the format
+ * changes: a smaller `shared` is one the reader already accepts.
+ *
+ * Endings also compose. "Aramitess" follows "Aram", so a single code still has to
+ * spell out five bytes; -ites then -s spells none of them, and the second code is
+ * one byte. `links` below is a backward pass giving the fewest codes that cover
+ * the word from each position on, which is what a chain costs past its first.
  */
 export function planLexiconEntries(
   lexicon: readonly string[],
   suffixes: readonly string[],
 ): LexiconEntry[] {
   const table = suffixes.map((s) => ENCODER.encode(s));
+  // Chained codes are written as bare bytes, so bit 7 has to stay a flag.
+  const chainable = table.length > 0 && table.length - 1 <= MAX_CHAINABLE_CODE;
   const entries: LexiconEntry[] = [];
   let previous = EMPTY;
 
+  // Scratch for the chain pass; only the first bytes.length + 1 cells are live.
+  const links: number[] = [];
+  const choice: number[] = [];
+
   for (const word of lexicon) {
     const bytes = ENCODER.encode(word);
-    const shared = sharedPrefix(previous, bytes);
-    const rest = bytes.subarray(shared);
-    const sharedSize = varintSize(shared);
+    const maxShared = sharedPrefix(previous, bytes);
 
-    let suffix = -1;
-    let literal = rest.length;
-    let size = sharedSize + varintSize((rest.length << 2) | MODE_LITERAL) + rest.length;
+    // Baseline: share everything on offer, spell out what is left.
+    let shared = maxShared;
+    let literalEnd = bytes.length;
+    let codes: number[] = [];
+    let size = varintSize(maxShared) +
+      varintSize(((bytes.length - maxShared) << 2) | MODE_LITERAL) + (bytes.length - maxShared);
 
     for (let code = 0; code < table.length; code++) {
-      if (!endsWith(rest, table[code])) continue;
-      const remainder = rest.length - table[code].length;
+      if (!endsWith(bytes, table[code])) continue;
+      const cut = bytes.length - table[code].length; // where the coded ending starts
+      const start = Math.min(maxShared, cut); // the code may claim shared bytes back
+      const remainder = cut - start;
       const candidate = remainder === 0
-        ? sharedSize + varintSize((code << 2) | MODE_SUFFIX)
-        : sharedSize + varintSize((remainder << 2) | MODE_BOTH) + remainder + 1;
+        ? varintSize(start) + varintSize((code << 2) | MODE_SUFFIX)
+        : varintSize(start) + varintSize((remainder << 2) | MODE_BOTH) + remainder + 1;
       if (candidate < size) {
         size = candidate;
-        suffix = code;
-        literal = remainder;
+        shared = start;
+        literalEnd = cut;
+        codes = [code];
       }
     }
 
-    entries.push({ shared, literal: rest.subarray(0, literal), suffix, bytes: size });
+    if (chainable) {
+      const unreachable = bytes.length + 1;
+      links[bytes.length] = 0;
+      for (let pos = bytes.length - 1; pos >= 0; pos--) {
+        links[pos] = unreachable;
+        choice[pos] = -1;
+        for (let code = 0; code < table.length; code++) {
+          const end = pos + table[code].length;
+          if (end > bytes.length || links[end] === unreachable) continue;
+          if (!matchesAt(bytes, pos, table[code])) continue;
+          if (links[end] + 1 < links[pos]) {
+            links[pos] = links[end] + 1;
+            choice[pos] = code;
+          }
+        }
+      }
+      // A chain starts where sharing stops, so try every prefix the neighbour can
+      // still cover. One code is MODE_SUFFIX and already priced above.
+      for (let cut = Math.min(maxShared, bytes.length); cut >= 0; cut--) {
+        for (let code = 0; code < table.length; code++) {
+          const end = cut + table[code].length;
+          if (end > bytes.length || links[end] === unreachable) continue;
+          if (!matchesAt(bytes, cut, table[code])) continue;
+          const count = links[end] + 1;
+          if (count < 2) continue;
+          const candidate = varintSize(cut) + varintSize((code << 2) | MODE_CHAIN) + (count - 1);
+          if (candidate >= size) continue;
+          size = candidate;
+          shared = cut;
+          literalEnd = cut;
+          codes = [code];
+          for (let pos = end; pos < bytes.length; pos += table[choice[pos]].length) {
+            codes.push(choice[pos]);
+          }
+        }
+      }
+    }
+
+    entries.push({ shared, literal: bytes.subarray(shared, literalEnd), codes, bytes: size });
     previous = bytes;
   }
   return entries;
@@ -665,10 +775,23 @@ export function planLexiconEntries(
  * at all, since a MODE_SUFFIX code rides inside the varint that would have held
  * the length.
  *
+ * Candidates are not limited to that rest, though, because planLexiconEntries is
+ * free to share fewer bytes than it could. An ending that reaches back into the
+ * shared prefix is scored at the deepest prefix it still leaves intact — the
+ * "ness" of "Harness" is a candidate even though the entry before it, "Harnepher",
+ * shares the "n".
+ *
  * Greedy with exclusive assignment: score every candidate by what it would save
  * across the entries it covers, take the best, then subtract those entries from
  * every other candidate's score so overlapping endings ("ing", "ng", "g") do not
  * all get counted for the same word.
+ *
+ * Scoring stays single-code even though planLexiconEntries will go on to chain
+ * them, which is a genuine approximation — an entry that ends up chaining was
+ * scored here as if only one code could reach it. It costs nothing measurable:
+ * chaining is a 3-byte spelling against a coded ending's 2, so it never makes a
+ * code redundant. Dropping any one code from the table the KJV chooses costs
+ * between 118 and 2,114 bytes, well past the 3 or 4 a table entry is worth.
  *
  * Unlike the token-level splitter this replaced, nothing here has to exist as a
  * word. The prefix comes from the neighbouring entry rather than from a lexicon
@@ -692,22 +815,24 @@ export function planLexiconSuffixes(
   let previous = EMPTY;
   for (const word of lexicon) {
     const bytes = ENCODER.encode(word);
-    const rest = bytes.subarray(sharedPrefix(previous, bytes));
+    const maxShared = sharedPrefix(previous, bytes);
     previous = bytes;
 
-    const literalCost = varintSize((rest.length << 2) | MODE_LITERAL) + rest.length;
+    const rest = bytes.length - maxShared;
+    const literalCost = varintSize(maxShared) + varintSize((rest << 2) | MODE_LITERAL) + rest;
     const list: Match[] = [];
     let chars = 0;
-    for (let start = rest.length - 1; start >= 0 && chars < maxChars; start--) {
-      if ((rest[start] & 0xc0) === 0x80) continue; // mid-character, not a boundary
+    for (let start = bytes.length - 1; start >= 0 && chars < maxChars; start--) {
+      if ((bytes[start] & 0xc0) === 0x80) continue; // mid-character, not a boundary
       chars++;
-      const remainder = start; // bytes left over once this ending is coded
+      const shared = Math.min(maxShared, start); // what survives once this ending is coded
+      const remainder = start - shared; // bytes left over in between
       const coded = remainder === 0
-        ? codeTagSize
-        : varintSize((remainder << 2) | MODE_BOTH) + remainder + 1;
+        ? varintSize(shared) + codeTagSize
+        : varintSize(shared) + varintSize((remainder << 2) | MODE_BOTH) + remainder + 1;
       const saving = literalCost - coded;
       if (saving <= 0) continue;
-      const suffix = decoder.decode(rest.subarray(start));
+      const suffix = decoder.decode(bytes.subarray(start));
       list.push({ suffix, saving });
       totals.set(suffix, (totals.get(suffix) ?? 0) + saving);
     }
@@ -749,8 +874,8 @@ export function planLexiconSuffixes(
 // ---------------------------------------------------------------------------
 
 const MAGIC = [0x52, 0x50, 0x52, 0x31]; // "RPR1"
-/** 3 adds the lexicon suffix table; 2 front-coded only; 1 stored entries in full. */
-const FORMAT_VERSION = 3;
+/** 4 chains suffix codes; 3 added the table; 2 front-coded only; 1 stored entries in full. */
+const FORMAT_VERSION = 4;
 const HEADER_BYTES = 15;
 
 class ByteWriter {
@@ -860,12 +985,17 @@ export function serialize(container: Container): Uint8Array {
   // Front-coded: shared prefix length, then a tagged length, then the rest.
   for (const entry of planLexiconEntries(container.lexicon, container.suffixes)) {
     w.varint(entry.shared);
-    if (entry.suffix >= 0 && entry.literal.length === 0) {
-      w.varint((entry.suffix << 2) | MODE_SUFFIX);
-    } else if (entry.suffix >= 0) {
+    if (entry.codes.length > 1) {
+      w.varint((entry.codes[0] << 2) | MODE_CHAIN);
+      for (let i = 1; i < entry.codes.length; i++) {
+        w.u8(entry.codes[i] | (i < entry.codes.length - 1 ? CHAIN_MORE : 0));
+      }
+    } else if (entry.codes.length === 1 && entry.literal.length === 0) {
+      w.varint((entry.codes[0] << 2) | MODE_SUFFIX);
+    } else if (entry.codes.length === 1) {
       w.varint((entry.literal.length << 2) | MODE_BOTH);
       w.raw(entry.literal);
-      w.u8(entry.suffix);
+      w.u8(entry.codes[0]);
     } else {
       w.varint((entry.literal.length << 2) | MODE_LITERAL);
       w.raw(entry.literal);
@@ -918,27 +1048,40 @@ export function deserialize(bytes: Uint8Array): Container {
     const tag = r.varint();
     const mode = tag & 3;
     const n = tag >>> 2;
+    const ending = (code: number): Uint8Array => {
+      if (code >= suffixBytes.length) throw new CodecError(`lexicon entry ${i} uses undefined suffix code ${code}`);
+      return suffixBytes[code];
+    };
 
     let literal: Uint8Array = EMPTY;
-    let suffix: Uint8Array = EMPTY;
+    let endings: Uint8Array[] = [];
     if (mode === MODE_LITERAL) {
       literal = r.raw(n);
     } else if (mode === MODE_SUFFIX) {
-      if (n >= suffixBytes.length) throw new CodecError(`lexicon entry ${i} uses undefined suffix code ${n}`);
-      suffix = suffixBytes[n];
+      endings = [ending(n)];
     } else if (mode === MODE_BOTH) {
       literal = r.raw(n);
-      const code = r.u8();
-      if (code >= suffixBytes.length) throw new CodecError(`lexicon entry ${i} uses undefined suffix code ${code}`);
-      suffix = suffixBytes[code];
+      endings = [ending(r.u8())];
     } else {
-      throw new CodecError(`lexicon entry ${i} has an unknown storage mode`);
+      // A chain: the tag holds the first code, then a byte each while bit 7 is set.
+      endings = [ending(n)];
+      for (;;) {
+        const code = r.u8();
+        endings.push(ending(code & ~CHAIN_MORE));
+        if ((code & CHAIN_MORE) === 0) break;
+      }
     }
 
-    const bytes = new Uint8Array(shared + literal.length + suffix.length);
+    let length = shared + literal.length;
+    for (const end of endings) length += end.length;
+    const bytes = new Uint8Array(length);
     bytes.set(previous.subarray(0, shared));
     bytes.set(literal, shared);
-    bytes.set(suffix, shared + literal.length);
+    let at = shared + literal.length;
+    for (const end of endings) {
+      bytes.set(end, at);
+      at += end.length;
+    }
     lexicon.push(decoder.decode(bytes));
     previous = bytes;
   }
@@ -1003,10 +1146,12 @@ export function encode(text: string, config: Partial<CodecConfig> = {}): EncodeR
   for (const entry of planLexiconEntries(lexicon, [])) frontCodedOnly += entry.bytes;
   const codesUsed = new Set<number>();
   let entriesSuffixed = 0;
+  let entriesChained = 0;
   for (const entry of lexiconEntries) {
-    if (entry.suffix < 0) continue;
+    if (entry.codes.length === 0) continue;
     entriesSuffixed++;
-    codesUsed.add(entry.suffix);
+    if (entry.codes.length > 1) entriesChained++;
+    for (const code of entry.codes) codesUsed.add(code);
   }
 
   return {
@@ -1018,6 +1163,7 @@ export function encode(text: string, config: Partial<CodecConfig> = {}): EncodeR
       suffixes,
       suffixCodesUsed: codesUsed.size,
       entriesSuffixed,
+      entriesChained,
       lexiconBytesSaved: frontCodedOnly - sizes.lexicon - sizes.suffixTable,
       tokenCount: tokens.length,
       distinctTerminals: lexicon.length,

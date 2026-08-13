@@ -37,6 +37,21 @@ decode(bytes)
   deserialize -> readStream -> expand -> detokenize
 ```
 
+## Which pairs earn a rule
+
+The most frequent pair wins, but it still has to pay: a rule costs 4 bytes in section B and earns 2
+bytes per replacement, so it is taken only if it will really replace three or more times. *Really* is
+the operative word — a self-overlapping pair eats one occurrence per replacement it makes ("aa" can
+be taken twice in "aaaaa", not four times), so the count that decides is the one from a dry pass over
+the occurrence list, not the index size. A pair that fails stays in the index; later merges around it
+can grow it back into contention. This is why `minPairCount` below 3 buys nothing.
+
+Ranking candidates by savings rather than by frequency was tried and lost. Score each pair by what
+its symbols really cost in the stream — one byte, not two, for anything the escape table will get to
+— and the hot stop-word pairs stop looking worthwhile; the grammar that comes back is 36–45 KB worse
+on the KJV. The escape table is chosen *after* Re-Pair and wants short symbols to point at, so
+folding the hot pairs feeds it rather than competing with it.
+
 ## The N trade-off
 
 A lead byte below `N` indexes the escape table; otherwise a second byte follows and the token is
@@ -58,27 +73,111 @@ stream. "testing" keeps its own id; it is simply written as *share four bytes wi
 entry, then apply the -ing code* instead of spelling out `ing`. Drop the table entirely and the
 stream, the grammar and every id stay byte-for-byte identical; only the lexicon grows.
 
-Each entry is written as `varint shared · varint tag · [literal bytes] · [code byte]`, where the low
+Each entry is written as `varint shared · varint tag · [literal bytes] · [code bytes]`, where the low
 two bits of the tag pick how the ending is spelled:
 
 ```
 mode 0  literal       tag = length << 2       "begat"      share 0, add "begat"
 mode 1  code only     tag = code << 2 | 1     "begetting"  share 6, apply -ing
 mode 2  literal+code  tag = length << 2 | 2   "gnarling"   share 0, add "gnarl", apply -ing
+mode 3  code chain    tag = code << 2 | 3     "Aramitess"  share 4, apply -ites, then -s
 ```
 
 Mode 1 is the one that pays: the code rides inside the varint that would otherwise have held a
 length, so a coded ending costs *nothing at all* — "begetting" after "begetteth" is two bytes.
 A table of up to 32 endings keeps that tag in one byte, so all 29 codes are free to use.
 
-Candidates come from the text rather than a hardcoded list. Front coding has already stripped what
-each entry shares with its neighbour, so `planLexiconSuffixes` looks only at what is left over —
-the tails that make sorted neighbours differ — and picks greedily with exclusive assignment, so
-overlapping endings (`ing`, `ng`, `g`) are not all paid for the same word.
+### The shared prefix is a ceiling, not an obligation
+
+Taking every byte the neighbour offers is the cheapest way to *spell an entry out*, but it can bury
+the ending a code would have paid for. "Harness" follows "Harnepher", so it shares "Harn" and is
+left with "ess" — no code covers that, so three bytes. Hand the "n" back and what is left is "ness",
+which does have a code: two bytes. `planLexiconEntries` scores every ending at the deepest prefix it
+can keep rather than only against the leftovers of maximal sharing, and writes whichever spelling is
+smaller. Nothing in the format moves — a smaller `shared` is one the reader already accepted.
+
+Candidates come from the text rather than a hardcoded list, and they are not confined to what
+maximal sharing left over either, for the same reason: `planLexiconSuffixes` walks the tails of the
+whole word, scoring each at the prefix it survives with. It then picks greedily with exclusive
+assignment, so overlapping endings (`ing`, `ng`, `g`) are not all paid for the same word.
+
+Worth 693 bytes on the KJV — 229 from letting entries under-share against the table they already
+had, and 464 more once the table itself is chosen knowing they can. `ites`, `ite`, `ers`, `re` and
+`ve` earn codes that were previously invisible, since the tails that would have justified them were
+hidden inside shared prefixes.
 
 Nothing here has to be a word. The prefix comes from the neighbouring entry, not from a lexicon
 lookup, so "waters" codes happily off "water…" whether or not "water" appears in the text — the
 restriction the earlier token-level splitter needed is gone.
+
+### Chained codes
+
+Endings compose. "Aramitess" follows "Aram" in the sorted list, so the best a single code can do is
+`-s` with "ites" spelled out — five bytes for the entry. `-ites` then `-s` spells nothing: mode 3
+puts the first code in the tag where mode 1 would have put it, and each further code is one byte,
+so the entry is three. The high bit of a code byte says another follows, which is free while the
+table stays under 128 codes, so a chain is any length rather than exactly two.
+
+What limits chains is the sort, not the format. `-ing` then `-s` almost never fires, because if
+"blessing" is in the text at all it sorts immediately before "blessings" and hands over the whole
+stem for free — one code, two bytes, already cheaper than any chain. A chain only pays where the
+*intermediate* form is missing, which is why the KJV's 641 chained entries are mostly proper nouns
+and rare derivations: "Aramitess" without "Aramites", "Anakims" without "Anakim".
+
+| chain length | entries | running total saved |
+| --- | ---: | ---: |
+| 2 codes | 530 | 728 |
+| 3 codes | 92 | 891 |
+| 4 codes | 17 | 938 |
+| 5 codes | 2 | 942 |
+
+Chains do not make any code redundant — they are a 3-byte spelling competing with a coded ending's
+2 — so `planLexiconSuffixes` still scores candidates one code at a time. That is an approximation,
+and a measurably harmless one: dropping any single code from the table the KJV picks costs between
+118 bytes (`ers`, which chains as `-er` + `-s`) and 2,114 (`ing`).
+
+### Why the base is always the neighbour
+
+Letting an entry front-code against any *earlier* entry, paying a back-reference for the ones whose
+sorted neighbour is a poor match, was tried and lost. In a sorted list the neighbour is already the
+best prefix match there is: for `j < i`, `LCP(w_j, w_i) = min(LCP(w_k-1, w_k))` over `k` in `(j, i]`,
+so reaching further back can only lower the shared count, never raise it. Sorting *is* the maximum
+spanning tree over prefix sharing; a reference has nothing better to point at.
+
+That leaves only the case above — a shorter prefix that uncovers a coded ending — and a reference is
+the expensive way to buy it. Measured on the KJV with a back-reference mode added (distance in a
+fourth tag mode, nearest qualifying base found with a monotonic stack over the adjacent-LCP array),
+34 entries took one, for 36 bytes. Under-sharing against the neighbour reaches the same entries for
+no reference byte and no format change, is worth 229 bytes on the same table, and once it is in
+place the back-reference is taken **zero** times. The idea is subsumed, not merely beaten.
+
+### Why there is no prefix table
+
+The mirror of the suffix table — codes for `un`, `re`, `over`, the heads that get spelled out — is
+the obvious next move, and it cannot work. Not "does not pay on this corpus": cannot, on any input.
+
+Every word starting with `H` is one contiguous block of a sorted list, so inside that block every
+adjacent pair already shares at least `|H|` bytes and gets the head for free. Exactly one entry per
+head — the first in the block — ever has to spell it out, and a code saves that entry at most `|H|`
+bytes. The table entry that names `H` costs `varint(|H|) + |H|`, which is at least `|H| + 1`. The
+saving is bounded below the cost by construction, one byte short, for every head, always.
+
+The measurement lands exactly where the proof says. Across the KJV's 13,773 entries, 6,511 have a
+head worth naming and the best of them saves 8 bytes against a table entry costing 9. At every
+budget from 16 codes to 128, the greedy planner chooses **none**.
+
+The asymmetry is the sort, not the language: sorting *collects* common heads and *scatters* common
+tails, which is precisely what leaves tails worth a table and heads not. Reversing it confirms the
+direction is the right one — reverse every word by code point, sort that, and the same two planners
+now share tails with the neighbour and build a table of heads:
+
+| lexicon order | shared with neighbour | table of | lexicon | table | sum |
+| --- | --- | --- | ---: | ---: | ---: |
+| sorted (today) | heads | tails — `ing ed th s st er…` | 51,488 | 94 | **51,582** |
+| reverse-sorted | tails | heads — `oc s er ed hS w sid…` | 60,986 | 84 | 61,070 |
+
+English shares far more head than tail, so the mirror costs 9,488 bytes. Both halves of the design
+are pulling the same direction, which is why only one of them gets a table.
 
 ### Why the table size is not a knob
 
@@ -117,7 +216,8 @@ of input, and only 175 codes ever earn their place at all.
 - **Suffix rules.** Same budget as the ROM — 29 codes, the size of its 0x82–0x9E range — but derived
   from the corpus by measured savings and written into the container. The ROM implemented its
   suffixes in code rather than as a table, so its set was fixed at build time and the same for every
-  text, and it spent real byte values on them where this spends two bits of a length varint.
+  text, and it spent real byte values on them where this spends two bits of a length varint. Codes
+  here also chain, which the ROM's one-ending-per-word scheme had no way to express.
 - **No skip list.** Front coding makes lexicon lookup a sequential walk. The ROM answered that with
   a 2,625-byte index at `0x0C2A`; decoding here materializes the whole word list up front instead.
 - **Structure markers.** `%` `$` `#` `@` `{` `}` were reserved terminals for book/chapter/verse
@@ -153,14 +253,9 @@ mise run clean            # drop generated build output
 
 ## Ideas worth trying
 
-- Score rules by actual savings (`(occurrences - 1) * cost - 4`) instead of raw frequency, and drop
-  rules whose occurrences got eaten by overlap.
-- Let `minPairCount` fall to 2 once the id space is nearly full — the last rules are the cheap ones.
-- Suffix chains — "-ing" then "-s" — which would need a second code byte and a decoder that applies
-  endings in order.
-- Let a lexicon entry front-code against any earlier entry, not just its immediate neighbour, paying
-  a back-reference for the ones where the sorted neighbour is a poor match.
 - Reserve a second escape range for 3-byte tokens to see whether a bigger grammar pays for itself.
+- Let the suffix table and the entry plans be chosen together rather than in sequence, so a code is
+  scored knowing which entries will chain past it.
 
 ## Benchmarks
 
@@ -172,5 +267,7 @@ This is still not quite as good as what the GB code could accomplish - its lexic
 |---|---------------------------------------------------------|------------:|--------:|-------------:|--------:|-------:|--------:|-------:|
 | 1 | No lexicon encoding, suffix markers in the stream       |   1,012,726 |  84,047 |            — | 111,108 |    210 | 817,347 |     14 |
 | 2 | Front-coded lexicon, suffix markers still in the stream |     983,026 |  57,804 |            — | 107,700 |    210 | 817,298 |     14 |
-| 3 | Suffix codes moved into the lexicon                     | **971,163** |  52,189 |           86 | 118,840 |    170 | 799,863 |     15 |
+| 3 | Suffix codes moved into the lexicon                     |     971,163 |  52,189 |           86 | 118,840 |    170 | 799,863 |     15 |
+| 4 | Entries may under-share to reach a code                 |     970,470 |  51,488 |           94 | 118,840 |    170 | 799,863 |     15 |
+| 5 | Chained suffix codes                                    | **969,528** |  50,546 |           94 | 118,840 |    170 | 799,863 |     15 |
 

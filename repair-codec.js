@@ -133,6 +133,8 @@ var RePair = (() => {
     lexicon.forEach((word, i) => index.set(word, i));
     return { lexicon, ids: tokens.map((t) => index.get(t)) };
   }
+  var RULE_BYTES = 4;
+  var SYMBOL_BYTES = 2;
   var PairHeap = class {
     constructor() {
       __publicField(this, "counts", []);
@@ -230,8 +232,17 @@ var RePair = (() => {
       const left = Math.floor(key / KEY_SHIFT);
       const right = key % KEY_SHIFT;
       const occurrences = [...positions.get(key)].sort((a, b) => a - b);
+      let replaceable = 0;
+      let eaten = -1;
+      for (const i of occurrences) {
+        if (i === eaten || !alive[i] || sym[i] !== left) continue;
+        const j = next[i];
+        if (j === -1 || !alive[j] || sym[j] !== right) continue;
+        replaceable++;
+        eaten = j;
+      }
+      if (replaceable * SYMBOL_BYTES - RULE_BYTES <= 0) continue;
       positions.delete(key);
-      let replaced = 0;
       for (const i of occurrences) {
         if (!alive[i] || sym[i] !== left) continue;
         const j = next[i];
@@ -246,10 +257,6 @@ var RePair = (() => {
         if (after !== -1) prev[after] = i;
         if (before !== -1) addOccurrence(sym[before], newId, before);
         if (after !== -1) addOccurrence(newId, sym[after], i);
-        replaced++;
-      }
-      if (replaced < minCount) {
-        if (replaced === 0) continue;
       }
       rules.push([left, right]);
     }
@@ -338,13 +345,18 @@ var RePair = (() => {
   var MODE_LITERAL = 0;
   var MODE_SUFFIX = 1;
   var MODE_BOTH = 2;
-  function endsWith(haystack, needle) {
-    if (needle.length === 0 || needle.length > haystack.length) return false;
-    const offset = haystack.length - needle.length;
+  var MODE_CHAIN = 3;
+  var CHAIN_MORE = 128;
+  var MAX_CHAINABLE_CODE = 127;
+  function matchesAt(haystack, offset, needle) {
+    if (needle.length === 0 || offset < 0 || offset + needle.length > haystack.length) return false;
     for (let i = 0; i < needle.length; i++) {
       if (haystack[offset + i] !== needle[i]) return false;
     }
     return true;
+  }
+  function endsWith(haystack, needle) {
+    return matchesAt(haystack, haystack.length - needle.length, needle);
   }
   var suffixTableCost = (suffix) => {
     const n = utf8Length(suffix);
@@ -352,27 +364,67 @@ var RePair = (() => {
   };
   function planLexiconEntries(lexicon, suffixes) {
     const table = suffixes.map((s) => ENCODER.encode(s));
+    const chainable = table.length > 0 && table.length - 1 <= MAX_CHAINABLE_CODE;
     const entries = [];
     let previous = EMPTY;
+    const links = [];
+    const choice = [];
     for (const word of lexicon) {
       const bytes = ENCODER.encode(word);
-      const shared = sharedPrefix(previous, bytes);
-      const rest = bytes.subarray(shared);
-      const sharedSize = varintSize(shared);
-      let suffix = -1;
-      let literal = rest.length;
-      let size = sharedSize + varintSize(rest.length << 2 | MODE_LITERAL) + rest.length;
+      const maxShared = sharedPrefix(previous, bytes);
+      let shared = maxShared;
+      let literalEnd = bytes.length;
+      let codes = [];
+      let size = varintSize(maxShared) + varintSize(bytes.length - maxShared << 2 | MODE_LITERAL) + (bytes.length - maxShared);
       for (let code = 0; code < table.length; code++) {
-        if (!endsWith(rest, table[code])) continue;
-        const remainder = rest.length - table[code].length;
-        const candidate = remainder === 0 ? sharedSize + varintSize(code << 2 | MODE_SUFFIX) : sharedSize + varintSize(remainder << 2 | MODE_BOTH) + remainder + 1;
+        if (!endsWith(bytes, table[code])) continue;
+        const cut = bytes.length - table[code].length;
+        const start = Math.min(maxShared, cut);
+        const remainder = cut - start;
+        const candidate = remainder === 0 ? varintSize(start) + varintSize(code << 2 | MODE_SUFFIX) : varintSize(start) + varintSize(remainder << 2 | MODE_BOTH) + remainder + 1;
         if (candidate < size) {
           size = candidate;
-          suffix = code;
-          literal = remainder;
+          shared = start;
+          literalEnd = cut;
+          codes = [code];
         }
       }
-      entries.push({ shared, literal: rest.subarray(0, literal), suffix, bytes: size });
+      if (chainable) {
+        const unreachable = bytes.length + 1;
+        links[bytes.length] = 0;
+        for (let pos = bytes.length - 1; pos >= 0; pos--) {
+          links[pos] = unreachable;
+          choice[pos] = -1;
+          for (let code = 0; code < table.length; code++) {
+            const end = pos + table[code].length;
+            if (end > bytes.length || links[end] === unreachable) continue;
+            if (!matchesAt(bytes, pos, table[code])) continue;
+            if (links[end] + 1 < links[pos]) {
+              links[pos] = links[end] + 1;
+              choice[pos] = code;
+            }
+          }
+        }
+        for (let cut = Math.min(maxShared, bytes.length); cut >= 0; cut--) {
+          for (let code = 0; code < table.length; code++) {
+            const end = cut + table[code].length;
+            if (end > bytes.length || links[end] === unreachable) continue;
+            if (!matchesAt(bytes, cut, table[code])) continue;
+            const count = links[end] + 1;
+            if (count < 2) continue;
+            const candidate = varintSize(cut) + varintSize(code << 2 | MODE_CHAIN) + (count - 1);
+            if (candidate >= size) continue;
+            size = candidate;
+            shared = cut;
+            literalEnd = cut;
+            codes = [code];
+            for (let pos = end; pos < bytes.length; pos += table[choice[pos]].length) {
+              codes.push(choice[pos]);
+            }
+          }
+        }
+      }
+      entries.push({ shared, literal: bytes.subarray(shared, literalEnd), codes, bytes: size });
       previous = bytes;
     }
     return entries;
@@ -387,19 +439,21 @@ var RePair = (() => {
     let previous = EMPTY;
     for (const word of lexicon) {
       const bytes = ENCODER.encode(word);
-      const rest = bytes.subarray(sharedPrefix(previous, bytes));
+      const maxShared = sharedPrefix(previous, bytes);
       previous = bytes;
-      const literalCost = varintSize(rest.length << 2 | MODE_LITERAL) + rest.length;
+      const rest = bytes.length - maxShared;
+      const literalCost = varintSize(maxShared) + varintSize(rest << 2 | MODE_LITERAL) + rest;
       const list = [];
       let chars = 0;
-      for (let start = rest.length - 1; start >= 0 && chars < maxChars; start--) {
-        if ((rest[start] & 192) === 128) continue;
+      for (let start = bytes.length - 1; start >= 0 && chars < maxChars; start--) {
+        if ((bytes[start] & 192) === 128) continue;
         chars++;
-        const remainder = start;
-        const coded = remainder === 0 ? codeTagSize : varintSize(remainder << 2 | MODE_BOTH) + remainder + 1;
+        const shared = Math.min(maxShared, start);
+        const remainder = start - shared;
+        const coded = remainder === 0 ? varintSize(shared) + codeTagSize : varintSize(shared) + varintSize(remainder << 2 | MODE_BOTH) + remainder + 1;
         const saving = literalCost - coded;
         if (saving <= 0) continue;
-        const suffix = decoder.decode(rest.subarray(start));
+        const suffix = decoder.decode(bytes.subarray(start));
         list.push({ suffix, saving });
         totals.set(suffix, (totals.get(suffix) ?? 0) + saving);
       }
@@ -433,7 +487,7 @@ var RePair = (() => {
     return chosen;
   }
   var MAGIC = [82, 80, 82, 49];
-  var FORMAT_VERSION = 3;
+  var FORMAT_VERSION = 4;
   var HEADER_BYTES = 15;
   var ByteWriter = class {
     constructor() {
@@ -540,12 +594,17 @@ var RePair = (() => {
     }
     for (const entry of planLexiconEntries(container.lexicon, container.suffixes)) {
       w.varint(entry.shared);
-      if (entry.suffix >= 0 && entry.literal.length === 0) {
-        w.varint(entry.suffix << 2 | MODE_SUFFIX);
-      } else if (entry.suffix >= 0) {
+      if (entry.codes.length > 1) {
+        w.varint(entry.codes[0] << 2 | MODE_CHAIN);
+        for (let i = 1; i < entry.codes.length; i++) {
+          w.u8(entry.codes[i] | (i < entry.codes.length - 1 ? CHAIN_MORE : 0));
+        }
+      } else if (entry.codes.length === 1 && entry.literal.length === 0) {
+        w.varint(entry.codes[0] << 2 | MODE_SUFFIX);
+      } else if (entry.codes.length === 1) {
         w.varint(entry.literal.length << 2 | MODE_BOTH);
         w.raw(entry.literal);
-        w.u8(entry.suffix);
+        w.u8(entry.codes[0]);
       } else {
         w.varint(entry.literal.length << 2 | MODE_LITERAL);
         w.raw(entry.literal);
@@ -593,25 +652,37 @@ var RePair = (() => {
       const tag = r.varint();
       const mode = tag & 3;
       const n = tag >>> 2;
+      const ending = (code) => {
+        if (code >= suffixBytes.length) throw new CodecError(`lexicon entry ${i} uses undefined suffix code ${code}`);
+        return suffixBytes[code];
+      };
       let literal = EMPTY;
-      let suffix = EMPTY;
+      let endings = [];
       if (mode === MODE_LITERAL) {
         literal = r.raw(n);
       } else if (mode === MODE_SUFFIX) {
-        if (n >= suffixBytes.length) throw new CodecError(`lexicon entry ${i} uses undefined suffix code ${n}`);
-        suffix = suffixBytes[n];
+        endings = [ending(n)];
       } else if (mode === MODE_BOTH) {
         literal = r.raw(n);
-        const code = r.u8();
-        if (code >= suffixBytes.length) throw new CodecError(`lexicon entry ${i} uses undefined suffix code ${code}`);
-        suffix = suffixBytes[code];
+        endings = [ending(r.u8())];
       } else {
-        throw new CodecError(`lexicon entry ${i} has an unknown storage mode`);
+        endings = [ending(n)];
+        for (; ; ) {
+          const code = r.u8();
+          endings.push(ending(code & ~CHAIN_MORE));
+          if ((code & CHAIN_MORE) === 0) break;
+        }
       }
-      const bytes2 = new Uint8Array(shared + literal.length + suffix.length);
+      let length = shared + literal.length;
+      for (const end of endings) length += end.length;
+      const bytes2 = new Uint8Array(length);
       bytes2.set(previous.subarray(0, shared));
       bytes2.set(literal, shared);
-      bytes2.set(suffix, shared + literal.length);
+      let at = shared + literal.length;
+      for (const end of endings) {
+        bytes2.set(end, at);
+        at += end.length;
+      }
       lexicon.push(decoder.decode(bytes2));
       previous = bytes2;
     }
@@ -660,10 +731,12 @@ var RePair = (() => {
     for (const entry of planLexiconEntries(lexicon, [])) frontCodedOnly += entry.bytes;
     const codesUsed = /* @__PURE__ */ new Set();
     let entriesSuffixed = 0;
+    let entriesChained = 0;
     for (const entry of lexiconEntries) {
-      if (entry.suffix < 0) continue;
+      if (entry.codes.length === 0) continue;
       entriesSuffixed++;
-      codesUsed.add(entry.suffix);
+      if (entry.codes.length > 1) entriesChained++;
+      for (const code of entry.codes) codesUsed.add(code);
     }
     return {
       bytes,
@@ -674,6 +747,7 @@ var RePair = (() => {
         suffixes,
         suffixCodesUsed: codesUsed.size,
         entriesSuffixed,
+        entriesChained,
         lexiconBytesSaved: frontCodedOnly - sizes.lexicon - sizes.suffixTable,
         tokenCount: tokens.length,
         distinctTerminals: lexicon.length,

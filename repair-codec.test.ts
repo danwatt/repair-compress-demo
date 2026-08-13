@@ -10,6 +10,7 @@ import {
   tokenize as tok,
   describeToken,
   buildLexicon,
+  repair,
   serialize,
   deserialize,
   measure,
@@ -78,6 +79,16 @@ for (const n of [0, 1, 16, 85, 128, 200, 235]) {
   }
 }
 
+// A self-overlapping pair loses one occurrence to every replacement it makes, so
+// the index count is not what the rule is worth. "aaaa" indexes three (a,a)
+// pairs but can only fold two of them, which is exactly what the rule's 4 bytes
+// cost — no rule. "aaaaaa" folds three times and clears it.
+const repairOptions = { minPairCount: 3, maxPairs: 16, maxTokenId: 255, firstRuleId: 1 };
+const eaten = repair([0, 0, 0, 0], repairOptions);
+check("a break-even overlapping pair earns no rule", eaten.rules.length === 0, JSON.stringify(eaten.rules));
+const paid = repair([0, 0, 0, 0, 0, 0], repairOptions);
+check("an overlapping pair that still pays earns one", paid.rules.length === 1, JSON.stringify(paid.rules));
+
 // Byte budgets must stay inside a byte.
 let threw = false;
 try {
@@ -134,12 +145,73 @@ check(
 );
 check(
   "every storage mode gets exercised",
-  modeEntries.some((e) => e.suffix < 0) &&
-    modeEntries.some((e) => e.suffix >= 0 && e.literal.length === 0) &&
-    modeEntries.some((e) => e.suffix >= 0 && e.literal.length > 0),
-  modeEntries.map((e) => `${e.shared}/${e.literal.length}/${e.suffix}`).join(" "),
+  modeEntries.some((e) => e.codes.length === 0) &&
+    modeEntries.some((e) => e.codes.length === 1 && e.literal.length === 0) &&
+    modeEntries.some((e) => e.codes.length === 1 && e.literal.length > 0),
+  modeEntries.map((e) => `${e.shared}/${e.literal.length}/${e.codes.join("+")}`).join(" "),
 );
 check("mixed-mode round trip", decode(modeResult.bytes) === modeSample);
+
+// Chained codes: an entry may apply several endings in order, so a word whose
+// tail is two table entries back to back costs one byte past the first code
+// rather than spelling the first ending out. The chain is written as the tag
+// plus one byte each, with bit 7 saying another follows, so its length is open.
+// "Aramitess" follows "Aram" only because "Aramites" is not in the text: when the
+// intermediate form is present the sort puts it next door and hands the whole
+// tail over for free, which is why chains stay rare.
+const chainSample = (
+  "Hittites Moabites Amorites Perizzites Jebusites Girgashites Canaanites " +
+  "king kings land lands river rivers son sons tribe tribes wall walls " +
+  "Aram Aramitess "
+).repeat(3);
+const chained = encode(chainSample);
+const chainEntries = planLexiconEntries(chained.container.lexicon, chained.container.suffixes);
+check(
+  "an entry can apply a chain of codes",
+  chainEntries.some((e) => e.codes.length > 1),
+  chainEntries
+    .map((e, i) => `${chained.container.lexicon[i]}:${e.shared}/${e.codes.map((c) => chained.container.suffixes[c]).join("+")}`)
+    .join(" "),
+);
+check("chained entries round trip", decode(chained.bytes) === chainSample);
+check(
+  "planLexiconEntries sizes match what serialize writes, with chains",
+  chainEntries.reduce((n, e) => n + e.bytes, 0) === chained.stats.sizes.lexicon,
+);
+check(
+  "chains are counted in the stats",
+  chained.stats.entriesChained > 0 && chained.stats.entriesChained <= chained.stats.entriesSuffixed,
+  `${chained.stats.entriesChained} of ${chained.stats.entriesSuffixed}`,
+);
+
+// The shared prefix is a ceiling, not an obligation. "Harness" after "Harnepher"
+// shares "Harn" and is left with "ess", which no code covers; giving the "n" back
+// leaves "ness", which does. The entry writer has to find that, and the shorter
+// prefix it writes must still be one the reader accepts.
+const undershareSample =
+  "Harnepher Harness kindness meekness goodness sadness boldness rudeness wildness " +
+  "witness fitness sickness thickness weakness darkness ".repeat(3);
+const undershare = encode(undershareSample);
+const undershareEntries = planLexiconEntries(undershare.container.lexicon, undershare.container.suffixes);
+const lcpBytes = (a: string, b: string): number => {
+  const x = new TextEncoder().encode(a);
+  const y = new TextEncoder().encode(b);
+  let i = 0;
+  while (i < Math.min(x.length, y.length) && x[i] === y[i]) i++;
+  return i;
+};
+check(
+  "an entry may share fewer bytes than it could, to reach a code",
+  undershareEntries.some((e, i) => i > 0 &&
+    e.shared < lcpBytes(undershare.container.lexicon[i - 1], undershare.container.lexicon[i])),
+  undershare.container.suffixes.join(" "),
+);
+check(
+  "no entry claims more than the previous one offers",
+  undershareEntries.every((e, i) =>
+    e.shared <= (i === 0 ? 0 : lcpBytes(undershare.container.lexicon[i - 1], undershare.container.lexicon[i]))),
+);
+check("under-shared entries round trip", decode(undershare.bytes) === undershareSample);
 
 // Front coding: the lexicon must be in UTF-8 byte order, since an id is a
 // position in that list and each entry is a delta against the one before it.
