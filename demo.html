@@ -29,6 +29,8 @@
   --sym-esc-hi: color-mix(in oklab, var(--sym-esc) 55%, #ffffff);
   --sym-rule-lo: color-mix(in oklab, var(--sym-rule) 62%, var(--ground));
   --sym-rule-hi: color-mix(in oklab, var(--sym-rule) 55%, #ffffff);
+  --chapter-marker: #f6d878;
+  --verse-marker: #ff6b9a;
   --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
   --pixel: "Silkscreen", "IBM Plex Mono", monospace;
 }
@@ -194,6 +196,8 @@ td.num { text-align: right; font-variant-numeric: tabular-nums; }
 /* Single word is always exactly one word — flat tone, no ramp. */
 .cell.b2t { width: 18px; background: var(--sym-word); }
 .cell.b2r { width: 18px; --base: var(--sym-rule); --lo: var(--sym-rule-lo); --hi: var(--sym-rule-hi); }
+.cell.has-chapter { box-shadow: inset 0 -2px var(--chapter-marker); }
+.cell.has-verse { box-shadow: inset 0 -2px var(--verse-marker); }
 .cell.s0 { --t: 0; }
 .cell.s1 { --t: .111; }
 .cell.s2 { --t: .222; }
@@ -204,6 +208,10 @@ td.num { text-align: right; font-variant-numeric: tabular-nums; }
 .cell.s7 { --t: .778; }
 .cell.s8 { --t: .889; }
 .cell.s9 { --t: 1; }
+.legend i.marker {
+  width: 18px; height: 10px; background: var(--panel);
+  border: 1px solid var(--rule); box-shadow: inset 0 -2px var(--marker);
+}
 .readout {
   min-height: 44px; padding: 8px 10px; background: var(--panel);
   border: 1px solid var(--rule); border-radius: 2px; font-size: 12px; color: var(--ink-soft);
@@ -310,6 +318,8 @@ footer a { color: var(--hot); }
       <span><i class="ramp" style="--lo:var(--sym-esc-lo);--hi:var(--sym-esc-hi)"></i><b>1 byte</b> escape code</span>
       <span><i style="background:var(--sym-word)"></i><b>2 bytes</b> single word</span>
       <span><i class="ramp" style="--lo:var(--sym-rule-lo);--hi:var(--sym-rule-hi)"></i><b>2 bytes</b> grammar rule</span>
+      <span><i class="marker" style="--marker:var(--chapter-marker)"></i><b>chapter</b> boundary</span>
+      <span><i class="marker" style="--marker:var(--verse-marker)"></i><b>verse</b> boundary</span>
       <span id="shade-legend"></span>
     </div>
   </section>
@@ -679,6 +689,17 @@ And God said, Let there be lights in the firmament of the heaven to divide the d
       wordCount[lexSize + i] = wordCount[l] + wordCount[r];
     }
 
+    // Boundary kind per token, bottom-up so rules inherit markers from either side.
+    // Chapter has the higher value, so it wins when a chunk contains both.
+    const boundaryKind = new Uint8Array(lexSize + rules.length);
+    for (let i = 0; i < lexSize; i++) {
+      boundaryKind[i] = lexicon[i] === "#" ? 2 : lexicon[i] === "@" ? 1 : 0;
+    }
+    for (let i = 0; i < rules.length; i++) {
+      const [l, r] = rules[i];
+      boundaryKind[lexSize + i] = Math.max(boundaryKind[l], boundaryKind[r]);
+    }
+
     // 10-step ramp, log-scaled so the long tail of huge rules doesn't flatten the rest.
     const maxWords = seq.reduce((m, id) => Math.max(m, wordCount[id] ?? 1), 1);
     const span = Math.log(maxWords);
@@ -693,7 +714,8 @@ And God said, Let there be lights in the firmament of the heaven to divide the d
         const cls = escapes.has(id) ? "b1" : single ? "b2t" : "b2r";
         // b2t is always one word, so it gets no shade class.
         const step = single ? "" : ` s${shade(wordCount[id] ?? 1)}`;
-        return `<div class="cell ${cls}${step}" data-i="${i}" tabindex="0"></div>`;
+        const boundary = boundaryKind[id] === 2 ? " has-chapter" : boundaryKind[id] === 1 ? " has-verse" : "";
+        return `<div class="cell ${cls}${step}${boundary}" data-i="${i}" tabindex="0"></div>`;
       })
       .join("");
     $("shade-legend").textContent =
