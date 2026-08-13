@@ -220,11 +220,12 @@ td.num { text-align: right; font-variant-numeric: tabular-nums; }
 .stream-row { display: flex; flex-wrap: wrap; gap: 2px; margin-bottom: 2px; }
 .stream-row:last-child { margin-bottom: 0; }
 .cell {
-  height: 16px; border-radius: 1px; cursor: default;
+  height: 16px; border-radius: 1px; cursor: pointer;
   --t: 0;
   background: var(--base);
   background: color-mix(in oklab, var(--hi) calc(var(--t) * 100%), var(--lo));
 }
+.cell:focus-visible { outline: 2px solid var(--hot); outline-offset: 1px; }
 .cell.b1 { width: 8px; --base: var(--sym-esc); --lo: var(--sym-esc-lo); --hi: var(--sym-esc-hi); }
 /* Single word is always exactly one word — flat tone, no ramp. */
 .cell.b2t { width: 18px; background: var(--sym-word); }
@@ -257,6 +258,45 @@ td.num { text-align: right; font-variant-numeric: tabular-nums; }
   border: 1px solid var(--rule); border-radius: 2px; font-size: 12px; color: var(--ink-soft);
 }
 .readout b { color: var(--dmg-4); font-weight: 500; }
+
+.stream-modal {
+  width: min(760px, calc(100vw - 32px)); max-height: min(760px, calc(100vh - 32px));
+  padding: 0; border: 1px solid var(--dmg-3); border-radius: 3px;
+  background: var(--panel); color: var(--ink); box-shadow: 0 18px 70px #000b;
+}
+.stream-modal::backdrop { background: #050812d9; }
+.stream-modal-inner { display: flex; flex-direction: column; max-height: inherit; }
+.stream-modal-head {
+  display: flex; align-items: flex-start; justify-content: space-between; gap: 20px;
+  padding: 16px 18px; border-bottom: 1px solid var(--rule);
+}
+.stream-modal-title { margin: 0; color: var(--dmg-4); font: 400 15px/1.4 var(--pixel); }
+.stream-modal-meta { margin-top: 5px; color: var(--ink-soft); font-size: 11px; }
+.stream-modal-close { flex: 0 0 auto; padding: 4px 9px; }
+.stream-modal-body { overflow: auto; padding: 18px; }
+.stream-modal-label {
+  margin: 0 0 6px; color: var(--ink-soft); font-size: 10px;
+  letter-spacing: .06em; text-transform: uppercase;
+}
+.stream-modal-decode, .stream-pair-tree {
+  margin: 0; padding: 12px; border: 1px solid var(--rule); border-radius: 2px;
+  background: var(--ground); white-space: pre-wrap; overflow-wrap: anywhere;
+  font: 13px/1.65 var(--mono);
+}
+.stream-pair-tree, .stream-pair-tree ol { list-style: none; }
+.stream-pair-tree { color: var(--ink-soft); white-space: normal; }
+.stream-pair-tree ol {
+  margin: 4px 0 3px 10px; padding-left: 17px; border-left: 1px solid var(--rule);
+}
+.stream-pair-tree li + li { margin-top: 3px; }
+.stream-pair-tree summary { cursor: pointer; color: var(--ink-soft); }
+.stream-pair-tree summary::marker { color: var(--hot); }
+.stream-pair-tree b { color: var(--dmg-4); font-weight: 500; }
+.stream-pair-side {
+  display: inline-block; width: 42px; color: var(--hot); font-size: 10px;
+  letter-spacing: .04em; text-transform: uppercase;
+}
+.stream-pair-leaf { color: var(--ink); }
 
 .lexicon-controls {
   display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px;
@@ -476,11 +516,29 @@ footer a { color: var(--hot); }
   </footer>
 </div>
 
+<dialog class="stream-modal" id="stream-modal" aria-labelledby="stream-modal-title">
+  <div class="stream-modal-inner">
+    <div class="stream-modal-head">
+      <div>
+        <h2 class="stream-modal-title" id="stream-modal-title"></h2>
+        <div class="stream-modal-meta" id="stream-modal-meta"></div>
+      </div>
+      <button type="button" class="stream-modal-close" id="stream-modal-close" aria-label="Close decode modal">Close</button>
+    </div>
+    <div class="stream-modal-body">
+      <p class="stream-modal-label">Full decoded text</p>
+      <pre class="stream-modal-decode" id="stream-modal-decode"></pre>
+      <p class="stream-modal-label" style="margin-top:16px">Recursive pair breakdown</p>
+      <ol class="stream-pair-tree" id="stream-pair-tree"></ol>
+    </div>
+  </div>
+</dialog>
+
 <script src="repair-codec.js"></script>
 <script>
 (function () {
   const {
-    encode, decode, decodeContainer, deserialize, readStream, tokenize, expandToWords, sweepFromGrammar,
+    encode, decode, decodeContainer, deserialize, readStream, tokenize, detokenize, expandToWords, sweepFromGrammar,
     maxTokenIdFor, describeToken, planLexiconEntries, planLexiconHeaderCodebook,
   } = window.RePair;
 
@@ -1086,7 +1144,8 @@ And God said, Let there be lights in the firmament of the heaven to divide the d
         const boundary = boundaryKind[id] === 2 ? " has-chapter" : boundaryKind[id] === 1 ? " has-verse" : "";
         const hit = hitCells.has(i) ? " search-hit" : "";
         return {
-          html: `<div class="cell ${cls}${step}${boundary}${hit}" data-i="${i}" tabindex="0"></div>`,
+          html: `<div class="cell ${cls}${step}${boundary}${hit}" data-i="${i}" tabindex="0" role="button" ` +
+            `aria-label="Decode stream symbol ${i}"></div>`,
           endsSection: boundaryKind[id] > 0,
         };
       });
@@ -1111,7 +1170,7 @@ And God said, Let there be lights in the firmament of the heaven to divide the d
     }
     $("shade-legend").textContent =
       `shade = words encoded (1 → ${fmt(maxWords)})`;
-    $("readout").textContent = "Hover or tap a cell to expand it back to words.";
+    $("readout").textContent = "Hover or focus a cell for a preview; click it for the full decode.";
   }
 
   function clearStreamSearch() {
@@ -1255,19 +1314,63 @@ And God said, Let there be lights in the firmament of the heaven to divide the d
       `folded into a still-larger rule.`;
   }
 
-  function showCell(i) {
+  function cellDetails(i) {
     if (!stripState) return;
     const { seq, lexSize, escapes, container, byteOffsets, boundaryKind } = stripState;
     const id = seq[i];
     const words = expandToWords(id, container);
-    const kind = escapes.has(id) ? "1-byte escape" : id < lexSize ? "2-byte word" : "2-byte rule";
+    const framing = escapes.has(id) ? "1-byte escape" : "2-byte";
+    const kind = `${framing} ${id < lexSize ? "lexicon token" : "grammar rule"}`;
     const from = byteOffsets[i];
     const to = byteOffsets[i + 1] - 1;
     const bytes = from === to ? `byte ${fmt(from)}` : `bytes ${fmt(from)}–${fmt(to)}`;
     const boundary = boundaryKind[id] === 2 ? " · chapter boundary" : boundaryKind[id] === 1 ? " · verse boundary" : "";
+    const wireBytes = Array.from(container.stream.subarray(from, to + 1), (byte) =>
+      `0x${byte.toString(16).toUpperCase().padStart(2, "0")}`,
+    ).join(" ");
+    return { i, id, words, kind, from, to, bytes, boundary, wireBytes };
+  }
+
+  function showCell(i) {
+    const details = cellDetails(i);
+    if (!details) return;
+    const { id, words, kind, bytes, boundary, wireBytes } = details;
     $("readout").innerHTML =
-      `<b>symbol #${fmt(i)} · ${bytes} · id ${id} · ${kind} · ${words.length} word${words.length === 1 ? "" : "s"}${boundary}</b><br>` +
+      `<b>${wireBytes} · symbol #${fmt(i)} · ${bytes} · id ${id} · ${kind} · ${words.length} ` +
+      `word${words.length === 1 ? "" : "s"}${boundary}</b><br>` +
       escapeHtml(words.map(describeToken).join(" · "));
+  }
+
+  function renderPairNode(id, side, container) {
+    const lexSize = container.lexicon.length;
+    const sideLabel = side ? `<span class="stream-pair-side">${side}</span>` : "";
+    if (id < lexSize) {
+      const token = container.lexicon[id];
+      const tokenLabel = /^\s+$/.test(token) ? JSON.stringify(token) : describeToken(token);
+      return `<li>${sideLabel}<span class="stream-pair-leaf"><b>id ${fmt(id)}</b> · ` +
+        `${escapeHtml(tokenLabel)}</span></li>`;
+    }
+    const [left, right] = container.rules[id - lexSize];
+    return `<li><details open><summary>${sideLabel}<b>rule id ${fmt(id)}</b> = ` +
+      `id ${fmt(left)} + id ${fmt(right)}</summary><ol>` +
+      renderPairNode(left, "left", container) + renderPairNode(right, "right", container) +
+      `</ol></details></li>`;
+  }
+
+  function openCellModal(i) {
+    const details = cellDetails(i);
+    if (!details) return;
+    const { id, words, kind, bytes, boundary, wireBytes } = details;
+    $("stream-modal-title").textContent = `${wireBytes} → ${kind}`;
+    $("stream-modal-meta").textContent =
+      `Symbol #${fmt(i)} · ${bytes} · token id ${fmt(id)} · ` +
+      `${fmt(words.length)} terminal token${words.length === 1 ? "" : "s"}${boundary}`;
+    const decoded = detokenize(words);
+    $("stream-modal-decode").textContent = decoded === ""
+      ? "␀ (empty separator: adjacent tokens are joined without a space)"
+      : decoded;
+    $("stream-pair-tree").innerHTML = renderPairNode(id, "", stripState.container);
+    $("stream-modal").showModal();
   }
 
   async function gzipSize(text) {
@@ -1284,12 +1387,30 @@ And God said, Let there be lights in the firmament of the heaven to divide the d
     return str.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
   }
 
-  for (const evt of ["mouseover", "focusin", "click"]) {
+  for (const evt of ["mouseover", "focusin"]) {
     $("strip").addEventListener(evt, (e) => {
       const cell = e.target.closest(".cell");
       if (cell) showCell(Number(cell.dataset.i));
     });
   }
+  $("strip").addEventListener("click", (e) => {
+    const cell = e.target.closest(".cell");
+    if (!cell) return;
+    const index = Number(cell.dataset.i);
+    showCell(index);
+    openCellModal(index);
+  });
+  $("strip").addEventListener("keydown", (e) => {
+    if (e.key !== "Enter" && e.key !== " ") return;
+    const cell = e.target.closest(".cell");
+    if (!cell) return;
+    e.preventDefault();
+    openCellModal(Number(cell.dataset.i));
+  });
+  $("stream-modal-close").addEventListener("click", () => $("stream-modal").close());
+  $("stream-modal").addEventListener("click", (e) => {
+    if (e.target === $("stream-modal")) $("stream-modal").close();
+  });
 
   $("stream-position").addEventListener("input", (e) => renderStripPage(e.target.value));
   $("stream-position-num").addEventListener("change", (e) => renderStripPage(e.target.value));
