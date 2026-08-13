@@ -202,6 +202,18 @@ td.num { text-align: right; font-variant-numeric: tabular-nums; }
   font-size: 12px; border-radius: 2px;
 }
 .stream-controls button { padding: 5px 9px; }
+.stream-search {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px;
+  margin-bottom: 12px;
+}
+.stream-search label { color: var(--ink-soft); font-size: 11px; }
+.stream-search input[type=search] {
+  flex: 1; min-width: 220px; padding: 6px 8px; border: 1px solid var(--rule);
+  background: var(--ground); color: var(--ink); font-family: var(--mono);
+  font-size: 12px; border-radius: 2px;
+}
+.stream-search button { padding: 6px 12px; }
+.stream-search-status { flex-basis: 100%; min-height: 1.5em; color: var(--ink-soft); font-size: 11px; }
 .strip { display: flex; flex-wrap: wrap; gap: 2px; margin-bottom: 10px; }
 .strip.forced-rows { display: block; }
 .stream-row { display: flex; flex-wrap: wrap; gap: 2px; margin-bottom: 2px; }
@@ -218,6 +230,10 @@ td.num { text-align: right; font-variant-numeric: tabular-nums; }
 .cell.b2r { width: 18px; --base: var(--sym-rule); --lo: var(--sym-rule-lo); --hi: var(--sym-rule-hi); }
 .cell.has-chapter { box-shadow: inset 0 -2px var(--chapter-marker); }
 .cell.has-verse { box-shadow: inset 0 -2px var(--verse-marker); }
+.cell.search-hit {
+  position: relative; z-index: 1; outline: 2px solid var(--hot); outline-offset: 1px;
+  filter: brightness(1.35) saturate(1.2);
+}
 .cell.s0 { --t: 0; }
 .cell.s1 { --t: .111; }
 .cell.s2 { --t: .222; }
@@ -231,6 +247,9 @@ td.num { text-align: right; font-variant-numeric: tabular-nums; }
 .legend i.marker {
   width: 18px; height: 10px; background: var(--panel);
   border: 1px solid var(--rule); box-shadow: inset 0 -2px var(--marker);
+}
+.legend i.search-marker {
+  width: 18px; height: 10px; background: var(--panel); border: 2px solid var(--hot);
 }
 .readout {
   min-height: 44px; padding: 8px 10px; background: var(--panel);
@@ -400,6 +419,13 @@ footer a { color: var(--hot); }
       </label>
       <label><input type="checkbox" id="stream-breaks"> New row after verse/chapter</label>
     </div>
+    <form class="stream-search" id="stream-search-form">
+      <label for="stream-search">Find in decompressed stream</label>
+      <input type="search" id="stream-search" autocomplete="off" spellcheck="false"
+             placeholder="Enter an exact, case-sensitive phrase">
+      <button type="submit">Find first</button>
+      <span class="stream-search-status" id="stream-search-status" role="status" aria-live="polite"></span>
+    </form>
     <div class="strip" id="strip"></div>
     <div class="readout" id="readout">Hover or tap a cell to expand it back to words.</div>
     <div class="legend">
@@ -408,6 +434,7 @@ footer a { color: var(--hot); }
       <span><i class="ramp" style="--lo:var(--sym-rule-lo);--hi:var(--sym-rule-hi)"></i><b>2 bytes</b> grammar rule</span>
       <span><i class="marker" style="--marker:var(--chapter-marker)"></i><b>chapter</b> boundary</span>
       <span><i class="marker" style="--marker:var(--verse-marker)"></i><b>verse</b> boundary</span>
+      <span><i class="search-marker"></i><b>search match</b></span>
       <span id="shade-legend"></span>
     </div>
   </section>
@@ -944,13 +971,46 @@ And God said, Let there be lights in the firmament of the heaven to divide the d
       byteOffsets[i + 1] = byteOffsets[i] + (escapes.has(seq[i]) ? 1 : 2);
     }
 
+    // Rebuild the decoded text while recording which character range belongs to
+    // each top-level stream symbol. This mirrors detokenize(), but keeps the
+    // boundaries needed to map a text match back onto compressed cells.
+    const cellCharStarts = new Uint32Array(seq.length);
+    const cellCharEnds = new Uint32Array(seq.length);
+    const attachedPunctuation = new Set([",", ".", ";", ":", "!", "?", "%", "$", "#", "@", "{", "}"]);
+    const structureMarkers = new Set(["%", "$", "#", "@", "{", "}"]);
+    let decodedText = "";
+    let tokenIndex = 0;
+    let pendingSpace = false;
+    let previousWasMarker = false;
+    for (let i = 0; i < seq.length; i++) {
+      cellCharStarts[i] = decodedText.length;
+      const count = wordCount[seq[i]] ?? 1;
+      for (let j = 0; j < count; j++) {
+        const token = result.stages.tokens[tokenIndex++];
+        if (token === "" || /^\s+$/.test(token)) {
+          decodedText += token;
+          pendingSpace = false;
+          previousWasMarker = false;
+        } else {
+          if (pendingSpace && !previousWasMarker && !attachedPunctuation.has(token)) decodedText += " ";
+          decodedText += token;
+          pendingSpace = true;
+          previousWasMarker = structureMarkers.has(token);
+        }
+      }
+      cellCharEnds[i] = decodedText.length;
+    }
+
     // 10-step ramp over the whole stream, so shades stay stable while scrolling.
     const maxWords = seq.reduce((m, id) => Math.max(m, wordCount[id] ?? 1), 1);
     const span = Math.log(maxWords);
     stripState = {
       seq, lexSize, escapes, container: result.container, wordCount, boundaryKind,
-      byteOffsets, span, maxWords, startIndex: 0, endIndex: 0,
+      byteOffsets, cellCharStarts, cellCharEnds, decodedText, search: null,
+      span, maxWords, startIndex: 0, endIndex: 0,
     };
+    $("stream-search").value = "";
+    $("stream-search-status").textContent = "";
     $("stream-section").hidden = false;
     const maxStart = Math.max(0, byteOffsets[seq.length] - 1);
     for (const id of ["stream-position", "stream-position-num"]) $(id).max = maxStart;
@@ -961,7 +1021,7 @@ And God said, Let there be lights in the firmament of the heaven to divide the d
 
   function renderStripPage(requestedByte) {
     if (!stripState) return;
-    const { seq, lexSize, escapes, wordCount, boundaryKind, byteOffsets, span, maxWords } = stripState;
+    const { seq, lexSize, escapes, wordCount, boundaryKind, byteOffsets, span, maxWords, search } = stripState;
     const totalBytes = byteOffsets[seq.length];
     const pageBytes = Math.max(1, Math.floor(Number($("stream-window").value) || 1024));
     $("stream-window").value = pageBytes;
@@ -1001,6 +1061,17 @@ And God said, Let there be lights in the firmament of the heaven to divide the d
 
     const shade = (words) =>
       span <= 0 ? 4 : Math.max(0, Math.min(9, Math.round((Math.log(words) / span) * 9)));
+    const visibleMatches = search ? findVisibleStreamMatches(search.query, startIndex, endIndex) : [];
+    const hitCells = new Set();
+    for (const match of visibleMatches) {
+      for (let i = match.firstCell; i <= match.lastCell; i++) hitCells.add(i);
+    }
+    stripState.visibleMatchCount = visibleMatches.length;
+    stripState.visibleHitCount = hitCells.size;
+    stripState.visibleHitBytes = Array.from(hitCells).reduce(
+      (total, i) => total + byteOffsets[i + 1] - byteOffsets[i],
+      0,
+    );
     const cells = seq
       .slice(startIndex, endIndex)
       .map((id, localIndex) => {
@@ -1010,8 +1081,9 @@ And God said, Let there be lights in the firmament of the heaven to divide the d
         // b2t is always one word, so it gets no shade class.
         const step = single ? "" : ` s${shade(wordCount[id] ?? 1)}`;
         const boundary = boundaryKind[id] === 2 ? " has-chapter" : boundaryKind[id] === 1 ? " has-verse" : "";
+        const hit = hitCells.has(i) ? " search-hit" : "";
         return {
-          html: `<div class="cell ${cls}${step}${boundary}" data-i="${i}" tabindex="0"></div>`,
+          html: `<div class="cell ${cls}${step}${boundary}${hit}" data-i="${i}" tabindex="0"></div>`,
           endsSection: boundaryKind[id] > 0,
         };
       });
@@ -1037,6 +1109,82 @@ And God said, Let there be lights in the firmament of the heaven to divide the d
     $("shade-legend").textContent =
       `shade = words encoded (1 → ${fmt(maxWords)})`;
     $("readout").textContent = "Hover or tap a cell to expand it back to words.";
+  }
+
+  function clearStreamSearch() {
+    if (!stripState || !stripState.search) return;
+    stripState.search = null;
+    renderStripPage(stripState.byteOffsets[stripState.startIndex]);
+  }
+
+  function streamCellsForMatch(matchStart, matchEnd) {
+    let firstCell = 0;
+    while (firstCell < stripState.seq.length && stripState.cellCharEnds[firstCell] <= matchStart) firstCell++;
+    firstCell = Math.min(firstCell, stripState.seq.length - 1);
+    let lastCell = firstCell;
+    while (lastCell + 1 < stripState.seq.length && stripState.cellCharStarts[lastCell + 1] < matchEnd) lastCell++;
+    return { matchStart, matchEnd, firstCell, lastCell };
+  }
+
+  // Search from the decompressed character represented by the current start
+  // byte. The visible page is only moved after the first match is found.
+  function findFirstStreamMatch(query, startChar) {
+    const matchStart = stripState.decodedText.indexOf(query, startChar);
+    if (matchStart === -1) return null;
+    return streamCellsForMatch(matchStart, matchStart + query.length);
+  }
+
+  // Once positioned at the first result, highlight every occurrence touching
+  // the visible page. Advancing by one character preserves overlapping matches.
+  function findVisibleStreamMatches(query, startIndex, endIndex) {
+    if (endIndex <= startIndex) return [];
+    const visibleStart = stripState.cellCharStarts[startIndex];
+    const visibleEnd = stripState.cellCharEnds[endIndex - 1];
+    const matches = [];
+    let from = Math.max(0, visibleStart - query.length + 1);
+    while (from < visibleEnd) {
+      const matchStart = stripState.decodedText.indexOf(query, from);
+      if (matchStart === -1 || matchStart >= visibleEnd) break;
+      const matchEnd = matchStart + query.length;
+      if (matchEnd > visibleStart) matches.push(streamCellsForMatch(matchStart, matchEnd));
+      from = matchStart + 1;
+    }
+    return matches;
+  }
+
+  function runStreamSearch() {
+    if (!stripState) return;
+    const query = $("stream-search").value;
+    if (query.length === 0) {
+      clearStreamSearch();
+      $("stream-search-status").textContent = "Enter a phrase to search.";
+      return;
+    }
+
+    const startIndex = stripState.startIndex;
+    const startByte = stripState.byteOffsets[startIndex];
+    const startChar = stripState.cellCharStarts[startIndex];
+    const match = findFirstStreamMatch(query, startChar);
+    if (!match) {
+      clearStreamSearch();
+      $("stream-search-status").textContent =
+        `No exact match for “${query}” from stream byte ${fmt(startByte)} to the end.`;
+      return;
+    }
+
+    stripState.search = { query, originByte: startByte, ...match };
+    renderStripPage(stripState.byteOffsets[match.firstCell]);
+    const firstByte = stripState.byteOffsets[match.firstCell];
+    const lastByte = stripState.byteOffsets[match.lastCell + 1] - 1;
+    const bytes = firstByte === lastByte ? `byte ${fmt(firstByte)}` : `bytes ${fmt(firstByte)}–${fmt(lastByte)}`;
+    const occurrences = stripState.visibleMatchCount;
+    const matchedCells = stripState.visibleHitCount;
+    const matchedBytes = stripState.visibleHitBytes;
+    $("stream-search-status").textContent =
+      `First match after byte ${fmt(startByte)} at decompressed character ${fmt(match.matchStart)} · ${bytes}. ` +
+      `${fmt(occurrences)} visible occurrence${occurrences === 1 ? "" : "s"}; ` +
+      `${fmt(matchedBytes)} stream byte${matchedBytes === 1 ? "" : "s"} across ` +
+      `${fmt(matchedCells)} symbol${matchedCells === 1 ? "" : "s"} highlighted.`;
   }
 
   function drawLongestTokens(result) {
@@ -1156,6 +1304,14 @@ And God said, Let there be lights in the firmament of the heaven to divide the d
   });
   $("stream-next").addEventListener("click", () => {
     if (stripState) renderStripPage(stripState.byteOffsets[stripState.endIndex]);
+  });
+  $("stream-search-form").addEventListener("submit", (e) => {
+    e.preventDefault();
+    runStreamSearch();
+  });
+  $("stream-search").addEventListener("input", () => {
+    clearStreamSearch();
+    $("stream-search-status").textContent = "";
   });
 
   $("lexicon-position").addEventListener("input", (e) => renderLexiconEntry(e.target.value));
