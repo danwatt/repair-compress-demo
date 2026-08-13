@@ -185,7 +185,27 @@ td.num { text-align: right; font-variant-numeric: tabular-nums; }
 .chart { width: 100%; height: 220px; display: block; }
 .chart-note { font-size: 11px; color: var(--ink-soft); margin-top: 8px; }
 
+.stream-controls {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px;
+  margin-bottom: 10px;
+}
+.stream-controls label {
+  display: flex; align-items: center; gap: 8px;
+  color: var(--ink-soft); font-size: 11px; white-space: nowrap;
+}
+.stream-controls label.position { flex: 1; min-width: 260px; }
+.stream-controls input[type=range] { flex: 1; min-width: 120px; accent-color: var(--hot); }
+.stream-controls input[type=checkbox] { accent-color: var(--hot); }
+.stream-controls input[type=number] {
+  width: 90px; padding: 5px 6px; border: 1px solid var(--rule);
+  background: var(--ground); color: var(--ink); font-family: var(--mono);
+  font-size: 12px; border-radius: 2px;
+}
+.stream-controls button { padding: 5px 9px; }
 .strip { display: flex; flex-wrap: wrap; gap: 2px; margin-bottom: 10px; }
+.strip.forced-rows { display: block; }
+.stream-row { display: flex; flex-wrap: wrap; gap: 2px; margin-bottom: 2px; }
+.stream-row:last-child { margin-bottom: 0; }
 .cell {
   height: 16px; border-radius: 1px; cursor: default;
   --t: 0;
@@ -311,7 +331,19 @@ footer a { color: var(--hot); }
 
   <section id="stream-section" hidden>
     <div class="stage-label"><span class="num">05</span> <span>Stream</span>
-      <span class="hint">first 1024 symbols · cell width = bytes on the wire</span></div>
+      <span class="hint" id="stream-hint"></span></div>
+    <div class="stream-controls">
+      <button type="button" id="stream-prev" aria-label="Show previous stream page">←</button>
+      <label class="position">Start byte
+        <input type="range" id="stream-position" min="0" max="0" value="0" step="1">
+        <input type="number" id="stream-position-num" min="0" max="0" value="0" step="1">
+      </label>
+      <button type="button" id="stream-next" aria-label="Show next stream page">→</button>
+      <label>Bytes shown
+        <input type="number" id="stream-window" min="1" value="1024" step="128">
+      </label>
+      <label><input type="checkbox" id="stream-breaks"> New row after verse/chapter</label>
+    </div>
     <div class="strip" id="strip"></div>
     <div class="readout" id="readout">Hover or tap a cell to expand it back to words.</div>
     <div class="legend">
@@ -675,7 +707,7 @@ And God said, Let there be lights in the firmament of the heaven to divide the d
   }
 
   function drawStrip(result) {
-    const seq = result.stages.sequence.slice(0, 1024);
+    const seq = result.stages.sequence;
     const lexicon = result.container.lexicon;
     const lexSize = lexicon.length;
     const rules = result.container.rules;
@@ -700,24 +732,103 @@ And God said, Let there be lights in the firmament of the heaven to divide the d
       boundaryKind[lexSize + i] = Math.max(boundaryKind[l], boundaryKind[r]);
     }
 
-    // 10-step ramp, log-scaled so the long tail of huge rules doesn't flatten the rest.
+    // Byte offset of every symbol boundary. A visible page always starts and ends
+    // on one of these so a two-byte cell is never cut in half.
+    const byteOffsets = new Uint32Array(seq.length + 1);
+    for (let i = 0; i < seq.length; i++) {
+      byteOffsets[i + 1] = byteOffsets[i] + (escapes.has(seq[i]) ? 1 : 2);
+    }
+
+    // 10-step ramp over the whole stream, so shades stay stable while scrolling.
     const maxWords = seq.reduce((m, id) => Math.max(m, wordCount[id] ?? 1), 1);
     const span = Math.log(maxWords);
+    stripState = {
+      seq, lexSize, escapes, container: result.container, wordCount, boundaryKind,
+      byteOffsets, span, maxWords, startIndex: 0, endIndex: 0,
+    };
+    $("stream-section").hidden = false;
+    const maxStart = Math.max(0, byteOffsets[seq.length] - 1);
+    for (const id of ["stream-position", "stream-position-num"]) $(id).max = maxStart;
+    $("stream-position").disabled = maxStart === 0;
+    $("stream-position-num").disabled = maxStart === 0;
+    renderStripPage(0);
+  }
+
+  function renderStripPage(requestedByte) {
+    if (!stripState) return;
+    const { seq, lexSize, escapes, wordCount, boundaryKind, byteOffsets, span, maxWords } = stripState;
+    const totalBytes = byteOffsets[seq.length];
+    const pageBytes = Math.max(1, Math.floor(Number($("stream-window").value) || 1024));
+    $("stream-window").value = pageBytes;
+
+    // Snap an arbitrary byte position backward to the cell containing it.
+    const wanted = Math.max(0, Math.min(Math.floor(Number(requestedByte) || 0), Math.max(0, totalBytes - 1)));
+    let lo = 0, hi = seq.length;
+    while (lo < hi) {
+      const mid = Math.ceil((lo + hi) / 2);
+      if (byteOffsets[mid] <= wanted) lo = mid;
+      else hi = mid - 1;
+    }
+    const startIndex = Math.min(lo, Math.max(0, seq.length - 1));
+    const startByte = byteOffsets[startIndex];
+
+    // Include the whole last cell if it straddles the requested byte count.
+    const targetEnd = Math.min(totalBytes, startByte + pageBytes);
+    lo = Math.min(startIndex + 1, seq.length);
+    hi = seq.length;
+    while (lo < hi) {
+      const mid = Math.floor((lo + hi) / 2);
+      if (byteOffsets[mid] < targetEnd) lo = mid + 1;
+      else hi = mid;
+    }
+    const endIndex = lo;
+    const endByte = byteOffsets[endIndex];
+    stripState.startIndex = startIndex;
+    stripState.endIndex = endIndex;
+
+    $("stream-position").value = startByte;
+    $("stream-position-num").value = startByte;
+    $("stream-prev").disabled = startIndex === 0;
+    $("stream-next").disabled = endIndex >= seq.length;
+    $("stream-hint").textContent =
+      `bytes ${fmt(startByte)}–${fmt(Math.max(startByte, endByte - 1))} of ${fmt(totalBytes)} · ` +
+      `${fmt(endIndex - startIndex)} symbols · cell width = bytes on the wire`;
+
     const shade = (words) =>
       span <= 0 ? 4 : Math.max(0, Math.min(9, Math.round((Math.log(words) / span) * 9)));
-
-    stripState = { seq, lexSize, escapes, container: result.container };
-    $("stream-section").hidden = false;
-    $("strip").innerHTML = seq
-      .map((id, i) => {
+    const cells = seq
+      .slice(startIndex, endIndex)
+      .map((id, localIndex) => {
+        const i = startIndex + localIndex;
         const single = !escapes.has(id) && id < lexSize;
         const cls = escapes.has(id) ? "b1" : single ? "b2t" : "b2r";
         // b2t is always one word, so it gets no shade class.
         const step = single ? "" : ` s${shade(wordCount[id] ?? 1)}`;
         const boundary = boundaryKind[id] === 2 ? " has-chapter" : boundaryKind[id] === 1 ? " has-verse" : "";
-        return `<div class="cell ${cls}${step}${boundary}" data-i="${i}" tabindex="0"></div>`;
-      })
-      .join("");
+        return {
+          html: `<div class="cell ${cls}${step}${boundary}" data-i="${i}" tabindex="0"></div>`,
+          endsSection: boundaryKind[id] > 0,
+        };
+      });
+
+    const strip = $("strip");
+    const forceRows = $("stream-breaks").checked;
+    strip.classList.toggle("forced-rows", forceRows);
+    if (forceRows) {
+      const rows = [];
+      let row = [];
+      for (const cell of cells) {
+        row.push(cell.html);
+        if (cell.endsSection) {
+          rows.push(row.join(""));
+          row = [];
+        }
+      }
+      if (row.length > 0) rows.push(row.join(""));
+      strip.innerHTML = rows.map((html) => `<div class="stream-row">${html}</div>`).join("");
+    } else {
+      strip.innerHTML = cells.map((cell) => cell.html).join("");
+    }
     $("shade-legend").textContent =
       `shade = words encoded (1 → ${fmt(maxWords)})`;
     $("readout").textContent = "Hover or tap a cell to expand it back to words.";
@@ -790,12 +901,16 @@ And God said, Let there be lights in the firmament of the heaven to divide the d
 
   function showCell(i) {
     if (!stripState) return;
-    const { seq, lexSize, escapes, container } = stripState;
+    const { seq, lexSize, escapes, container, byteOffsets, boundaryKind } = stripState;
     const id = seq[i];
     const words = expandToWords(id, container);
     const kind = escapes.has(id) ? "1-byte escape" : id < lexSize ? "2-byte word" : "2-byte rule";
+    const from = byteOffsets[i];
+    const to = byteOffsets[i + 1] - 1;
+    const bytes = from === to ? `byte ${fmt(from)}` : `bytes ${fmt(from)}–${fmt(to)}`;
+    const boundary = boundaryKind[id] === 2 ? " · chapter boundary" : boundaryKind[id] === 1 ? " · verse boundary" : "";
     $("readout").innerHTML =
-      `<b>#${i} · id ${id} · ${kind} · ${words.length} word${words.length === 1 ? "" : "s"}</b><br>` +
+      `<b>symbol #${fmt(i)} · ${bytes} · id ${id} · ${kind} · ${words.length} word${words.length === 1 ? "" : "s"}${boundary}</b><br>` +
       escapeHtml(words.map(describeToken).join(" · "));
   }
 
@@ -819,6 +934,24 @@ And God said, Let there be lights in the firmament of the heaven to divide the d
       if (cell) showCell(Number(cell.dataset.i));
     });
   }
+
+  $("stream-position").addEventListener("input", (e) => renderStripPage(e.target.value));
+  $("stream-position-num").addEventListener("change", (e) => renderStripPage(e.target.value));
+  $("stream-window").addEventListener("change", () => {
+    if (stripState) renderStripPage(stripState.byteOffsets[stripState.startIndex]);
+  });
+  $("stream-breaks").addEventListener("change", () => {
+    if (stripState) renderStripPage(stripState.byteOffsets[stripState.startIndex]);
+  });
+  $("stream-prev").addEventListener("click", () => {
+    if (!stripState) return;
+    const start = stripState.byteOffsets[stripState.startIndex];
+    const pageBytes = Math.max(1, Math.floor(Number($("stream-window").value) || 1024));
+    renderStripPage(start - pageBytes);
+  });
+  $("stream-next").addEventListener("click", () => {
+    if (stripState) renderStripPage(stripState.byteOffsets[stripState.endIndex]);
+  });
 
   $("run").addEventListener("click", run);
   for (const id of ["n", "n-num"]) {
