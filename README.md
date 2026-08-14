@@ -30,6 +30,7 @@ Sources:
 | `demo-verse.html`                               | Seeking one verse in both codecs, address by address.               |
 | `demo-search.html`                              | One query, both codecs, every byte each has to read.                |
 | `thesaurus.txt`                                 | Synonym groups, as words. Filtered against the lexicon at encode.   |
+| `nav.js`                                        | The tab bar the four demo pages share.                              |
 | `kjv.csv`                                       | Full King James Bible source data, one verse per row.               |
 | `kjv-data.js` / `kjv-preencoded.js`             | Generated browser data used by the demo.                            |
 | `build-kjv-data.js` / `build-kjv-preencoded.ts` | Scripts that regenerate the browser data.                           |
@@ -52,7 +53,9 @@ mise run clean            # remove generated build output
 Run `mise tasks` to list all available tasks. After starting the server, open
 <http://localhost:8080/demo.html>; browsers will not load the demo correctly over `file://`.
 
-`demo.html`, `demo-ylk1.html`, `demo-verse.html` and `demo-search.html` are hand-edited. After changing `repair-codec.ts` or
+`demo.html`, `demo-ylk1.html`, `demo-verse.html` and `demo-search.html` are hand-edited and otherwise
+self-contained; the one thing they share is `nav.js`, which injects the tab bar and its style so the
+four of them do not carry four copies of it. After changing `repair-codec.ts` or
 `link-codec.ts`, run `mise run build` to regenerate `repair-codec.js` and `link-codec.js`. The build
 and data tasks use mise source/output tracking and skip unchanged work.
 
