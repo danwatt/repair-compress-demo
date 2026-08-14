@@ -256,6 +256,8 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .bitrun.code { color: var(--dmg-4); border-color: var(--dmg-2); }
 .bitrun.raw { color: var(--hot); border-color: color-mix(in oklab, var(--hot) 45%, var(--ground)); }
 .bitfield small { font-size: 9px; letter-spacing: .05em; text-transform: uppercase; color: var(--ink-soft); }
+.table-note { margin-top: 6px; font-size: 11px; color: var(--ink-soft); }
+.table-note b { color: var(--hot); font-weight: 500; }
 
 .chips { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 10px; max-height: 160px; overflow: auto; }
 .chip {
@@ -336,6 +338,18 @@ footer a { color: var(--hot); }
             <input type="number" id="shortcut-num" min="0" max="100000" value="0">
           </div>
           <p class="note">Every Nth occurrence also carries its lexicon row, capping the read-mode chase. 0 disables it; the patent suggests 1000. The box accepts values past the slider.</p>
+        </div>
+        <div class="knob">
+          <label for="context">Order-1 context — K</label>
+          <div class="row">
+            <input type="range" id="context" min="0" max="254" value="0" step="1">
+            <input type="number" id="context-num" min="0" max="254" value="0">
+          </div>
+          <p class="note">
+            The K hottest direct terms each get their own code table, chosen by the symbol before.
+            What follows "and" is not what follows a comma. The only knob here that costs memory:
+            the reader holds K + 4 decode tables. 0 is one table for everything. Huffman, unsplit.
+          </p>
         </div>
         <div class="knob">
           <label for="coder">Stream coder</label>
@@ -503,8 +517,8 @@ And God said, Let the waters under the heaven be gathered together unto one plac
    * one drive: typing 1000 into the box is not clobbered by the slider, which
    * only ranges to 2000.
    */
-  const knobs = { direct: 254, shortcut: 0 };
-  const KNOB_MAX = { direct: 512, shortcut: 100000 };
+  const knobs = { direct: 254, shortcut: 0, context: 0 };
+  const KNOB_MAX = { direct: 512, shortcut: 100000, context: 254 };
 
   function setKnob(name, value) {
     const v = Math.max(0, Math.min(KNOB_MAX[name], Math.round(Number(value) || 0)));
@@ -517,6 +531,7 @@ And God said, Let the waters under the heaven be gathered together unto one plac
     return {
       directTermCount: knobs.direct,
       shortcutInterval: knobs.shortcut,
+      contextDirectTerms: knobs.context,
       coder: $("coder").value,
       split: $("split").checked,
     };
@@ -719,6 +734,7 @@ And God said, Let the waters under the heaven be gathered together unto one plac
         <div class="stat"><div class="k">searchable words</div><div class="v">${fmt(container.lexicon.length)}</div></div>
         <div class="stat"><div class="k">direct terms</div><div class="v">${fmt(container.directTerms.length)}</div></div>
         <div class="stat"><div class="k">shortcut signals</div><div class="v">${fmt(result.shortcutCount)}</div></div>
+        <div class="stat"><div class="k">code tables</div><div class="v">${fmt(container.streamLengths ? container.streamLengths.length : 0)}</div></div>
         <div class="stat"><div class="k">embodiment</div><div class="v" style="font-size:15px">${options.directTermCount === 0 ? "FIG. 2" : options.split ? "FIG. 4" : "FIG. 3"}</div></div>
       </div>
       <div class="compare">
@@ -927,7 +943,7 @@ And God said, Let the waters under the heaven be gathered together unto one plac
     const ordinal = positions.indexOf(termIndex) + 1;
 
     const spent = latest.cost.bits[termIndex];
-    const fields = describeBits(container, termIndex);
+    const { table, fields } = describeBits(container, termIndex);
 
     let detail;
     if (kind === "direct") {
@@ -950,18 +966,29 @@ And God said, Let the waters under the heaven be gathered together unto one plac
       (positions.length ? ` · occurrence ${fmt(ordinal)} of ${fmt(positions.length)}` : "") +
       ` · costs <span class="hot">${breakdown}</span>` +
       `<br>${detail}` +
-      renderBits(fields);
+      renderBits(table, fields);
     $("chase-start").value = String(termIndex);
     resetChase(termIndex);
   }
 
-  /** The literal bits this term occupies, run by run, as they sit in the file. */
-  function renderBits(fields) {
+  /**
+   * The literal bits this term occupies, run by run, plus which code table the
+   * codes were read from. That last part is not decoration: with order-1 coding
+   * the same word has different codes in different places, and two different
+   * symbols can share a bit pattern. Without naming the table the display looks
+   * self-contradictory.
+   */
+  function renderBits(table, fields) {
     if (fields.length === 0) return "";
-    return `<div class="bits">` + fields.map((field) =>
+    const runs = fields.map((field) =>
       `<span class="bitfield"><span class="bitrun ${field.kind}">${escapeHtml(field.bits)}</span>` +
       `<small>${escapeHtml(field.label)}</small></span>`,
-    ).join("") + `</div>`;
+    ).join("");
+    const which = table
+      ? `<div class="table-note">read from <b>table ${fmt(table.index)}</b> — ${escapeHtml(table.reason)}` +
+        `, which codes ${fmt(table.liveSymbols)} symbol${table.liveSymbols === 1 ? "" : "s"}</div>`
+      : "";
+    return `<div class="bits">${runs}</div>${which}`;
   }
 
   // -------------------------------------------------------------------------
@@ -1165,7 +1192,7 @@ And God said, Let the waters under the heaven be gathered together unto one plac
   }
 
   $("run").addEventListener("click", run);
-  for (const name of ["direct", "shortcut"]) {
+  for (const name of ["direct", "shortcut", "context"]) {
     $(name).addEventListener("input", (event) => setKnob(name, event.target.value));
     $(name + "-num").addEventListener("input", (event) => setKnob(name, event.target.value));
   }

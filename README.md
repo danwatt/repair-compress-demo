@@ -61,19 +61,26 @@ Franklin Electronic Publishers. A searchable word is never written into the stre
 stores only the distance forward to the next occurrence of the same word, and the last one stores
 the lexicon row. The stream is therefore both the text and its inverted index.
 
-On the full KJV it reaches 1,100,776 bytes with search included, against 958,460 for RPR1 with no
+On the full KJV it reaches 969,284 bytes with search included, against 958,460 for RPR1 with no
 search at all; adding a conventional inverted index to RPR1 costs 501,951 bytes, which puts YLK1
-24.6% below the pair. `mise run bench-link` reproduces those numbers and verifies the round trip and
+33.6% below the pair. `mise run bench-link` reproduces those numbers and verifies the round trip and
 every lexicon word's search results. `demo-ylk1.html` visualizes the chains.
 
 `measureStream()` reports what each term costs in bits and `describeBits()` returns the literal bit
 runs it occupies — the benchmark asserts the totals add back up to the sections the encoder wrote.
 `demo-ylk1.html` draws every cell as wide as the bits it spends and prints those runs for whichever
 cell you click, so "the" showing three bits and a rare word's delta showing twenty-seven is
-something you can read off the page. It also shows where the stream's bits go: on the KJV, 49% is
-spent on directly encoded common words and only 48% on the links themselves.
+something you can read off the page. It also shows where the stream's bits go — which is what
+motivated `contextDirectTerms`, since the largest slice was the most predictable one.
 
 The lexicon is packed with the same suffix table and header codebook `repair-codec.ts` uses, so the
 two codecs differ only in how their streams work. Planning that ending table is the slowest part of
 an encode and depends only on the corpus, so `LinkConfig.suffixes` accepts a table from
 `planSuffixes()` — reuse costs at most a few dozen bytes and cuts encode time by two thirds.
+
+`contextDirectTerms` (K) is the one setting that trades memory for size: the K hottest direct terms
+each get their own Huffman table, selected by the previous symbol, so the reader holds K + 4 decode
+tables instead of one. Half the stream is punctuation and function words, and what follows "and" is
+not what follows a comma. K = 128 is the optimum on the KJV at 969,284 bytes, 131,502 below order-0,
+for about 160 KB of decode tables. It defaults to 0 — the patent's hardware could not have afforded
+it, and the point of the rest of the codec is that it could.

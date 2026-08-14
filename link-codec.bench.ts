@@ -5,7 +5,7 @@
 //     --outfile=/tmp/link-bench.cjs && node /tmp/link-bench.cjs
 import fs from "node:fs";
 import { encode as repairEncode, tokenize } from "./repair-codec";
-import { decode, encode, measureStream, open, read, search, type LinkConfig } from "./link-codec";
+import { decode, describeBits, encode, measureStream, open, read, search, type LinkConfig } from "./link-codec";
 
 let failures = 0;
 function check(label: string, ok: boolean, detail = ""): void {
@@ -16,7 +16,8 @@ function check(label: string, ok: boolean, detail = ""): void {
 }
 
 const describe = (c: LinkConfig): string =>
-  `D=${c.directTermCount} ${c.coder}${c.split ? " split" : ""}${c.shortcutInterval ? " sc=" + c.shortcutInterval : ""}`;
+  `D=${c.directTermCount} ${c.coder}${c.split ? " split" : ""}` +
+  `${c.contextDirectTerms ? " K=" + c.contextDirectTerms : ""}${c.shortcutInterval ? " sc=" + c.shortcutInterval : ""}`;
 
 // ---------------------------------------------------------------------------
 // Correctness across the configuration space
@@ -27,8 +28,17 @@ for (const coder of ["varint", "huffman"] as const) {
   for (const directTermCount of [0, 8, 64, 254]) {
     for (const split of [false, true]) {
       for (const shortcutInterval of [0, 3, 1000]) {
-        CONFIGS.push({ directTermCount, split, shortcutInterval, coder });
+        CONFIGS.push({ directTermCount, split, shortcutInterval, coder, contextDirectTerms: 0 });
       }
+    }
+  }
+}
+// Order-1 tables only apply to the unsplit Huffman stream, but they have to
+// survive the same corpora, including ones with fewer terms than contexts.
+for (const contextDirectTerms of [1, 4, 32]) {
+  for (const directTermCount of [0, 8, 254]) {
+    for (const shortcutInterval of [0, 3]) {
+      CONFIGS.push({ directTermCount, split: false, shortcutInterval, coder: "huffman", contextDirectTerms });
     }
   }
 }
@@ -74,6 +84,18 @@ for (const sample of SAMPLES) {
     const accounted = Math.ceil(cost.totals.master / 8) + Math.ceil((cost.total - cost.totals.master) / 8);
     const written = result.sizes.master + result.sizes.stream;
     check(label, accounted === written, `cost accounting ${accounted} != ${written} bytes written`);
+
+    // The bit runs the UI prints and the per-term cost it draws widths from are
+    // two views of one thing; if they disagree the picture is wrong somewhere.
+    for (let i = 0; i < container.termCount; i++) {
+      const { fields } = describeBits(container, i);
+      let width = 0;
+      for (const field of fields) width += field.bits.replace(/ /g, "").length;
+      if (width !== cost.bits[i]) {
+        check(label, false, `term ${i}: ${width} bits described, ${cost.bits[i]} bits measured`);
+        break;
+      }
+    }
   }
 }
 console.log(failures === 0 ? `  ${CONFIGS.length} configs x ${SAMPLES.length} samples, all correct` : `  ${failures} failures`);
@@ -99,18 +121,20 @@ const repair = repairEncode(text, { singleByteCount: 0x55, minPairCount: 3, maxP
 const repairMs = Math.round(performance.now() - repairStarted);
 
 console.log(
-  padEnd("config", 26) + pad("total", 10) + pad("stream", 10) + pad("master", 9) +
-  pad("lexicon", 9) + pad("direct", 8) + pad("first", 8) + pad("bits/term", 11) + pad("ms", 7),
+  padEnd("config", 28) + pad("total", 10) + pad("stream", 10) + pad("master", 9) +
+  pad("lexicon", 9) + pad("tables", 8) + pad("first", 8) + pad("bits/term", 11) + pad("ms", 7),
 );
-console.log("-".repeat(98));
+console.log("-".repeat(100));
 
 const SWEEP: LinkConfig[] = [];
 for (const coder of ["varint", "huffman"] as const) {
   for (const directTermCount of [0, 64, 128, 254]) {
-    SWEEP.push({ directTermCount, split: false, shortcutInterval: 0, coder });
+    SWEEP.push({ directTermCount, split: false, shortcutInterval: 0, coder, contextDirectTerms: 0 });
   }
-  SWEEP.push({ directTermCount: 128, split: true, shortcutInterval: 0, coder });
-  SWEEP.push({ directTermCount: 254, split: true, shortcutInterval: 0, coder });
+  SWEEP.push({ directTermCount: 254, split: true, shortcutInterval: 0, coder, contextDirectTerms: 0 });
+}
+for (const contextDirectTerms of [16, 32, 64, 128, 254]) {
+  SWEEP.push({ directTermCount: 254, split: false, shortcutInterval: 0, coder: "huffman", contextDirectTerms });
 }
 
 let best = { total: Infinity, config: SWEEP[0] };
@@ -121,15 +145,15 @@ for (const config of SWEEP) {
   const s = result.sizes;
   const bitsPerTerm = ((s.stream + s.master) * 8) / result.termCount;
   console.log(
-    padEnd(describe(config), 26) + pad(fmt(s.total), 10) + pad(fmt(s.stream), 10) +
-    pad(fmt(s.master), 9) + pad(fmt(s.lexicon), 9) + pad(fmt(s.directTable), 8) +
+    padEnd(describe(config), 28) + pad(fmt(s.total), 10) + pad(fmt(s.stream), 10) +
+    pad(fmt(s.master), 9) + pad(fmt(s.lexicon), 9) + pad(fmt(s.codeLengths), 8) +
     pad(fmt(s.firstOccurrence), 8) + pad(bitsPerTerm.toFixed(2), 11) + pad(ms, 7),
   );
   if (s.total < best.total) best = { total: s.total, config };
 }
 
 console.log(
-  "\n" + padEnd("RPR1 repair-codec", 26) + pad(fmt(repair.bytes.length), 10) +
+  "\n" + padEnd("RPR1 repair-codec", 28) + pad(fmt(repair.bytes.length), 10) +
   pad(fmt(repair.stats.sizes.stream), 10) + pad("-", 9) +
   pad(fmt(repair.stats.sizes.lexicon), 9) + pad("-", 8) + pad("-", 8) +
   pad(((repair.stats.sizes.stream * 8) / repair.stats.tokenCount).toFixed(2), 11) + pad(repairMs, 7),

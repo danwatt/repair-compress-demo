@@ -82,6 +82,21 @@ export interface LinkConfig {
   /** How stream symbols are packed. */
   coder: Coder;
   /**
+   * Order-1 coding: how many of the hottest direct terms get their own code
+   * table, selected by the symbol before. Zero is order-0, one table for the
+   * whole stream.
+   *
+   * Half the stream is direct terms — punctuation and function words — and what
+   * follows "and" is not what follows a comma, so conditioning on the previous
+   * symbol pays. It is the one improvement here that costs real memory: the
+   * reader holds K + 4 decode tables instead of one. The patent's hardware
+   * could not have afforded it; a browser does not notice.
+   *
+   * Only meaningful without `split`, where the direct terms live in the same
+   * stream as the links.
+   */
+  contextDirectTerms: number;
+  /**
    * The ending table for the lexicon. Planning it is an exhaustive search over
    * candidate endings — by far the slowest part of an encode, and it depends
    * only on the word list, not on any other knob. Pass one from `planSuffixes`
@@ -96,6 +111,7 @@ export const DEFAULT_LINK_CONFIG: LinkConfig = {
   split: false,
   shortcutInterval: 0,
   coder: "huffman",
+  contextDirectTerms: 0,
 };
 
 /**
@@ -441,6 +457,7 @@ function readLexiconBlock(input: ByteReader): string[] {
 // ---------------------------------------------------------------------------
 
 const MAX_CODE_LENGTH = 31;
+const EMPTY_CODES = new Int32Array(0);
 
 interface HuffmanNode {
   weight: number;
@@ -492,8 +509,10 @@ function huffmanLengths(frequencies: number[]): number[] {
   return lengths;
 }
 
+type Lengths = ArrayLike<number> & Iterable<number>;
+
 interface HuffmanCode {
-  lengths: number[];
+  lengths: Lengths;
   codes: Int32Array;
   /** Decode tables indexed by code length. */
   firstCode: Int32Array;
@@ -503,7 +522,12 @@ interface HuffmanCode {
   maxLength: number;
 }
 
-function canonical(lengths: number[]): HuffmanCode {
+/**
+ * `withCodes` materializes the encode direction. Reading never needs it, and at
+ * one table per context that array is the largest thing in the decoder — so
+ * `open` builds decode-only tables and skips it.
+ */
+function canonical(lengths: Lengths, withCodes = true): HuffmanCode {
   let maxLength = 0;
   for (const l of lengths) maxLength = Math.max(maxLength, l);
   const countByLength = new Int32Array(maxLength + 2);
@@ -522,13 +546,13 @@ function canonical(lengths: number[]): HuffmanCode {
 
   const sorted = new Int32Array(index);
   const nextSlot = Int32Array.from(firstIndex);
-  const codes = new Int32Array(lengths.length).fill(-1);
+  const codes = withCodes ? new Int32Array(lengths.length).fill(-1) : EMPTY_CODES;
   for (let symbol = 0; symbol < lengths.length; symbol++) {
     const length = lengths[symbol];
     if (length === 0) continue;
     const slot = nextSlot[length]++;
     sorted[slot] = symbol;
-    codes[symbol] = firstCode[length] + (slot - firstIndex[length]);
+    if (withCodes) codes[symbol] = firstCode[length] + (slot - firstIndex[length]);
   }
   return { lengths, codes, firstCode, firstIndex, countByLength, sorted, maxLength };
 }
@@ -551,19 +575,28 @@ function readCode(bits: BitReader, code: HuffmanCode): number {
   throw new LinkCodecError("no symbol matches the bits read");
 }
 
-/** Five bits per symbol, flat. Small next to any stream it describes. */
-function writeCodeLengths(out: ByteWriter, lengths: number[]): void {
+/**
+ * A presence bit per symbol, then five bits of length for the ones that occur.
+ * Flat five bits each would be simpler, but most symbols are absent from most
+ * tables — a context that follows "and" never sees a comma's code — so paying
+ * one bit for an absent symbol instead of five matters once there is a table per
+ * context. On the KJV at K=64 that is 16,456 bytes of tables down to 8,733.
+ */
+function writeCodeLengths(out: ByteWriter, lengths: Lengths): void {
   out.varint(lengths.length);
   const bits = new BitWriter(out);
-  for (const l of lengths) bits.write(l, 5);
+  for (const l of lengths) {
+    bits.write(l > 0 ? 1 : 0, 1);
+    if (l > 0) bits.write(l, 5);
+  }
   bits.flush();
 }
 
-function readCodeLengths(input: ByteReader): number[] {
+function readCodeLengths(input: ByteReader): Uint8Array {
   const count = input.varint();
   const bits = new BitReader(input);
-  const lengths: number[] = [];
-  for (let i = 0; i < count; i++) lengths.push(bits.read(5));
+  const lengths = new Uint8Array(count);
+  for (let i = 0; i < count; i++) lengths[i] = bits.bit() === 1 ? bits.read(5) : 0;
   bits.align();
   return lengths;
 }
@@ -618,6 +651,21 @@ interface Entry {
 }
 
 /** Parts per octave. Must be a power of two; the bucket math shifts by its log2. */
+/**
+ * Which code table encodes a symbol, given the one before it. The hottest K
+ * direct terms each get a table; everything else collapses into four buckets so
+ * the table count stays K + 4 rather than one per symbol.
+ */
+function contextOf(previousSymbol: number, contextTerms: number, directCount: number): number {
+  if (previousSymbol < 0) return contextTerms + 3;
+  if (previousSymbol < contextTerms) return previousSymbol;
+  if (previousSymbol < directCount) return contextTerms;
+  if (previousSymbol === directCount) return contextTerms + 1;
+  return contextTerms + 2;
+}
+
+const contextCountFor = (contextTerms: number): number => (contextTerms > 0 ? contextTerms + 4 : 1);
+
 const DELTA_SUBBUCKETS = 4;
 const DELTA_SUBBUCKET_BITS = 2;
 const DELTA_BUCKETS = 32 * DELTA_SUBBUCKETS;
@@ -658,8 +706,11 @@ function readDelta(bits: BitReader, bucket: number): number {
 // ---------------------------------------------------------------------------
 
 const MAGIC = [0x59, 0x4c, 0x4b, 0x31]; // "YLK1"
-/** 2 packed the lexicon with a suffix table and bit-packed the first-occurrence array. */
-const FORMAT_VERSION = 2;
+/**
+ * 2 packed the lexicon with a suffix table and bit-packed the first-occurrence
+ * array; 3 added order-1 context tables.
+ */
+const FORMAT_VERSION = 3;
 const HEADER_BYTES = 16;
 
 const hasLetter = (term: string): boolean => /\p{L}/u.test(term);
@@ -750,7 +801,7 @@ export function encode(text: string, config: LinkConfig = DEFAULT_LINK_CONFIG): 
   for (const b of MAGIC) out.u8(b);
   out.u8(FORMAT_VERSION);
   out.u8((config.split ? 1 : 0) | (config.coder === "huffman" ? 2 : 0));
-  out.u8(0);
+  out.u8(config.split ? 0 : Math.min(config.contextDirectTerms, directTerms.length, 0xff));
   out.u8(0);
   out.u32(terms.length);
   out.u32(linkedTerm.length);
@@ -780,7 +831,30 @@ export function encode(text: string, config: LinkConfig = DEFAULT_LINK_CONFIG): 
   const SHORTCUT = directTerms.length + 1;
   const deltaSymbol = (delta: number) => directTerms.length + 2 + deltaBucket(delta);
 
-  let streamCode: HuffmanCode | null = null;
+  // The stream symbol for each term, in order: this is what both the frequency
+  // pass and the writing pass walk, and what the context is taken from.
+  const symbols = new Int32Array(config.split ? entries.length : terms.length);
+  {
+    let cursor = 0;
+    let at = 0;
+    for (const term of terms) {
+      const direct = directIndex.get(term);
+      if (direct !== undefined) {
+        if (!config.split) symbols[at++] = direct;
+        continue;
+      }
+      const entry = entries[cursor++];
+      symbols[at++] = entry.kind === EntryKind.Terminal ? TERMINAL
+        : entry.shortcutRow >= 0 ? SHORTCUT
+        : deltaSymbol(entry.value);
+    }
+  }
+
+  const contextTerms = config.split ? 0 : Math.min(config.contextDirectTerms, directTerms.length, 0xff);
+  const contextCount = contextCountFor(contextTerms);
+  const symbolCount = directTerms.length + 2 + DELTA_BUCKETS;
+
+  let streamCodes: HuffmanCode[] = [];
   let masterCode: HuffmanCode | null = null;
 
   if (config.coder === "huffman") {
@@ -791,21 +865,16 @@ export function encode(text: string, config: LinkConfig = DEFAULT_LINK_CONFIG): 
       masterCode = canonical(huffmanLengths(masterFrequency));
       writeCodeLengths(out, masterCode.lengths);
     }
-    const streamFrequency = new Array<number>(directTerms.length + 2 + DELTA_BUCKETS).fill(0);
-    let cursor = 0;
-    for (const term of terms) {
-      const direct = directIndex.get(term);
-      if (direct !== undefined) {
-        if (!config.split) streamFrequency[direct]++;
-        continue;
-      }
-      const entry = entries[cursor++];
-      if (entry.kind === EntryKind.Terminal) streamFrequency[TERMINAL]++;
-      else if (entry.shortcutRow >= 0) streamFrequency[SHORTCUT]++;
-      else streamFrequency[deltaSymbol(entry.value)]++;
+
+    const frequencies: number[][] = [];
+    for (let i = 0; i < contextCount; i++) frequencies.push(new Array<number>(symbolCount).fill(0));
+    let previous = -1;
+    for (const symbol of symbols) {
+      frequencies[contextTerms > 0 ? contextOf(previous, contextTerms, directTerms.length) : 0][symbol]++;
+      previous = symbol;
     }
-    streamCode = canonical(huffmanLengths(streamFrequency));
-    writeCodeLengths(out, streamCode.lengths);
+    streamCodes = frequencies.map((f) => canonical(huffmanLengths(f)));
+    for (const code of streamCodes) writeCodeLengths(out, code.lengths);
   }
   const afterCodeLengths = out.length;
 
@@ -828,23 +897,26 @@ export function encode(text: string, config: LinkConfig = DEFAULT_LINK_CONFIG): 
   if (config.coder === "huffman") {
     const bits = new BitWriter(out);
     let cursor = 0;
+    let at = 0;
+    let previous = -1;
     for (const term of terms) {
       const direct = directIndex.get(term);
-      if (direct !== undefined) {
-        if (!config.split) writeCode(bits, streamCode!, direct);
-        continue;
-      }
+      if (direct !== undefined && config.split) continue;
+
+      const symbol = symbols[at++];
+      const table = streamCodes[contextTerms > 0 ? contextOf(previous, contextTerms, directTerms.length) : 0];
+      writeCode(bits, table, symbol);
+      previous = symbol;
+
+      if (direct !== undefined) continue;
       const entry = entries[cursor++];
       if (entry.kind === EntryKind.Terminal) {
-        writeCode(bits, streamCode!, TERMINAL);
         bits.write(entry.value, rowBits);
       } else if (entry.shortcutRow >= 0) {
-        writeCode(bits, streamCode!, SHORTCUT);
         bits.write(entry.shortcutRow, rowBits);
         bits.write(deltaBucket(entry.value), DELTA_BUCKET_BITS);
         writeDelta(bits, entry.value);
       } else {
-        writeCode(bits, streamCode!, deltaSymbol(entry.value));
         writeDelta(bits, entry.value);
       }
     }
@@ -916,10 +988,12 @@ export interface LinkContainer {
   termIndexOf: Int32Array;
   /** Term index to chain position, built on demand by read(). */
   chainOf?: Int32Array;
-  /** Stream code lengths by symbol; null for the varint coder, whose costs are derivable. */
-  streamLengths: number[] | null;
+  /** How many hot direct terms carry their own code table; 0 is order-0. */
+  contextDirectTerms: number;
+  /** Stream code lengths by context then symbol; null for the varint coder. */
+  streamLengths: ArrayLike<number>[] | null;
   /** Master-subfile code lengths by symbol; null unless split and Huffman-coded. */
-  masterLengths: number[] | null;
+  masterLengths: ArrayLike<number> | null;
   /** Per-term cost, built on demand by measureStream(). */
   cost?: StreamCost;
 }
@@ -934,7 +1008,8 @@ export function open(bytes: Uint8Array): LinkContainer {
   const flags = input.u8();
   const split = (flags & 1) !== 0;
   const coder: Coder = (flags & 2) !== 0 ? "huffman" : "varint";
-  input.u8();
+  const contextDirectTerms = split ? 0 : input.u8();
+  if (split) input.u8();
   input.u8();
   const termCount = input.u32();
   const linkedCount = input.u32();
@@ -953,12 +1028,15 @@ export function open(bytes: Uint8Array): LinkContainer {
   const TERMINAL = directTerms.length;
   const SHORTCUT = directTerms.length + 1;
 
+  const contextCount = contextCountFor(contextDirectTerms);
   let masterCode: HuffmanCode | null = null;
-  let streamCode: HuffmanCode | null = null;
+  const streamCodes: HuffmanCode[] = [];
   if (coder === "huffman") {
-    if (split) masterCode = canonical(readCodeLengths(input));
-    streamCode = canonical(readCodeLengths(input));
+    if (split) masterCode = canonical(readCodeLengths(input), false);
+    for (let i = 0; i < contextCount; i++) streamCodes.push(canonical(readCodeLengths(input), false));
   }
+  const tableFor = (previous: number): HuffmanCode =>
+    streamCodes[contextDirectTerms > 0 ? contextOf(previous, contextDirectTerms, directTerms.length) : 0];
 
   const directCodes = new Int32Array(termCount).fill(-1);
   const termIndex: number[] = [];
@@ -984,13 +1062,15 @@ export function open(bytes: Uint8Array): LinkContainer {
 
   if (coder === "huffman") {
     const bits = new BitReader(input);
+    let previous = -1;
     if (split) {
       for (let i = 0; i < termIndex.length; i++) {
-        entries.push(continueHuffmanEntry(bits, readCode(bits, streamCode!), TERMINAL, SHORTCUT, rowBits));
+        entries.push(continueHuffmanEntry(bits, readCode(bits, streamCodes[0]), TERMINAL, SHORTCUT, rowBits));
       }
     } else {
       for (let i = 0; i < termCount; i++) {
-        const symbol = readCode(bits, streamCode!);
+        const symbol = readCode(bits, tableFor(previous));
+        previous = symbol;
         if (symbol < directTerms.length) {
           directCodes[i] = symbol;
           continue;
@@ -1027,7 +1107,8 @@ export function open(bytes: Uint8Array): LinkContainer {
     directCodes,
     entries,
     termIndexOf: Int32Array.from(termIndex),
-    streamLengths: streamCode ? streamCode.lengths : null,
+    contextDirectTerms,
+    streamLengths: streamCodes.length > 0 ? streamCodes.map((code) => code.lengths) : null,
     masterLengths: masterCode ? masterCode.lengths : null,
   };
 }
@@ -1118,6 +1199,9 @@ export function measureStream(container: LinkContainer): StreamCost {
   const huffman = container.coder === "huffman";
   const streamLengths = container.streamLengths;
   const masterLengths = container.masterLengths;
+  const contextTerms = container.contextDirectTerms;
+  const lengthsFor = (previous: number): ArrayLike<number> =>
+    streamLengths![contextTerms > 0 ? contextOf(previous, contextTerms, D) : 0];
 
   const bits = new Uint32Array(container.termCount);
   const totals: StreamCostTotals = {
@@ -1126,6 +1210,7 @@ export function measureStream(container: LinkContainer): StreamCost {
   };
 
   let chainIndex = 0;
+  let previousSymbol = -1;
   for (let i = 0; i < container.termCount; i++) {
     let spent = 0;
 
@@ -1139,9 +1224,10 @@ export function measureStream(container: LinkContainer): StreamCost {
     const direct = container.directCodes[i];
     if (direct >= 0) {
       if (!container.split) {
-        const code = huffman ? streamLengths![direct] : varintBits(direct);
+        const code = huffman ? lengthsFor(previousSymbol)[direct] : varintBits(direct);
         totals.directCodes += code;
         spent += code;
+        previousSymbol = direct;
       }
       bits[i] = spent;
       continue;
@@ -1149,19 +1235,23 @@ export function measureStream(container: LinkContainer): StreamCost {
 
     const entry = container.entries[chainIndex++];
     if (entry.kind === EntryKind.Terminal) {
-      const code = huffman ? streamLengths![TERMINAL] : varintBits(base);
+      const code = huffman ? lengthsFor(previousSymbol)[TERMINAL] : varintBits(base);
+      previousSymbol = TERMINAL;
       const row = huffman ? rowBits : varintBits(entry.value);
       totals.terminalCodes += code;
       totals.terminalRows += row;
       spent += code + row;
     } else if (entry.shortcutRow >= 0) {
       const cost = huffman
-        ? streamLengths![SHORTCUT] + rowBits + DELTA_BUCKET_BITS + deltaPayloadBits(entry.value)
+        ? lengthsFor(previousSymbol)[SHORTCUT] + rowBits + DELTA_BUCKET_BITS + deltaPayloadBits(entry.value)
         : varintBits(base + 1) + varintBits(entry.shortcutRow) + varintBits(entry.value);
+      previousSymbol = SHORTCUT;
       totals.shortcuts += cost;
       spent += cost;
     } else if (huffman) {
-      const code = streamLengths![D + 2 + deltaBucket(entry.value)];
+      const symbol = D + 2 + deltaBucket(entry.value);
+      const code = lengthsFor(previousSymbol)[symbol];
+      previousSymbol = symbol;
       const payload = deltaPayloadBits(entry.value);
       totals.deltaCodes += code;
       totals.deltaPayload += payload;
@@ -1180,6 +1270,29 @@ export function measureStream(container: LinkContainer): StreamCost {
   return container.cost;
 }
 
+/** Which code table a symbol was read from, and why that one. */
+export interface TableChoice {
+  /** Index into the container's per-context tables. */
+  index: number;
+  /** Why this table: what preceded the symbol. */
+  reason: string;
+  /** How many symbols this table can code. */
+  liveSymbols: number;
+}
+
+/** The bits one term occupies, and the table its codes were read from. */
+export interface EntryBits {
+  /**
+   * Null for the varint coder, which has no tables. Otherwise the table the
+   * codes below came from — which matters once `contextDirectTerms` is set,
+   * because then the same word has different codes in different places and two
+   * different symbols may share a bit pattern. They are not ambiguous: they are
+   * read from different tables.
+   */
+  table: TableChoice | null;
+  fields: BitField[];
+}
+
 /** One run of bits in the stream, labelled with what it says. */
 export interface BitField {
   /** What this run encodes, for a caption. */
@@ -1190,18 +1303,45 @@ export interface BitField {
   kind: "code" | "raw";
 }
 
-/** Rebuilt canonical codes, kept beside their container rather than inside it. */
-const codeCache = new WeakMap<LinkContainer, { stream: HuffmanCode | null; master: HuffmanCode | null }>();
+interface RebuiltCodes {
+  /** One code per context; a single entry when the stream is order-0. */
+  stream: HuffmanCode[];
+  master: HuffmanCode | null;
+  /** Stream symbol at each term index, so a lookup can find its context. */
+  symbolAt: Int32Array | null;
+}
 
-function codesFor(container: LinkContainer) {
+/** Rebuilt canonical codes, kept beside their container rather than inside it. */
+const codeCache = new WeakMap<LinkContainer, RebuiltCodes>();
+
+function codesFor(container: LinkContainer): RebuiltCodes {
   let cached = codeCache.get(container);
-  if (!cached) {
-    cached = {
-      stream: container.streamLengths ? canonical(container.streamLengths) : null,
-      master: container.masterLengths ? canonical(container.masterLengths) : null,
-    };
-    codeCache.set(container, cached);
+  if (cached) return cached;
+
+  const D = container.directTerms.length;
+  let symbolAt: Int32Array | null = null;
+  if (!container.split && container.contextDirectTerms > 0) {
+    symbolAt = new Int32Array(container.termCount);
+    let chain = 0;
+    for (let i = 0; i < container.termCount; i++) {
+      const direct = container.directCodes[i];
+      if (direct >= 0) {
+        symbolAt[i] = direct;
+        continue;
+      }
+      const entry = container.entries[chain++];
+      symbolAt[i] = entry.kind === EntryKind.Terminal ? D
+        : entry.shortcutRow >= 0 ? D + 1
+        : D + 2 + deltaBucket(entry.value);
+    }
   }
+
+  cached = {
+    stream: container.streamLengths ? container.streamLengths.map((l) => canonical(l as Lengths)) : [],
+    master: container.masterLengths ? canonical(container.masterLengths as Lengths) : null,
+    symbolAt,
+  };
+  codeCache.set(container, cached);
   return cached;
 }
 
@@ -1225,18 +1365,36 @@ function varintFields(value: number, label: string): BitField[] {
  * This is the same walk the encoder does, so what comes back is what is in the
  * file — not a reconstruction of what it ought to be.
  */
-export function describeBits(container: LinkContainer, termIndex: number): BitField[] {
+export function describeBits(container: LinkContainer, termIndex: number): EntryBits {
   const D = container.directTerms.length;
   const TERMINAL = D;
   const SHORTCUT = D + 1;
   const rowBits = Math.max(1, bitWidth(Math.max(container.lexicon.length - 1, 1)));
   const base = container.split ? 0 : D;
   const huffman = container.coder === "huffman";
-  const { stream, master } = codesFor(container);
+  const { stream, master, symbolAt } = codesFor(container);
+  const contextTerms = container.split ? 0 : container.contextDirectTerms;
+  const previous = symbolAt && termIndex > 0 ? symbolAt[termIndex - 1] : -1;
+  const tableIndex = contextTerms > 0 ? contextOf(previous, contextTerms, D) : 0;
+  const table = stream.length > 0 ? stream[tableIndex] : null;
+
+  let choice: TableChoice | null = null;
+  if (table) {
+    let live = 0;
+    for (let i = 0; i < table.lengths.length; i++) if (table.lengths[i] > 0) live++;
+    const reason = contextTerms === 0 ? "the only table"
+      : previous < 0 ? "start of the stream"
+      : previous < contextTerms ? `after ${JSON.stringify(container.directTerms[previous])}`
+      : previous < D ? "after any other direct term"
+      : previous === D ? "after a terminal link"
+      : "after a delta";
+    choice = { index: tableIndex, reason, liveSymbols: live };
+  }
+
   const fields: BitField[] = [];
 
-  const code = (table: HuffmanCode, symbol: number, label: string) =>
-    ({ label, bits: bitString(table.codes[symbol], table.lengths[symbol]), kind: "code" as const });
+  const code = (from: HuffmanCode, symbol: number, label: string) =>
+    ({ label, bits: bitString(from.codes[symbol], from.lengths[symbol]), kind: "code" as const });
 
   if (container.split) {
     const symbol = container.directCodes[termIndex] >= 0 ? container.directCodes[termIndex] : D;
@@ -1247,9 +1405,9 @@ export function describeBits(container: LinkContainer, termIndex: number): BitFi
   const direct = container.directCodes[termIndex];
   if (direct >= 0) {
     if (!container.split) {
-      fields.push(huffman ? code(stream!, direct, "direct term") : varintFields(direct, "direct term")[0]);
+      fields.push(huffman ? code(table!, direct, "direct term") : varintFields(direct, "direct term")[0]);
     }
-    return fields;
+    return { table: choice, fields };
   }
 
   const chainIndex = buildChainIndex(container)[termIndex];
@@ -1257,17 +1415,17 @@ export function describeBits(container: LinkContainer, termIndex: number): BitFi
 
   if (entry.kind === EntryKind.Terminal) {
     if (huffman) {
-      fields.push(code(stream!, TERMINAL, "terminal"));
+      fields.push(code(table!, TERMINAL, "terminal"));
       fields.push({ label: "lexicon row", bits: bitString(entry.value, rowBits), kind: "raw" });
     } else {
       fields.push(...varintFields(base, "terminal"), ...varintFields(entry.value, "lexicon row"));
     }
-    return fields;
+    return { table: choice, fields };
   }
 
   if (entry.shortcutRow >= 0) {
     if (huffman) {
-      fields.push(code(stream!, SHORTCUT, "shortcut"));
+      fields.push(code(table!, SHORTCUT, "shortcut"));
       fields.push({ label: "lexicon row", bits: bitString(entry.shortcutRow, rowBits), kind: "raw" });
       fields.push({ label: "delta bucket", bits: bitString(deltaBucket(entry.value), DELTA_BUCKET_BITS), kind: "raw" });
       const payload = deltaPayloadBits(entry.value);
@@ -1279,17 +1437,17 @@ export function describeBits(container: LinkContainer, termIndex: number): BitFi
         ...varintFields(entry.value, "delta"),
       );
     }
-    return fields;
+    return { table: choice, fields };
   }
 
   if (huffman) {
-    fields.push(code(stream!, D + 2 + deltaBucket(entry.value), "delta bucket"));
+    fields.push(code(table!, D + 2 + deltaBucket(entry.value), "delta bucket"));
     const payload = deltaPayloadBits(entry.value);
     if (payload > 0) fields.push({ label: "delta low bits", bits: bitString(entry.value, payload), kind: "raw" });
   } else {
     fields.push(...varintFields(base + 1 + entry.value, "delta"));
   }
-  return fields;
+  return { table: choice, fields };
 }
 
 // ---------------------------------------------------------------------------

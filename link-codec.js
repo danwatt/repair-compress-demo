@@ -361,7 +361,8 @@ var Ylk1 = (() => {
     directTermCount: 256,
     split: false,
     shortcutInterval: 0,
-    coder: "huffman"
+    coder: "huffman",
+    contextDirectTerms: 0
   };
   var FUNCTION_WORDS = new Set(
     "a an the and or but if for nor so yet of to in on at by with from into unto upon over under out off up down through against among between about after before while when where then than as that which who whom whose what this these those there here it its he him his she her they them their we us our you your ye thou thee thy thine i me my mine be am is are was were been being have has had hath having do does did doth done shall should will would may might must can could let not no all any both each every some such same other another one two more most much many few own very also even only ever never now still because since until though whether neither either".split(" ")
@@ -618,6 +619,7 @@ var Ylk1 = (() => {
     return words;
   }
   var MAX_CODE_LENGTH = 31;
+  var EMPTY_CODES = new Int32Array(0);
   function huffmanLengths(frequencies) {
     const lengths = new Array(frequencies.length).fill(0);
     const leaves = [];
@@ -654,7 +656,7 @@ var Ylk1 = (() => {
     }
     return lengths;
   }
-  function canonical(lengths) {
+  function canonical(lengths, withCodes = true) {
     let maxLength = 0;
     for (const l of lengths) maxLength = Math.max(maxLength, l);
     const countByLength = new Int32Array(maxLength + 2);
@@ -671,13 +673,13 @@ var Ylk1 = (() => {
     }
     const sorted = new Int32Array(index);
     const nextSlot = Int32Array.from(firstIndex);
-    const codes = new Int32Array(lengths.length).fill(-1);
+    const codes = withCodes ? new Int32Array(lengths.length).fill(-1) : EMPTY_CODES;
     for (let symbol = 0; symbol < lengths.length; symbol++) {
       const length = lengths[symbol];
       if (length === 0) continue;
       const slot = nextSlot[length]++;
       sorted[slot] = symbol;
-      codes[symbol] = firstCode[length] + (slot - firstIndex[length]);
+      if (withCodes) codes[symbol] = firstCode[length] + (slot - firstIndex[length]);
     }
     return { lengths, codes, firstCode, firstIndex, countByLength, sorted, maxLength };
   }
@@ -700,19 +702,30 @@ var Ylk1 = (() => {
   function writeCodeLengths(out, lengths) {
     out.varint(lengths.length);
     const bits = new BitWriter(out);
-    for (const l of lengths) bits.write(l, 5);
+    for (const l of lengths) {
+      bits.write(l > 0 ? 1 : 0, 1);
+      if (l > 0) bits.write(l, 5);
+    }
     bits.flush();
   }
   function readCodeLengths(input) {
     const count = input.varint();
     const bits = new BitReader(input);
-    const lengths = [];
-    for (let i = 0; i < count; i++) lengths.push(bits.read(5));
+    const lengths = new Uint8Array(count);
+    for (let i = 0; i < count; i++) lengths[i] = bits.bit() === 1 ? bits.read(5) : 0;
     bits.align();
     return lengths;
   }
   var ENTRY_DELTA = 0 /* Delta */;
   var ENTRY_TERMINAL = 1 /* Terminal */;
+  function contextOf(previousSymbol, contextTerms, directCount) {
+    if (previousSymbol < 0) return contextTerms + 3;
+    if (previousSymbol < contextTerms) return previousSymbol;
+    if (previousSymbol < directCount) return contextTerms;
+    if (previousSymbol === directCount) return contextTerms + 1;
+    return contextTerms + 2;
+  }
+  var contextCountFor = (contextTerms) => contextTerms > 0 ? contextTerms + 4 : 1;
   var DELTA_SUBBUCKETS = 4;
   var DELTA_SUBBUCKET_BITS = 2;
   var DELTA_BUCKETS = 32 * DELTA_SUBBUCKETS;
@@ -740,7 +753,7 @@ var Ylk1 = (() => {
     return payload > 0 ? floor | bits.read(payload) : floor;
   }
   var MAGIC = [89, 76, 75, 49];
-  var FORMAT_VERSION = 2;
+  var FORMAT_VERSION = 3;
   var HEADER_BYTES = 16;
   var hasLetter = (term) => /\p{L}/u.test(term);
   function chooseDirectTerms(frequency, firstSeen, budget) {
@@ -801,7 +814,7 @@ var Ylk1 = (() => {
     for (const b of MAGIC) out.u8(b);
     out.u8(FORMAT_VERSION);
     out.u8((config.split ? 1 : 0) | (config.coder === "huffman" ? 2 : 0));
-    out.u8(0);
+    out.u8(config.split ? 0 : Math.min(config.contextDirectTerms, directTerms.length, 255));
     out.u8(0);
     out.u32(terms.length);
     out.u32(linkedTerm.length);
@@ -822,7 +835,24 @@ var Ylk1 = (() => {
     const TERMINAL = directTerms.length;
     const SHORTCUT = directTerms.length + 1;
     const deltaSymbol = (delta) => directTerms.length + 2 + deltaBucket(delta);
-    let streamCode = null;
+    const symbols = new Int32Array(config.split ? entries.length : terms.length);
+    {
+      let cursor = 0;
+      let at = 0;
+      for (const term of terms) {
+        const direct = directIndex.get(term);
+        if (direct !== void 0) {
+          if (!config.split) symbols[at++] = direct;
+          continue;
+        }
+        const entry = entries[cursor++];
+        symbols[at++] = entry.kind === 1 /* Terminal */ ? TERMINAL : entry.shortcutRow >= 0 ? SHORTCUT : deltaSymbol(entry.value);
+      }
+    }
+    const contextTerms = config.split ? 0 : Math.min(config.contextDirectTerms, directTerms.length, 255);
+    const contextCount = contextCountFor(contextTerms);
+    const symbolCount = directTerms.length + 2 + DELTA_BUCKETS;
+    let streamCodes = [];
     let masterCode = null;
     if (config.coder === "huffman") {
       if (config.split) {
@@ -831,21 +861,15 @@ var Ylk1 = (() => {
         masterCode = canonical(huffmanLengths(masterFrequency));
         writeCodeLengths(out, masterCode.lengths);
       }
-      const streamFrequency = new Array(directTerms.length + 2 + DELTA_BUCKETS).fill(0);
-      let cursor = 0;
-      for (const term of terms) {
-        const direct = directIndex.get(term);
-        if (direct !== void 0) {
-          if (!config.split) streamFrequency[direct]++;
-          continue;
-        }
-        const entry = entries[cursor++];
-        if (entry.kind === 1 /* Terminal */) streamFrequency[TERMINAL]++;
-        else if (entry.shortcutRow >= 0) streamFrequency[SHORTCUT]++;
-        else streamFrequency[deltaSymbol(entry.value)]++;
+      const frequencies = [];
+      for (let i = 0; i < contextCount; i++) frequencies.push(new Array(symbolCount).fill(0));
+      let previous = -1;
+      for (const symbol of symbols) {
+        frequencies[contextTerms > 0 ? contextOf(previous, contextTerms, directTerms.length) : 0][symbol]++;
+        previous = symbol;
       }
-      streamCode = canonical(huffmanLengths(streamFrequency));
-      writeCodeLengths(out, streamCode.lengths);
+      streamCodes = frequencies.map((f) => canonical(huffmanLengths(f)));
+      for (const code of streamCodes) writeCodeLengths(out, code.lengths);
     }
     const afterCodeLengths = out.length;
     if (config.split) {
@@ -864,23 +888,24 @@ var Ylk1 = (() => {
     if (config.coder === "huffman") {
       const bits = new BitWriter(out);
       let cursor = 0;
+      let at = 0;
+      let previous = -1;
       for (const term of terms) {
         const direct = directIndex.get(term);
-        if (direct !== void 0) {
-          if (!config.split) writeCode(bits, streamCode, direct);
-          continue;
-        }
+        if (direct !== void 0 && config.split) continue;
+        const symbol = symbols[at++];
+        const table = streamCodes[contextTerms > 0 ? contextOf(previous, contextTerms, directTerms.length) : 0];
+        writeCode(bits, table, symbol);
+        previous = symbol;
+        if (direct !== void 0) continue;
         const entry = entries[cursor++];
         if (entry.kind === 1 /* Terminal */) {
-          writeCode(bits, streamCode, TERMINAL);
           bits.write(entry.value, rowBits);
         } else if (entry.shortcutRow >= 0) {
-          writeCode(bits, streamCode, SHORTCUT);
           bits.write(entry.shortcutRow, rowBits);
           bits.write(deltaBucket(entry.value), DELTA_BUCKET_BITS);
           writeDelta(bits, entry.value);
         } else {
-          writeCode(bits, streamCode, deltaSymbol(entry.value));
           writeDelta(bits, entry.value);
         }
       }
@@ -937,7 +962,8 @@ var Ylk1 = (() => {
     const flags = input.u8();
     const split = (flags & 1) !== 0;
     const coder = (flags & 2) !== 0 ? "huffman" : "varint";
-    input.u8();
+    const contextDirectTerms = split ? 0 : input.u8();
+    if (split) input.u8();
     input.u8();
     const termCount = input.u32();
     const linkedCount = input.u32();
@@ -953,12 +979,14 @@ var Ylk1 = (() => {
     const rowBits = Math.max(1, bitWidth(Math.max(lexicon.length - 1, 1)));
     const TERMINAL = directTerms.length;
     const SHORTCUT = directTerms.length + 1;
+    const contextCount = contextCountFor(contextDirectTerms);
     let masterCode = null;
-    let streamCode = null;
+    const streamCodes = [];
     if (coder === "huffman") {
-      if (split) masterCode = canonical(readCodeLengths(input));
-      streamCode = canonical(readCodeLengths(input));
+      if (split) masterCode = canonical(readCodeLengths(input), false);
+      for (let i = 0; i < contextCount; i++) streamCodes.push(canonical(readCodeLengths(input), false));
     }
+    const tableFor = (previous) => streamCodes[contextDirectTerms > 0 ? contextOf(previous, contextDirectTerms, directTerms.length) : 0];
     const directCodes = new Int32Array(termCount).fill(-1);
     const termIndex = [];
     const entries = [];
@@ -981,13 +1009,15 @@ var Ylk1 = (() => {
     }
     if (coder === "huffman") {
       const bits = new BitReader(input);
+      let previous = -1;
       if (split) {
         for (let i = 0; i < termIndex.length; i++) {
-          entries.push(continueHuffmanEntry(bits, readCode(bits, streamCode), TERMINAL, SHORTCUT, rowBits));
+          entries.push(continueHuffmanEntry(bits, readCode(bits, streamCodes[0]), TERMINAL, SHORTCUT, rowBits));
         }
       } else {
         for (let i = 0; i < termCount; i++) {
-          const symbol = readCode(bits, streamCode);
+          const symbol = readCode(bits, tableFor(previous));
+          previous = symbol;
           if (symbol < directTerms.length) {
             directCodes[i] = symbol;
             continue;
@@ -1023,7 +1053,8 @@ var Ylk1 = (() => {
       directCodes,
       entries,
       termIndexOf: Int32Array.from(termIndex),
-      streamLengths: streamCode ? streamCode.lengths : null,
+      contextDirectTerms,
+      streamLengths: streamCodes.length > 0 ? streamCodes.map((code) => code.lengths) : null,
       masterLengths: masterCode ? masterCode.lengths : null
     };
   }
@@ -1062,6 +1093,8 @@ var Ylk1 = (() => {
     const huffman = container.coder === "huffman";
     const streamLengths = container.streamLengths;
     const masterLengths = container.masterLengths;
+    const contextTerms = container.contextDirectTerms;
+    const lengthsFor = (previous) => streamLengths[contextTerms > 0 ? contextOf(previous, contextTerms, D) : 0];
     const bits = new Uint32Array(container.termCount);
     const totals = {
       directCodes: 0,
@@ -1073,6 +1106,7 @@ var Ylk1 = (() => {
       master: 0
     };
     let chainIndex = 0;
+    let previousSymbol = -1;
     for (let i = 0; i < container.termCount; i++) {
       let spent = 0;
       if (container.split) {
@@ -1084,26 +1118,31 @@ var Ylk1 = (() => {
       const direct = container.directCodes[i];
       if (direct >= 0) {
         if (!container.split) {
-          const code = huffman ? streamLengths[direct] : varintBits(direct);
+          const code = huffman ? lengthsFor(previousSymbol)[direct] : varintBits(direct);
           totals.directCodes += code;
           spent += code;
+          previousSymbol = direct;
         }
         bits[i] = spent;
         continue;
       }
       const entry = container.entries[chainIndex++];
       if (entry.kind === 1 /* Terminal */) {
-        const code = huffman ? streamLengths[TERMINAL] : varintBits(base);
+        const code = huffman ? lengthsFor(previousSymbol)[TERMINAL] : varintBits(base);
+        previousSymbol = TERMINAL;
         const row = huffman ? rowBits : varintBits(entry.value);
         totals.terminalCodes += code;
         totals.terminalRows += row;
         spent += code + row;
       } else if (entry.shortcutRow >= 0) {
-        const cost = huffman ? streamLengths[SHORTCUT] + rowBits + DELTA_BUCKET_BITS + deltaPayloadBits(entry.value) : varintBits(base + 1) + varintBits(entry.shortcutRow) + varintBits(entry.value);
+        const cost = huffman ? lengthsFor(previousSymbol)[SHORTCUT] + rowBits + DELTA_BUCKET_BITS + deltaPayloadBits(entry.value) : varintBits(base + 1) + varintBits(entry.shortcutRow) + varintBits(entry.value);
+        previousSymbol = SHORTCUT;
         totals.shortcuts += cost;
         spent += cost;
       } else if (huffman) {
-        const code = streamLengths[D + 2 + deltaBucket(entry.value)];
+        const symbol = D + 2 + deltaBucket(entry.value);
+        const code = lengthsFor(previousSymbol)[symbol];
+        previousSymbol = symbol;
         const payload = deltaPayloadBits(entry.value);
         totals.deltaCodes += code;
         totals.deltaPayload += payload;
@@ -1123,13 +1162,28 @@ var Ylk1 = (() => {
   var codeCache = /* @__PURE__ */ new WeakMap();
   function codesFor(container) {
     let cached = codeCache.get(container);
-    if (!cached) {
-      cached = {
-        stream: container.streamLengths ? canonical(container.streamLengths) : null,
-        master: container.masterLengths ? canonical(container.masterLengths) : null
-      };
-      codeCache.set(container, cached);
+    if (cached) return cached;
+    const D = container.directTerms.length;
+    let symbolAt = null;
+    if (!container.split && container.contextDirectTerms > 0) {
+      symbolAt = new Int32Array(container.termCount);
+      let chain = 0;
+      for (let i = 0; i < container.termCount; i++) {
+        const direct = container.directCodes[i];
+        if (direct >= 0) {
+          symbolAt[i] = direct;
+          continue;
+        }
+        const entry = container.entries[chain++];
+        symbolAt[i] = entry.kind === 1 /* Terminal */ ? D : entry.shortcutRow >= 0 ? D + 1 : D + 2 + deltaBucket(entry.value);
+      }
     }
+    cached = {
+      stream: container.streamLengths ? container.streamLengths.map((l) => canonical(l)) : [],
+      master: container.masterLengths ? canonical(container.masterLengths) : null,
+      symbolAt
+    };
+    codeCache.set(container, cached);
     return cached;
   }
   var bitString = (value, width) => width <= 0 ? "" : (value >>> 0).toString(2).padStart(width, "0").slice(-width);
@@ -1150,9 +1204,20 @@ var Ylk1 = (() => {
     const rowBits = Math.max(1, bitWidth(Math.max(container.lexicon.length - 1, 1)));
     const base = container.split ? 0 : D;
     const huffman = container.coder === "huffman";
-    const { stream, master } = codesFor(container);
+    const { stream, master, symbolAt } = codesFor(container);
+    const contextTerms = container.split ? 0 : container.contextDirectTerms;
+    const previous = symbolAt && termIndex > 0 ? symbolAt[termIndex - 1] : -1;
+    const tableIndex = contextTerms > 0 ? contextOf(previous, contextTerms, D) : 0;
+    const table = stream.length > 0 ? stream[tableIndex] : null;
+    let choice = null;
+    if (table) {
+      let live = 0;
+      for (let i = 0; i < table.lengths.length; i++) if (table.lengths[i] > 0) live++;
+      const reason = contextTerms === 0 ? "the only table" : previous < 0 ? "start of the stream" : previous < contextTerms ? `after ${JSON.stringify(container.directTerms[previous])}` : previous < D ? "after any other direct term" : previous === D ? "after a terminal link" : "after a delta";
+      choice = { index: tableIndex, reason, liveSymbols: live };
+    }
     const fields = [];
-    const code = (table, symbol, label) => ({ label, bits: bitString(table.codes[symbol], table.lengths[symbol]), kind: "code" });
+    const code = (from, symbol, label) => ({ label, bits: bitString(from.codes[symbol], from.lengths[symbol]), kind: "code" });
     if (container.split) {
       const symbol = container.directCodes[termIndex] >= 0 ? container.directCodes[termIndex] : D;
       const label = symbol === D ? "master: place holder" : "master: direct code";
@@ -1161,24 +1226,24 @@ var Ylk1 = (() => {
     const direct = container.directCodes[termIndex];
     if (direct >= 0) {
       if (!container.split) {
-        fields.push(huffman ? code(stream, direct, "direct term") : varintFields(direct, "direct term")[0]);
+        fields.push(huffman ? code(table, direct, "direct term") : varintFields(direct, "direct term")[0]);
       }
-      return fields;
+      return { table: choice, fields };
     }
     const chainIndex = buildChainIndex(container)[termIndex];
     const entry = container.entries[chainIndex];
     if (entry.kind === 1 /* Terminal */) {
       if (huffman) {
-        fields.push(code(stream, TERMINAL, "terminal"));
+        fields.push(code(table, TERMINAL, "terminal"));
         fields.push({ label: "lexicon row", bits: bitString(entry.value, rowBits), kind: "raw" });
       } else {
         fields.push(...varintFields(base, "terminal"), ...varintFields(entry.value, "lexicon row"));
       }
-      return fields;
+      return { table: choice, fields };
     }
     if (entry.shortcutRow >= 0) {
       if (huffman) {
-        fields.push(code(stream, SHORTCUT, "shortcut"));
+        fields.push(code(table, SHORTCUT, "shortcut"));
         fields.push({ label: "lexicon row", bits: bitString(entry.shortcutRow, rowBits), kind: "raw" });
         fields.push({ label: "delta bucket", bits: bitString(deltaBucket(entry.value), DELTA_BUCKET_BITS), kind: "raw" });
         const payload = deltaPayloadBits(entry.value);
@@ -1190,16 +1255,16 @@ var Ylk1 = (() => {
           ...varintFields(entry.value, "delta")
         );
       }
-      return fields;
+      return { table: choice, fields };
     }
     if (huffman) {
-      fields.push(code(stream, D + 2 + deltaBucket(entry.value), "delta bucket"));
+      fields.push(code(table, D + 2 + deltaBucket(entry.value), "delta bucket"));
       const payload = deltaPayloadBits(entry.value);
       if (payload > 0) fields.push({ label: "delta low bits", bits: bitString(entry.value, payload), kind: "raw" });
     } else {
       fields.push(...varintFields(base + 1 + entry.value, "delta"));
     }
-    return fields;
+    return { table: choice, fields };
   }
   function resolve(container, position) {
     let at = position;
