@@ -1,0 +1,1163 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>YLK1 — next-occurrence link codec lab</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Silkscreen:wght@400;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root {
+  --ground: #0a0e1a;
+  --panel: #121a2e;
+  --ink: #f2f4fa;
+  --ink-soft: #8b96b3;
+  --rule: #253253;
+  --dmg-4: #5b9dff;
+  --dmg-3: #3d7fd9;
+  --dmg-2: #2a5aa8;
+  --dmg-1: #163262;
+  --hot: #e8b923;
+  --hot-soft: #f6d878;
+  --warn: #ffb454;
+  /* One hue per entry kind: what the reader finds when it lands on a cell. */
+  --sym-direct: #35406b;
+  --sym-delta: #2a5aa8;
+  --sym-delta-lo: color-mix(in oklab, #2a5aa8 70%, var(--ground));
+  --sym-delta-hi: color-mix(in oklab, #5b9dff 78%, #ffffff);
+  --sym-terminal: #008a63;
+  --sym-shortcut: #ffb454;
+  --chain: #e8b923;
+  --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --pixel: "Silkscreen", "IBM Plex Mono", monospace;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--ground);
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+.wrap { max-width: 1080px; margin: 0 auto; padding: 32px 20px 80px; }
+
+.eyebrow {
+  font-family: var(--pixel);
+  font-size: 10px;
+  letter-spacing: .12em;
+  color: var(--dmg-3);
+  text-transform: uppercase;
+  margin: 0 0 14px;
+}
+
+h1 {
+  font-family: var(--pixel);
+  font-weight: 400;
+  font-size: clamp(20px, 4.4vw, 34px);
+  line-height: 1.25;
+  margin: 0 0 12px;
+  color: var(--dmg-4);
+}
+
+.thesis { max-width: 64ch; margin: 0 0 8px; color: var(--ink-soft); }
+.thesis a { color: var(--hot); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+.thesis b { color: var(--ink); font-weight: 500; }
+
+.hr { height: 1px; background: var(--rule); border: 0; margin: 28px 0; }
+
+section { margin-top: 30px; }
+
+.stage-label {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  font-family: var(--pixel);
+  font-size: 10px;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: var(--dmg-3);
+  margin-bottom: 12px;
+}
+.stage-label .num { color: var(--hot); }
+.stage-label .hint {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--ink-soft);
+  margin-left: auto;
+}
+
+.grid { display: grid; grid-template-columns: 1fr 320px; gap: 20px; align-items: start; }
+@media (max-width: 800px) { .grid { grid-template-columns: 1fr; } }
+
+textarea {
+  width: 100%;
+  min-height: 190px;
+  resize: vertical;
+  padding: 12px;
+  border: 1px solid var(--rule);
+  background: var(--panel);
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 13px;
+  line-height: 1.6;
+  border-radius: 2px;
+}
+textarea:focus-visible, input:focus-visible, button:focus-visible, select:focus-visible {
+  outline: 2px solid var(--hot);
+  outline-offset: 2px;
+}
+
+.panel { background: var(--panel); border: 1px solid var(--rule); border-radius: 2px; padding: 14px; }
+
+.knob { margin-bottom: 16px; }
+.knob:last-child { margin-bottom: 0; }
+.knob label { display: block; font-size: 11px; color: var(--ink-soft); margin-bottom: 5px; }
+.knob .row { display: flex; align-items: center; gap: 10px; }
+.knob input[type=number], .knob select {
+  width: 92px; padding: 5px 6px; border: 1px solid var(--rule);
+  background: var(--ground); color: var(--ink); font-family: var(--mono); font-size: 13px; border-radius: 2px;
+}
+.knob select { width: 100%; }
+.knob input[type=range] { flex: 1; accent-color: var(--hot); min-width: 0; }
+.knob .note { font-size: 10px; color: var(--ink-soft); margin-top: 5px; }
+.knob .check { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--ink); }
+.knob input[type=checkbox] { accent-color: var(--hot); }
+
+.actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+
+button {
+  font-family: var(--mono); font-size: 12px; font-weight: 500;
+  padding: 8px 14px; border-radius: 2px; cursor: pointer;
+  border: 1px solid var(--dmg-4); background: var(--ground); color: var(--dmg-4);
+}
+button:hover { background: var(--dmg-1); }
+button.primary { background: var(--hot); border-color: var(--hot); color: var(--ground); }
+button.primary:hover { background: var(--hot-soft); }
+button[disabled] { opacity: .5; cursor: default; }
+
+.headline-figure { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 18px; margin-bottom: 14px; }
+.big { font-size: clamp(30px, 7vw, 48px); font-weight: 600; line-height: 1; color: var(--dmg-4); }
+.big small { font-size: 15px; font-weight: 400; color: var(--ink-soft); margin-left: 4px; }
+.verdict { font-size: 12px; color: var(--ink-soft); }
+.verdict b { color: var(--hot); font-weight: 600; }
+.ok { color: var(--sym-terminal); }
+.bad { color: var(--warn); }
+
+.bar { display: flex; height: 34px; border: 1px solid var(--rule); border-radius: 2px; overflow: hidden; }
+.bar div { display: flex; align-items: center; justify-content: center; font-size: 10px; color: #fff; min-width: 0; overflow: hidden; }
+.legend { display: flex; flex-wrap: wrap; gap: 4px 18px; margin-top: 10px; font-size: 11px; }
+.legend span { display: flex; align-items: center; gap: 6px; color: var(--ink-soft); }
+.legend i { width: 10px; height: 10px; display: inline-block; border-radius: 1px; }
+.legend i.ramp { width: 34px; background: linear-gradient(to right, var(--lo), var(--hi)); }
+.legend i.chain-marker { width: 18px; height: 10px; background: var(--panel); border: 2px solid var(--chain); }
+.legend b { color: var(--ink); font-weight: 500; }
+
+table { width: 100%; border-collapse: collapse; font-size: 12px; }
+th, td { text-align: left; padding: 5px 8px 5px 0; border-bottom: 1px solid var(--rule); }
+th { font-weight: 500; color: var(--ink-soft); }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+
+.table-wrap {
+  max-height: 380px; overflow: auto;
+  border: 1px solid var(--rule); background: var(--panel); border-radius: 2px;
+}
+.table-wrap th, .table-wrap td { padding: 5px 10px; white-space: nowrap; }
+.table-wrap thead th {
+  position: sticky; top: 0; background: var(--panel);
+  box-shadow: inset 0 -1px 0 var(--rule); z-index: 1;
+}
+.table-wrap tr:last-child td { border-bottom: 0; }
+.table-wrap td.word { color: var(--dmg-4); }
+
+.stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 14px 20px; margin-top: 16px; }
+.stat .k { font-size: 10px; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-soft); }
+.stat .v { font-size: 19px; font-variant-numeric: tabular-nums; }
+
+.compare { margin-top: 18px; }
+.compare table { max-width: 560px; }
+.compare td.num { font-variant-numeric: tabular-nums; }
+.compare tr.headline td { color: var(--hot); font-weight: 600; }
+
+/* Chain strip -------------------------------------------------------------- */
+
+.strip-controls, .chase-controls, .search-controls, .lex-controls {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-bottom: 10px;
+}
+.strip-controls label, .chase-controls label, .search-controls label, .lex-controls label {
+  display: flex; align-items: center; gap: 8px; color: var(--ink-soft); font-size: 11px; white-space: nowrap;
+}
+.strip-controls label.position { flex: 1; min-width: 240px; }
+.strip-controls input[type=range] { flex: 1; min-width: 120px; accent-color: var(--hot); }
+.strip-controls input[type=number], .chase-controls input[type=number] {
+  width: 96px; padding: 5px 6px; border: 1px solid var(--rule);
+  background: var(--ground); color: var(--ink); font-family: var(--mono); font-size: 12px; border-radius: 2px;
+}
+.strip-controls button, .chase-controls button, .search-controls button, .lex-controls button { padding: 5px 9px; }
+.search-controls input[type=search], .lex-controls input[type=search] {
+  flex: 1; min-width: 200px; padding: 6px 8px; border: 1px solid var(--rule);
+  background: var(--ground); color: var(--ink); font-family: var(--mono); font-size: 12px; border-radius: 2px;
+}
+
+.strip-frame { position: relative; margin-bottom: 10px; }
+.strip {
+  display: grid;
+  grid-auto-rows: 15px;
+  gap: 3px;
+  position: relative;
+}
+.strip-arcs {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  pointer-events: none; overflow: visible;
+}
+.cell {
+  height: 15px; border-radius: 1px; cursor: pointer; border: 0; padding: 0;
+  background: var(--sym-direct);
+}
+.cell:focus-visible { outline: 2px solid var(--hot); outline-offset: 1px; }
+.cell.k-delta { background: color-mix(in oklab, var(--sym-delta-hi) calc(var(--t) * 100%), var(--sym-delta-lo)); }
+.cell.k-terminal { background: var(--sym-terminal); }
+.cell.k-shortcut { background: var(--sym-shortcut); }
+.cell.in-chain { outline: 2px solid var(--chain); outline-offset: 1px; z-index: 2; }
+.cell.chain-head { outline: 2px solid #fff; outline-offset: 1px; z-index: 3; }
+.cell.chase-trail { filter: brightness(1.5) saturate(1.3); }
+
+.readout {
+  min-height: 44px; padding: 8px 10px; background: var(--panel);
+  border: 1px solid var(--rule); border-radius: 2px; font-size: 12px; color: var(--ink-soft);
+}
+.readout b { color: var(--dmg-4); font-weight: 500; }
+.readout .hot { color: var(--hot); }
+
+.chips { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 10px; max-height: 160px; overflow: auto; }
+.chip {
+  padding: 2px 7px; border: 1px solid var(--rule); border-radius: 2px; background: var(--panel);
+  color: var(--dmg-4); font-size: 11px; font-variant-numeric: tabular-nums; cursor: pointer;
+}
+.chip:hover { border-color: var(--hot); color: var(--hot); }
+
+.chase-log {
+  margin: 10px 0 0; padding: 12px; border: 1px solid var(--rule); border-radius: 2px;
+  background: var(--panel); font-size: 12px; max-height: 260px; overflow: auto;
+  white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.7;
+}
+.chase-log .hop { color: var(--ink-soft); }
+.chase-log .hop b { color: var(--dmg-4); font-weight: 500; }
+.chase-log .land { color: var(--sym-terminal); }
+.chase-log .land b { color: var(--hot); }
+
+.chart { width: 100%; height: 240px; display: block; }
+.chart-note { font-size: 11px; color: var(--ink-soft); margin-top: 8px; }
+
+.empty { color: var(--ink-soft); font-size: 12px; }
+footer { margin-top: 44px; font-size: 11px; color: var(--ink-soft); }
+footer a { color: var(--hot); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <p class="eyebrow">YLK1 · next-occurrence link codec</p>
+  <h1>Link chase lab</h1>
+  <p class="thesis">
+    A rebuild of the storage scheme in
+    <a href="https://patents.google.com/patent/US5153831A/en">US&nbsp;5,153,831</a>, filed 1990 by
+    Peter N. Yianilos for Franklin Electronic Publishers — the handheld electronic Bible. A
+    searchable word is never written into the stream. Each occurrence stores only the
+    <b>distance forward to the next occurrence of the same word</b>; the last one stores the
+    lexicon row. Every occurrence sits on one chain that ends at the lexicon, so the stream is
+    simultaneously the text and its inverted index. Nothing is stored twice.
+  </p>
+  <p class="thesis">
+    Paste text, encode it, then click any cell to light up its chain. The
+    <a href="demo.html">RPR1 lab</a> is the Re-Pair codec next door; section 02 prices both.
+  </p>
+
+  <hr class="hr">
+
+  <section>
+    <div class="stage-label"><span class="num">01</span> <span>Input</span>
+      <span class="hint" id="input-size">0 bytes</span></div>
+    <div class="grid">
+      <div>
+        <textarea id="input" spellcheck="false" placeholder="Paste text here."></textarea>
+        <div class="actions">
+          <button class="primary" id="run">Encode</button>
+          <button id="sample-kjv">Load Genesis 1</button>
+          <button id="sample-repeat">Load repetitive text</button>
+          <button id="sample-full-kjv">Load full KJV</button>
+          <button id="download" disabled>Download .ylk1</button>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="knob">
+          <label for="direct">Direct terms — non-search class</label>
+          <div class="row">
+            <input type="range" id="direct" min="0" max="512" value="254" step="1">
+            <input type="number" id="direct-num" min="0" max="512" value="254">
+          </div>
+          <p class="note">
+            0 is FIG. 2: every term linked, punctuation included. Above that, FIG. 3 — punctuation
+            and function words are written directly and leave the lexicon. Ordinary vocabulary is
+            never a candidate, so "God" and "LORD" stay searchable at any setting.
+          </p>
+        </div>
+        <div class="knob">
+          <label for="shortcut">Shortcut interval — fourth linking signal</label>
+          <div class="row">
+            <input type="range" id="shortcut" min="0" max="2000" value="0" step="1">
+            <input type="number" id="shortcut-num" min="0" max="100000" value="0">
+          </div>
+          <p class="note">Every Nth occurrence also carries its lexicon row, capping the read-mode chase. 0 disables it; the patent suggests 1000. The box accepts values past the slider.</p>
+        </div>
+        <div class="knob">
+          <label for="coder">Stream coder</label>
+          <select id="coder">
+            <option value="huffman" selected>Canonical Huffman over the entry alphabet</option>
+            <option value="varint">Byte varint</option>
+          </select>
+          <p class="note">The patent leaves this to its Appendix A, which is not public. Huffman is the fair comparison; the varint is the honest floor.</p>
+        </div>
+        <div class="knob">
+          <label class="check"><input type="checkbox" id="split"> FIG. 4 — split master and search subfiles</label>
+          <p class="note">Deltas then count search entries only, so they shrink; the cost is one place holder per term.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <hr class="hr">
+
+  <section>
+    <div class="stage-label"><span class="num">02</span> <span>Result</span>
+      <span class="hint" id="timing"></span></div>
+    <div id="result">
+      <p class="empty">Nothing encoded yet. Paste text and press Encode.</p>
+    </div>
+  </section>
+
+  <section id="chain-section" hidden>
+    <div class="stage-label"><span class="num">03</span> <span>The chain</span>
+      <span class="hint" id="chain-hint"></span></div>
+    <div class="strip-controls">
+      <button type="button" id="strip-prev" aria-label="Previous page">←</button>
+      <label class="position">Start term
+        <input type="range" id="strip-position" min="0" max="0" value="0" step="1">
+        <input type="number" id="strip-position-num" min="0" max="0" value="0" step="1">
+      </label>
+      <button type="button" id="strip-next" aria-label="Next page">→</button>
+      <label>Terms shown <input type="number" id="strip-window" min="40" max="4000" value="600" step="40"></label>
+    </div>
+    <div class="strip-frame">
+      <div class="strip" id="strip"></div>
+      <svg class="strip-arcs" id="strip-arcs" aria-hidden="true"></svg>
+    </div>
+    <div class="readout" id="chain-readout">Click a cell to follow its chain.</div>
+    <div class="legend">
+      <span><i style="background:var(--sym-direct)"></i><b>direct</b> term, not linked</span>
+      <span><i class="ramp" style="--lo:var(--sym-delta-lo);--hi:var(--sym-delta-hi)"></i><b>delta</b> to next occurrence, light means far</span>
+      <span><i style="background:var(--sym-terminal)"></i><b>terminal</b> link to the lexicon</span>
+      <span><i style="background:var(--sym-shortcut)"></i><b>shortcut</b> signal</span>
+      <span><i class="chain-marker"></i><b>selected chain</b></span>
+    </div>
+  </section>
+
+  <section id="chase-section" hidden>
+    <div class="stage-label"><span class="num">04</span> <span>Read mode — the forward chase</span>
+      <span class="hint">FIG. 5: the device knows the word only when the chain lands on the lexicon</span></div>
+    <div class="chase-controls">
+      <label>From term <input type="number" id="chase-start" min="0" value="0"></label>
+      <button type="button" id="chase-step">Step</button>
+      <button type="button" id="chase-run">Run to lexicon</button>
+      <button type="button" id="chase-screen">Fill a 40-term screen</button>
+      <button type="button" id="chase-reset">Reset</button>
+    </div>
+    <div class="chase-log" id="chase-log">Pick a term, or click a cell above, then press Step.</div>
+  </section>
+
+  <section id="search-section" hidden>
+    <div class="stage-label"><span class="num">05</span> <span>Search mode</span>
+      <span class="hint">FIG. 6: no posting list, because the chain is the posting list</span></div>
+    <form class="search-controls" id="search-form">
+      <label for="search-word">Word</label>
+      <input type="search" id="search-word" autocomplete="off" spellcheck="false"
+             placeholder="Exact, case-sensitive — try God, meek, Melchizedek">
+      <button type="submit" class="primary">Search</button>
+    </form>
+    <div class="readout" id="search-readout">Enter a word to walk its chain end to end.</div>
+    <div class="chips" id="search-chips"></div>
+  </section>
+
+  <section id="delta-section" hidden>
+    <div class="stage-label"><span class="num">06</span> <span>Why the deltas are cheap</span>
+      <span class="hint" id="delta-hint"></span></div>
+    <svg class="chart" id="delta-chart" viewBox="0 0 1000 240" preserveAspectRatio="none" role="img"
+         aria-label="Distribution of forward deltas by bit width"></svg>
+    <p class="chart-note" id="delta-note"></p>
+  </section>
+
+  <section id="lexicon-section" hidden>
+    <div class="stage-label"><span class="num">07</span> <span>Lexicon</span>
+      <span class="hint" id="lexicon-hint"></span></div>
+    <div class="lex-controls">
+      <label for="lex-filter">Filter</label>
+      <input type="search" id="lex-filter" autocomplete="off" spellcheck="false" placeholder="Prefix or substring">
+    </div>
+    <div class="table-wrap">
+      <table id="lexicon-table"></table>
+    </div>
+    <p class="chart-note" id="lexicon-note"></p>
+  </section>
+
+  <footer>
+    YLK1 after <a href="https://patents.google.com/patent/US5153831A/en">US 5,153,831</a>, Peter N.
+    Yianilos / Franklin Electronic Publishers, filed May 1990. Sibling of the
+    <a href="demo.html">RPR1 Re-Pair lab</a>. Everything runs locally; nothing is uploaded.
+  </footer>
+</div>
+
+<script src="repair-codec.js"></script>
+<script src="link-codec.js"></script>
+<script>
+(function () {
+  const { encode, decode, open, search, buildChainIndex, step, ENTRY_TERMINAL } = window.Ylk1;
+  const { tokenize } = window.RePair;
+
+  const $ = (id) => document.getElementById(id);
+  const fmt = (n) => n.toLocaleString("en-US");
+  const pct = (n) => (n * 100).toFixed(1) + "%";
+  const escapeHtml = (s) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+  /** Print a token the way a person reads it, so the glue token is visible. */
+  const show = (t) => (t === "" ? "␀" : t.replace(/\n/g, "⏎").replace(/\t/g, "⇥").replace(/ /g, "␣"));
+
+  const SAMPLES = {
+    kjv: `In the beginning God created the heaven and the earth. And the earth was without form, and void; and darkness was upon the face of the deep. And the Spirit of God moved upon the face of the waters. And God said, Let there be light: and there was light. And God saw the light, that it was good: and God divided the light from the darkness. And God called the light Day, and the darkness he called Night. And the evening and the morning were the first day.
+And God said, Let there be a firmament in the midst of the waters, and let it divide the waters from the waters. And God made the firmament, and divided the waters which were under the firmament from the waters which were above the firmament: and it was so. And God called the firmament Heaven. And the evening and the morning were the second day.
+And God said, Let the waters under the heaven be gathered together unto one place, and let the dry land appear: and it was so. And God called the dry land Earth; and the gathering together of the waters called he Seas: and God saw that it was good. And God said, Let the earth bring forth grass, the herb yielding seed, and the fruit tree yielding fruit after his kind, whose seed is in itself, upon the earth: and it was so. And the earth brought forth grass, and herb yielding seed after his kind, and the tree yielding fruit, whose seed was in itself, after his kind: and God saw that it was good. And the evening and the morning were the third day.`,
+    repeat: (() => {
+      let out = "";
+      for (let i = 5; i < 32; i++) {
+        out += `And Seth lived after he begat Enos eight hundred and seven years, and begat sons and daughters: ${i} And all the days of Seth were nine hundred and twelve years: and he died.\n`;
+      }
+      return out;
+    })(),
+  };
+
+  let latest = null;
+  let stripState = null;
+  let chaseState = null;
+
+  // -------------------------------------------------------------------------
+  // Knobs
+  // -------------------------------------------------------------------------
+
+  /**
+   * The slider and the number box are two views of one value. Keeping the value
+   * here rather than reading it back off one of the inputs is what lets either
+   * one drive: typing 1000 into the box is not clobbered by the slider, which
+   * only ranges to 2000.
+   */
+  const knobs = { direct: 254, shortcut: 0 };
+  const KNOB_MAX = { direct: 512, shortcut: 100000 };
+
+  function setKnob(name, value) {
+    const v = Math.max(0, Math.min(KNOB_MAX[name], Math.round(Number(value) || 0)));
+    knobs[name] = v;
+    $(name).value = String(Math.min(v, Number($(name).max)));
+    $(name + "-num").value = String(v);
+  }
+
+  function config() {
+    return {
+      directTermCount: knobs.direct,
+      shortcutInterval: knobs.shortcut,
+      coder: $("coder").value,
+      split: $("split").checked,
+    };
+  }
+
+  function updateInputSize() {
+    $("input-size").textContent = fmt(new TextEncoder().encode($("input").value).length) + " bytes";
+  }
+
+  // -------------------------------------------------------------------------
+  // Derived views of a container
+  // -------------------------------------------------------------------------
+
+  /**
+   * Every chain entry's word, by one reverse pass: a delta points forward, so
+   * its target is already resolved by the time we reach it. This is how the
+   * codec bulk-decodes, and it is what the strip labels come from.
+   */
+  function resolveChain(container) {
+    const words = new Array(container.entries.length);
+    for (let i = words.length - 1; i >= 0; i--) {
+      const entry = container.entries[i];
+      words[i] = entry.kind === ENTRY_TERMINAL ? container.lexicon[entry.value] : words[i + entry.value];
+    }
+    return words;
+  }
+
+  /**
+   * What a conventional build would pay for search on the side: gap-coded
+   * posting lists, the gap bit-widths entropy coded, low bits raw, plus an
+   * occurrence count per word. Those gaps are the same numbers as the chain
+   * deltas — which is the patent's whole point.
+   */
+  function invertedIndexBytes(postings) {
+    const buckets = new Array(33).fill(0);
+    let payloadBits = 0;
+    let countBytes = 0;
+    for (const list of postings) {
+      let count = list.length;
+      do { countBytes++; count >>>= 7; } while (count > 0);
+      for (let i = 1; i < list.length; i++) {
+        const gap = list[i] - list[i - 1];
+        let width = 0;
+        while (gap >>> width) width++;
+        buckets[width]++;
+        payloadBits += width - 1;
+      }
+    }
+    const total = buckets.reduce((a, b) => a + b, 0);
+    let bucketBits = 0;
+    for (const f of buckets) if (f > 0) bucketBits += f * Math.log2(total / f);
+    return Math.ceil((bucketBits + payloadBits) / 8) + countBytes;
+  }
+
+  function deltaBuckets(container) {
+    const buckets = new Array(33).fill(0);
+    for (const entry of container.entries) {
+      if (entry.kind === ENTRY_TERMINAL) continue;
+      let width = 0;
+      let v = entry.value;
+      while (v >>> width) width++;
+      buckets[width]++;
+    }
+    return buckets;
+  }
+
+  // -------------------------------------------------------------------------
+  // Encode
+  // -------------------------------------------------------------------------
+
+  function run() {
+    const text = $("input").value;
+    if (!text) {
+      $("result").innerHTML = '<p class="empty">Nothing to encode yet — paste some text first.</p>';
+      return;
+    }
+    $("run").disabled = true;
+    $("timing").textContent = "working…";
+
+    setTimeout(() => {
+      try {
+        const options = config();
+        const t0 = performance.now();
+        const result = encode(text, options);
+        const encodeMs = performance.now() - t0;
+
+        const t1 = performance.now();
+        const container = open(result.bytes);
+        const openMs = performance.now() - t1;
+
+        const t2 = performance.now();
+        const roundTrip = decode(result.bytes) === text;
+        const decodeMs = performance.now() - t2;
+
+        buildChainIndex(container);
+        const chainWords = resolveChain(container);
+
+        const postings = new Map();
+        for (let i = 0; i < chainWords.length; i++) {
+          const list = postings.get(chainWords[i]);
+          if (list) list.push(container.termIndexOf[i]);
+          else postings.set(chainWords[i], [container.termIndexOf[i]]);
+        }
+
+        latest = {
+          text, options, result, container, chainWords, postings, roundTrip,
+          encodeMs, openMs, decodeMs,
+          originalBytes: new TextEncoder().encode(text).length,
+          repair: null,
+        };
+
+        renderResult();
+        renderChain(0);
+        renderSearch(null);
+        renderDeltas();
+        renderLexicon();
+        resetChase(0);
+        $("download").disabled = false;
+        $("timing").textContent =
+          `encode ${Math.round(encodeMs)} ms · open ${Math.round(openMs)} ms · full decode ${Math.round(decodeMs)} ms`;
+      } catch (error) {
+        latest = null;
+        $("result").innerHTML = `<p class="empty bad">${escapeHtml(String(error && error.message || error))}</p>`;
+        $("timing").textContent = "";
+        for (const id of ["chain-section", "chase-section", "search-section", "delta-section", "lexicon-section"]) {
+          $(id).hidden = true;
+        }
+      } finally {
+        $("run").disabled = false;
+      }
+    }, 0);
+  }
+
+  // -------------------------------------------------------------------------
+  // 02 — Result
+  // -------------------------------------------------------------------------
+
+  const SECTION_COLORS = {
+    stream: "var(--sym-delta)",
+    master: "var(--dmg-2)",
+    lexicon: "var(--sym-terminal)",
+    firstOccurrence: "var(--hot)",
+    directTable: "var(--sym-direct)",
+    codeLengths: "var(--warn)",
+    header: "var(--rule)",
+  };
+  const SECTION_LABELS = {
+    stream: "stream",
+    master: "master subfile",
+    lexicon: "lexicon",
+    firstOccurrence: "first-occurrence pointers",
+    directTable: "direct terms",
+    codeLengths: "code lengths",
+    header: "header",
+  };
+
+  function renderResult() {
+    const { result, container, originalBytes, roundTrip, options } = latest;
+    const sizes = result.sizes;
+    const ratio = sizes.total / originalBytes;
+
+    const order = ["stream", "master", "lexicon", "firstOccurrence", "directTable", "codeLengths", "header"];
+    const bar = order
+      .filter((k) => sizes[k] > 0)
+      .map((k) => {
+        const share = sizes[k] / sizes.total;
+        return `<div style="flex:${share};background:${SECTION_COLORS[k]}" title="${SECTION_LABELS[k]}: ${fmt(sizes[k])} bytes">` +
+          (share > 0.07 ? escapeHtml(SECTION_LABELS[k]) : "") + "</div>";
+      })
+      .join("");
+
+    const legend = order
+      .filter((k) => sizes[k] > 0)
+      .map((k) => `<span><i style="background:${SECTION_COLORS[k]}"></i><b>${escapeHtml(SECTION_LABELS[k])}</b> ${fmt(sizes[k])}</span>`)
+      .join("");
+
+    const bitsPerTerm = ((sizes.stream + sizes.master) * 8) / result.termCount;
+    const linkedShare = result.linkedCount / result.termCount;
+
+    $("result").innerHTML = `
+      <div class="headline-figure">
+        <div class="big">${fmt(sizes.total)}<small>bytes</small></div>
+        <div class="verdict">
+          ${pct(ratio)} of the ${fmt(originalBytes)} input bytes ·
+          <b>${bitsPerTerm.toFixed(2)} bits</b> per term ·
+          round trip <span class="${roundTrip ? "ok" : "bad"}">${roundTrip ? "verified" : "FAILED"}</span>
+        </div>
+      </div>
+      <div class="bar">${bar}</div>
+      <div class="legend">${legend}</div>
+      <div class="stat-grid">
+        <div class="stat"><div class="k">terms</div><div class="v">${fmt(result.termCount)}</div></div>
+        <div class="stat"><div class="k">on a chain</div><div class="v">${fmt(result.linkedCount)}<small style="font-size:12px;color:var(--ink-soft)"> · ${pct(linkedShare)}</small></div></div>
+        <div class="stat"><div class="k">searchable words</div><div class="v">${fmt(container.lexicon.length)}</div></div>
+        <div class="stat"><div class="k">direct terms</div><div class="v">${fmt(container.directTerms.length)}</div></div>
+        <div class="stat"><div class="k">shortcut signals</div><div class="v">${fmt(result.shortcutCount)}</div></div>
+        <div class="stat"><div class="k">embodiment</div><div class="v" style="font-size:15px">${options.directTermCount === 0 ? "FIG. 2" : options.split ? "FIG. 4" : "FIG. 3"}</div></div>
+      </div>
+      <div class="compare">
+        <table>
+          <tr><td>YLK1 — text and search in one structure</td><td class="num">${fmt(sizes.total)}</td><td>bytes</td></tr>
+          <tr id="compare-rows"><td colspan="3">
+            <button type="button" id="compare-run">Price the same job with RPR1 plus an index</button>
+          </td></tr>
+        </table>
+      </div>`;
+
+    $("compare-run").addEventListener("click", runComparison);
+    if (latest.repair) renderComparison();
+    showSections();
+  }
+
+  function runComparison() {
+    const button = $("compare-run");
+    button.disabled = true;
+    button.textContent = "encoding with RPR1…";
+    setTimeout(() => {
+      try {
+        latest.repair = window.RePair.encode(latest.text, {
+          singleByteCount: 0x55, minPairCount: 3, maxPairs: 65535,
+        });
+        renderComparison();
+      } catch (error) {
+        button.disabled = false;
+        button.textContent = String(error && error.message || error);
+      }
+    }, 0);
+  }
+
+  function renderComparison() {
+    const postings = [...latest.postings.values()];
+    const indexBytes = invertedIndexBytes(postings);
+    const repairBytes = latest.repair.bytes.length;
+    const together = repairBytes + indexBytes;
+    const total = latest.result.sizes.total;
+    const delta = 1 - total / together;
+
+    $("compare-rows").outerHTML = `
+      <tr><td>RPR1 — text only, cannot be searched</td><td class="num">${fmt(repairBytes)}</td><td>bytes</td></tr>
+      <tr><td>an inverted index over the same words</td><td class="num">${fmt(indexBytes)}</td><td>bytes</td></tr>
+      <tr><td>RPR1 + index</td><td class="num">${fmt(together)}</td><td>bytes</td></tr>
+      <tr class="headline"><td>YLK1 against that</td><td class="num">${delta >= 0 ? "−" : "+"}${pct(Math.abs(delta))}</td><td></td></tr>`;
+  }
+
+  // -------------------------------------------------------------------------
+  // 03 — The chain
+  // -------------------------------------------------------------------------
+
+  function cellKind(container, termIndex) {
+    const chainIndex = container.chainOf[termIndex];
+    if (chainIndex < 0) return { kind: "direct", chainIndex, entry: null };
+    const entry = container.entries[chainIndex];
+    if (entry.kind === ENTRY_TERMINAL) return { kind: "terminal", chainIndex, entry };
+    if (entry.shortcutRow >= 0) return { kind: "shortcut", chainIndex, entry };
+    return { kind: "delta", chainIndex, entry };
+  }
+
+  function termText(container, termIndex) {
+    const chainIndex = container.chainOf[termIndex];
+    if (chainIndex < 0) return container.directTerms[container.directCodes[termIndex]];
+    return latest.chainWords[chainIndex];
+  }
+
+  function renderChain(start) {
+    const { container, result } = latest;
+    const size = Math.max(40, Math.min(4000, Number($("strip-window").value) || 600));
+    const max = Math.max(0, result.termCount - 1);
+    const from = Math.max(0, Math.min(max, start | 0));
+    const to = Math.min(result.termCount, from + size);
+
+    stripState = {
+      from, to,
+      selected: stripState ? stripState.selected : null,
+      head: stripState ? stripState.head : -1,
+    };
+
+    $("strip-position").max = String(max);
+    $("strip-position-num").max = String(max);
+    $("strip-position").value = String(from);
+    $("strip-position-num").value = String(from);
+    $("chain-hint").textContent = `terms ${fmt(from)}–${fmt(to - 1)} of ${fmt(result.termCount)}`;
+
+    const strip = $("strip");
+    const parts = [];
+    for (let i = from; i < to; i++) {
+      const { kind, entry } = cellKind(container, i);
+      let cls = "cell";
+      let style = "";
+      if (kind === "delta") {
+        cls += " k-delta";
+        // Light means far: ramp on log2 of the delta, saturating around 4096.
+        const t = Math.min(1, Math.log2(entry.value + 1) / 12);
+        style = ` style="--t:${t.toFixed(3)}"`;
+      } else if (kind === "terminal") cls += " k-terminal";
+      else if (kind === "shortcut") cls += " k-shortcut";
+      parts.push(`<button type="button" class="${cls}"${style} data-i="${i}" aria-label="term ${i}"></button>`);
+    }
+    strip.innerHTML = parts.join("");
+    layoutStrip();
+    paintChain();
+  }
+
+  function layoutStrip() {
+    const strip = $("strip");
+    const width = strip.clientWidth || 900;
+    const columns = Math.max(8, Math.floor((width + 3) / 18));
+    strip.style.gridTemplateColumns = `repeat(${columns}, 15px)`;
+  }
+
+  /** Outline the selected word's occurrences and arc between the visible ones. */
+  function paintChain() {
+    const svg = $("strip-arcs");
+    svg.innerHTML = "";
+    for (const cell of $("strip").children) cell.classList.remove("in-chain", "chain-head");
+    if (!stripState || stripState.selected === null) return;
+
+    const { container } = latest;
+    const word = stripState.selected;
+    const positions = latest.postings.get(word) || [];
+    const { from, to } = stripState;
+
+    const frame = $("strip").getBoundingClientRect();
+    svg.setAttribute("viewBox", `0 0 ${frame.width} ${frame.height}`);
+    const centerOf = (termIndex) => {
+      const cell = $("strip").children[termIndex - from];
+      if (!cell) return null;
+      const box = cell.getBoundingClientRect();
+      return { x: box.left - frame.left + box.width / 2, y: box.top - frame.top + box.height / 2 };
+    };
+
+    for (const p of positions) {
+      if (p < from || p >= to) continue;
+      const cell = $("strip").children[p - from];
+      if (cell) cell.classList.add("in-chain");
+    }
+    const head = $("strip").children[stripState.head - from];
+    if (head) head.classList.add("chain-head");
+
+    const arcs = [];
+    for (let i = 1; i < positions.length; i++) {
+      const a = positions[i - 1];
+      const b = positions[i];
+      if (b < from || a >= to) continue;
+      const pa = centerOf(a);
+      const pb = centerOf(b);
+      if (!pa || !pb) continue;
+      const lift = Math.min(26, 6 + Math.abs(pb.x - pa.x) * 0.08 + Math.abs(pb.y - pa.y) * 0.25);
+      const midX = (pa.x + pb.x) / 2;
+      const midY = (pa.y + pb.y) / 2 - lift;
+      arcs.push(`<path d="M ${pa.x} ${pa.y} Q ${midX} ${midY} ${pb.x} ${pb.y}" fill="none" stroke="var(--chain)" stroke-width="1.4" opacity=".85"/>`);
+    }
+    svg.innerHTML = arcs.join("");
+  }
+
+  function selectTerm(termIndex) {
+    const { container } = latest;
+    const word = termText(container, termIndex);
+    const { kind, chainIndex, entry } = cellKind(container, termIndex);
+    stripState.selected = kind === "direct" ? null : word;
+    stripState.head = termIndex;
+    paintChain();
+
+    const positions = kind === "direct" ? [] : latest.postings.get(word) || [];
+    const ordinal = positions.indexOf(termIndex) + 1;
+
+    let detail;
+    if (kind === "direct") {
+      detail = `directly encoded, table code <b>${container.directCodes[termIndex]}</b> — not searchable, never on a chain`;
+    } else if (kind === "terminal") {
+      detail = `<span class="hot">terminal link</span> to lexicon row <b>${entry.value}</b> — the last occurrence, and the only place the word itself is stored`;
+    } else if (kind === "shortcut") {
+      detail = `<span class="hot">shortcut signal</span> carrying lexicon row <b>${entry.shortcutRow}</b> and a forward delta of <b>+${fmt(entry.value)}</b>`;
+    } else {
+      const target = container.termIndexOf[chainIndex + entry.value];
+      detail = `forward delta <b>+${fmt(entry.value)}</b> entries, landing on term <b>${fmt(target)}</b>`;
+    }
+
+    $("chain-readout").innerHTML =
+      `term <b>${fmt(termIndex)}</b> · <b>${escapeHtml(show(word))}</b>` +
+      (positions.length ? ` · occurrence ${fmt(ordinal)} of ${fmt(positions.length)}` : "") +
+      `<br>${detail}`;
+    $("chase-start").value = String(termIndex);
+    resetChase(termIndex);
+  }
+
+  // -------------------------------------------------------------------------
+  // 04 — The forward chase
+  // -------------------------------------------------------------------------
+
+  function resetChase(rawIndex) {
+    const { container } = latest;
+    const termIndex = Math.max(0, Math.min(container.termCount - 1, rawIndex | 0));
+    $("chase-start").max = String(container.termCount - 1);
+    $("chase-start").value = String(termIndex);
+    const chainIndex = container.chainOf[termIndex];
+    chaseState = { termIndex, at: chainIndex, hops: 0, lines: [], done: chainIndex < 0 };
+    if (chainIndex < 0) {
+      const word = container.directTerms[container.directCodes[termIndex]];
+      chaseState.lines.push(
+        `<span class="land">term ${fmt(termIndex)} is a direct term — <b>${escapeHtml(show(word))}</b> is read straight out of the table, no chase</span>`,
+      );
+    } else {
+      chaseState.lines.push(`<span class="hop">start at term <b>${fmt(termIndex)}</b>, chain entry <b>${fmt(chainIndex)}</b></span>`);
+    }
+    renderChase();
+  }
+
+  function chaseStep() {
+    if (!chaseState || chaseState.done) return;
+    const { container } = latest;
+    const { next, word } = step(container, chaseState.at);
+    if (word !== null) {
+      chaseState.lines.push(
+        `<span class="land">lands on the lexicon after ${fmt(chaseState.hops)} hop${chaseState.hops === 1 ? "" : "s"} — the word is <b>${escapeHtml(show(word))}</b></span>`,
+      );
+      chaseState.done = true;
+    } else {
+      const entry = container.entries[chaseState.at];
+      chaseState.hops++;
+      chaseState.lines.push(
+        `<span class="hop">hop ${fmt(chaseState.hops)}: entry <b>${fmt(chaseState.at)}</b> says +${fmt(entry.value)} → entry <b>${fmt(next)}</b> (term ${fmt(container.termIndexOf[next])})</span>`,
+      );
+      chaseState.at = next;
+    }
+    renderChase();
+  }
+
+  function chaseRun() {
+    let guard = 0;
+    while (chaseState && !chaseState.done && guard++ < 200000) chaseStep();
+  }
+
+  function chaseScreen() {
+    const { container } = latest;
+    const start = Math.max(0, Math.min(container.termCount - 1, Number($("chase-start").value) || 0));
+    const t0 = performance.now();
+    const result = window.Ylk1.read(container, start, 40);
+    const ms = performance.now() - t0;
+    chaseState = { termIndex: start, at: -1, hops: result.hops, lines: [], done: true };
+    chaseState.lines.push(
+      `<span class="land">40 terms from ${fmt(start)} cost <b>${fmt(result.hops)}</b> link hops in ${ms.toFixed(2)} ms` +
+      (latest.options.shortcutInterval ? ` (shortcut interval ${fmt(latest.options.shortcutInterval)})` : " (no shortcut signals — try turning them on)") +
+      `</span>`,
+    );
+    chaseState.lines.push(`<span class="hop">${escapeHtml(result.terms.map(show).join(" "))}</span>`);
+    renderChase();
+  }
+
+  function renderChase() {
+    $("chase-log").innerHTML = chaseState.lines.join("<br>");
+    $("chase-log").scrollTop = $("chase-log").scrollHeight;
+  }
+
+  // -------------------------------------------------------------------------
+  // 05 — Search
+  // -------------------------------------------------------------------------
+
+  function renderSearch(word) {
+    const chips = $("search-chips");
+    if (!word) {
+      $("search-readout").textContent = "Enter a word to walk its chain end to end.";
+      chips.innerHTML = "";
+      return;
+    }
+    const { container } = latest;
+    const t0 = performance.now();
+    const found = search(container, word);
+    const ms = performance.now() - t0;
+
+    if (found.positions.length === 0) {
+      const direct = container.directTerms.indexOf(word);
+      $("search-readout").innerHTML = direct >= 0
+        ? `<b>${escapeHtml(show(word))}</b> is in the non-search class — directly encoded, so it has no chain and no lexicon row. Lower the direct-term knob to make it searchable.`
+        : `<b>${escapeHtml(show(word))}</b> is not in the text.`;
+      chips.innerHTML = "";
+      return;
+    }
+
+    $("search-readout").innerHTML =
+      `<b>${escapeHtml(show(word))}</b> — ${fmt(found.positions.length)} occurrence${found.positions.length === 1 ? "" : "s"}, ` +
+      `found in ${fmt(found.hops)} link hop${found.hops === 1 ? "" : "s"} and ${ms.toFixed(3)} ms. ` +
+      `The lexicon gave the first position; every other one came from the chain itself.`;
+
+    const shown = found.positions.slice(0, 240);
+    chips.innerHTML = shown.map((p) => `<button type="button" class="chip" data-p="${p}">${fmt(p)}</button>`).join("") +
+      (found.positions.length > shown.length ? `<span class="chip" style="cursor:default">+${fmt(found.positions.length - shown.length)} more</span>` : "");
+
+    stripState.selected = word;
+    stripState.head = found.positions[0];
+    paintChain();
+    $("chain-readout").innerHTML =
+      `chain for <b>${escapeHtml(show(word))}</b> · ${fmt(found.positions.length)} occurrence` +
+      `${found.positions.length === 1 ? "" : "s"}, first at term <b>${fmt(found.positions[0])}</b>` +
+      `<br>the arcs are the deltas: each occurrence points at the next, and the last points at the lexicon`;
+  }
+
+  // -------------------------------------------------------------------------
+  // 06 — Delta distribution
+  // -------------------------------------------------------------------------
+
+  function renderDeltas() {
+    const buckets = deltaBuckets(latest.container);
+    const used = [];
+    for (let w = 1; w < buckets.length; w++) if (buckets[w] > 0) used.push(w);
+    if (used.length === 0) {
+      $("delta-section").hidden = true;
+      return;
+    }
+    const total = buckets.reduce((a, b) => a + b, 0);
+    const maxCount = Math.max(...buckets);
+
+    const W = 1000, H = 240, padL = 44, padB = 30, padT = 12;
+    const innerW = W - padL - 8;
+    const innerH = H - padB - padT;
+    const slot = innerW / used.length;
+
+    let svg = "";
+    let meanBits = 0;
+    used.forEach((w, i) => {
+      const count = buckets[w];
+      const share = count / total;
+      meanBits += share * (Math.log2(total / count) + (w - 1));
+      const h = (count / maxCount) * innerH;
+      const x = padL + i * slot + slot * 0.15;
+      const barW = slot * 0.7;
+      svg += `<rect x="${x.toFixed(1)}" y="${(padT + innerH - h).toFixed(1)}" width="${barW.toFixed(1)}" height="${h.toFixed(1)}" fill="var(--sym-delta)"/>`;
+      svg += `<text x="${(x + barW / 2).toFixed(1)}" y="${H - 10}" fill="var(--ink-soft)" font-size="11" text-anchor="middle">${w}</text>`;
+    });
+    svg += `<line x1="${padL}" y1="${padT + innerH}" x2="${W - 8}" y2="${padT + innerH}" stroke="var(--rule)"/>`;
+    svg += `<text x="6" y="${padT + 10}" fill="var(--ink-soft)" font-size="11">${fmt(maxCount)}</text>`;
+    svg += `<text x="6" y="${padT + innerH}" fill="var(--ink-soft)" font-size="11">0</text>`;
+    $("delta-chart").innerHTML = svg;
+
+    const { result } = latest;
+    const bitsPerTerm = ((result.sizes.stream + result.sizes.master) * 8) / result.termCount;
+    $("delta-hint").textContent = `${fmt(total)} deltas across ${used.length} bit widths`;
+    $("delta-note").innerHTML =
+      `A word occurring <i>n</i> times in <i>L</i> terms leaves gaps averaging <i>L/n</i>, so a gap costs about ` +
+      `log₂(<i>L/n</i>) bits — which is exactly that word's self-information. <b>The distance is the entropy code.</b> ` +
+      `Here the deltas cost ${meanBits.toFixed(2)} bits each on the bucket-plus-payload model, and the whole stream ` +
+      `averages ${bitsPerTerm.toFixed(2)} bits per term — while also being the index.`;
+  }
+
+  // -------------------------------------------------------------------------
+  // 07 — Lexicon
+  // -------------------------------------------------------------------------
+
+  function renderLexicon() {
+    const { container } = latest;
+    const filter = $("lex-filter").value;
+    const rows = [];
+    for (let row = 0; row < container.lexicon.length && rows.length < 400; row++) {
+      const word = container.lexicon[row];
+      if (filter && !word.includes(filter)) continue;
+      const positions = latest.postings.get(word) || [];
+      rows.push(
+        `<tr><td class="num">${fmt(row)}</td><td class="word">${escapeHtml(show(word))}</td>` +
+        `<td class="num">${fmt(positions.length)}</td>` +
+        `<td class="num">${fmt(container.firstOccurrence[row])}</td>` +
+        `<td class="num">${positions.length ? fmt(positions[0]) : "—"}</td></tr>`,
+      );
+    }
+    $("lexicon-table").innerHTML =
+      `<thead><tr><th class="num">row</th><th>word</th><th class="num">occurrences</th>` +
+      `<th class="num">first chain entry</th><th class="num">first term</th></tr></thead><tbody>${rows.join("")}</tbody>`;
+    $("lexicon-hint").textContent = `${fmt(container.lexicon.length)} searchable words`;
+    $("lexicon-note").textContent =
+      "The third type of linking signal is the first-occurrence column: the only way into a chain from outside. " +
+      "Everything else about a word's positions is already in the stream." +
+      (rows.length >= 400 ? " Showing the first 400 matches — filter to narrow." : "");
+  }
+
+  // -------------------------------------------------------------------------
+  // Wiring
+  // -------------------------------------------------------------------------
+
+  function showSections() {
+    for (const id of ["chain-section", "chase-section", "search-section", "delta-section", "lexicon-section"]) {
+      $(id).hidden = false;
+    }
+  }
+
+  $("run").addEventListener("click", run);
+  for (const name of ["direct", "shortcut"]) {
+    $(name).addEventListener("input", (event) => setKnob(name, event.target.value));
+    $(name + "-num").addEventListener("input", (event) => setKnob(name, event.target.value));
+  }
+  $("input").addEventListener("input", updateInputSize);
+  $("sample-kjv").addEventListener("click", () => { $("input").value = SAMPLES.kjv; updateInputSize(); run(); });
+  $("sample-repeat").addEventListener("click", () => { $("input").value = SAMPLES.repeat; updateInputSize(); run(); });
+
+  let kjvPromise = null;
+  $("sample-full-kjv").addEventListener("click", () => {
+    const button = $("sample-full-kjv");
+    button.disabled = true;
+    button.textContent = "loading…";
+    if (!kjvPromise) {
+      kjvPromise = new Promise((resolve, reject) => {
+        if (window.KJV_TEXT) return resolve(window.KJV_TEXT);
+        const s = document.createElement("script");
+        s.src = "kjv-data.js";
+        s.onload = () => resolve(window.KJV_TEXT);
+        s.onerror = () => reject(new Error("Could not load kjv-data.js — run `mise run data` to generate it."));
+        document.head.appendChild(s);
+      });
+    }
+    kjvPromise.then((text) => {
+      $("input").value = text;
+      updateInputSize();
+      button.textContent = "Load full KJV";
+      button.disabled = false;
+      run();
+    }).catch((error) => {
+      button.textContent = error.message;
+      button.disabled = false;
+    });
+  });
+
+  $("download").addEventListener("click", () => {
+    if (!latest) return;
+    const blob = new Blob([latest.result.bytes], { type: "application/octet-stream" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "text.ylk1";
+    a.click();
+    URL.revokeObjectURL(url);
+  });
+
+  $("strip").addEventListener("click", (event) => {
+    const cell = event.target.closest(".cell");
+    if (cell && latest) selectTerm(Number(cell.dataset.i));
+  });
+  $("strip-prev").addEventListener("click", () => {
+    if (latest) renderChain(stripState.from - (stripState.to - stripState.from));
+  });
+  $("strip-next").addEventListener("click", () => {
+    if (latest) renderChain(stripState.from + (stripState.to - stripState.from));
+  });
+  for (const id of ["strip-position", "strip-position-num"]) {
+    $(id).addEventListener("input", (event) => { if (latest) renderChain(Number(event.target.value)); });
+  }
+  $("strip-window").addEventListener("change", () => { if (latest) renderChain(stripState.from); });
+  window.addEventListener("resize", () => { if (latest) { layoutStrip(); paintChain(); } });
+
+  $("chase-step").addEventListener("click", () => {
+    if (!latest) return;
+    const start = Number($("chase-start").value) || 0;
+    if (!chaseState || chaseState.termIndex !== start) resetChase(start);
+    chaseStep();
+  });
+  $("chase-run").addEventListener("click", () => {
+    if (!latest) return;
+    const start = Number($("chase-start").value) || 0;
+    if (!chaseState || chaseState.termIndex !== start) resetChase(start);
+    chaseRun();
+  });
+  $("chase-screen").addEventListener("click", () => { if (latest) chaseScreen(); });
+  $("chase-reset").addEventListener("click", () => {
+    if (latest) resetChase(Number($("chase-start").value) || 0);
+  });
+
+  $("search-form").addEventListener("submit", (event) => {
+    event.preventDefault();
+    if (latest) renderSearch($("search-word").value);
+  });
+  $("search-chips").addEventListener("click", (event) => {
+    const chip = event.target.closest(".chip[data-p]");
+    if (!chip || !latest) return;
+    const p = Number(chip.dataset.p);
+    const size = stripState.to - stripState.from;
+    renderChain(Math.max(0, p - Math.floor(size / 4)));
+    selectTerm(p);
+  });
+
+  $("lex-filter").addEventListener("input", () => { if (latest) renderLexicon(); });
+
+  $("input").value = SAMPLES.kjv;
+  updateInputSize();
+  run();
+})();
+</script>
+</body>
+</html>

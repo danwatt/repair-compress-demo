@@ -8,13 +8,15 @@ sources = ["package.json"]
 outputs = ["node_modules/.package-lock.json"]
 
 [tasks.build]
-description = "Bundle repair-codec.ts to repair-codec.js for the browser"
+description = "Bundle the codecs to repair-codec.js and link-codec.js for the browser"
 depends = ["install"]
-sources = ["repair-codec.ts"]
-outputs = ["repair-codec.js"]
+sources = ["repair-codec.ts", "link-codec.ts"]
+outputs = ["repair-codec.js", "link-codec.js"]
 run = """
 npx esbuild repair-codec.ts --bundle --format=iife --global-name=RePair --target=es2020 \
   --outfile=repair-codec.js
+npx esbuild link-codec.ts --bundle --format=iife --global-name=Ylk1 --target=es2020 \
+  --outfile=link-codec.js
 """
 
 [tasks.test]
@@ -36,6 +38,14 @@ npx esbuild build-kjv-preencoded.ts --bundle --platform=node --format=cjs --outf
 node /tmp/build-kjv-preencoded.cjs
 """
 
+[tasks.bench-link]
+description = "Round-trip the YLK1 link codec and compare it to RPR1 on the KJV"
+depends = ["install"]
+run = """
+npx esbuild link-codec.bench.ts --bundle --platform=node --format=cjs --outfile=/tmp/link-bench.cjs
+node --max-old-space-size=4096 /tmp/link-bench.cjs
+"""
+
 [tasks.serve]
 description = "Serve the repo so demo.html can load its sibling scripts"
 depends = ["build"]
@@ -43,4 +53,4 @@ run = "npx --yes serve . -l 8080"
 
 [tasks.clean]
 description = "Remove generated build output"
-run = "rm -f repair-codec.js test.cjs"
+run = "rm -f repair-codec.js link-codec.js test.cjs"
