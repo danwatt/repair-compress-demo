@@ -5,7 +5,7 @@
 //     --outfile=/tmp/link-bench.cjs && node /tmp/link-bench.cjs
 import fs from "node:fs";
 import { encode as repairEncode, tokenize } from "./repair-codec";
-import { decode, encode, open, read, search, type LinkConfig } from "./link-codec";
+import { decode, encode, measureStream, open, read, search, type LinkConfig } from "./link-codec";
 
 let failures = 0;
 function check(label: string, ok: boolean, detail = ""): void {
@@ -67,6 +67,13 @@ for (const sample of SAMPLES) {
 
     const window = read(container, 0, Math.min(terms.length, 40));
     check(label, JSON.stringify(window.terms) === JSON.stringify(terms.slice(0, window.terms.length)), "read mismatch");
+
+    // The per-term cost the demo draws has to add back up to the sections the
+    // encoder actually wrote, or the picture is lying about where bytes go.
+    const cost = measureStream(container);
+    const accounted = Math.ceil(cost.totals.master / 8) + Math.ceil((cost.total - cost.totals.master) / 8);
+    const written = result.sizes.master + result.sizes.stream;
+    check(label, accounted === written, `cost accounting ${accounted} != ${written} bytes written`);
   }
 }
 console.log(failures === 0 ? `  ${CONFIGS.length} configs x ${SAMPLES.length} samples, all correct` : `  ${failures} failures`);

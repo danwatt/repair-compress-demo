@@ -158,6 +158,14 @@ button[disabled] { opacity: .5; cursor: default; }
 .legend i { width: 10px; height: 10px; display: inline-block; border-radius: 1px; }
 .legend i.ramp { width: 34px; background: linear-gradient(to right, var(--lo), var(--hi)); }
 .legend i.chain-marker { width: 18px; height: 10px; background: var(--panel); border: 2px solid var(--chain); }
+.legend i.width-marker {
+  width: 44px; height: 10px;
+  background: linear-gradient(to right, var(--sym-direct) 0 7px, transparent 7px 9px, var(--sym-delta) 9px 44px);
+}
+
+.budget { margin-bottom: 14px; }
+.budget .bar { height: 26px; }
+.budget .bar div { font-size: 9px; }
 .legend b { color: var(--ink); font-weight: 500; }
 
 table { width: 100%; border-collapse: collapse; font-size: 12px; }
@@ -208,17 +216,20 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 
 .strip-frame { position: relative; margin-bottom: 10px; }
 .strip {
-  display: grid;
-  grid-auto-rows: 15px;
-  gap: 3px;
+  display: flex;
+  flex-wrap: wrap;
+  align-content: flex-start;
+  gap: 2px;
   position: relative;
 }
 .strip-arcs {
   position: absolute; inset: 0; width: 100%; height: 100%;
   pointer-events: none; overflow: visible;
 }
+/* Width is the cost: every cell is as many pixels wide as the entry is bits. */
 .cell {
   height: 15px; border-radius: 1px; cursor: pointer; border: 0; padding: 0;
+  flex: 0 0 auto;
   background: var(--sym-direct);
 }
 .cell:focus-visible { outline: 2px solid var(--hot); outline-offset: 1px; }
@@ -235,6 +246,16 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 }
 .readout b { color: var(--dmg-4); font-weight: 500; }
 .readout .hot { color: var(--hot); }
+
+.bits { display: flex; flex-wrap: wrap; gap: 4px 10px; margin-top: 8px; }
+.bitfield { display: flex; flex-direction: column; gap: 2px; }
+.bitrun {
+  font-family: var(--mono); font-size: 13px; letter-spacing: .14em;
+  padding: 2px 6px; border-radius: 2px; background: var(--ground); border: 1px solid var(--rule);
+}
+.bitrun.code { color: var(--dmg-4); border-color: var(--dmg-2); }
+.bitrun.raw { color: var(--hot); border-color: color-mix(in oklab, var(--hot) 45%, var(--ground)); }
+.bitfield small { font-size: 9px; letter-spacing: .05em; text-transform: uppercase; color: var(--ink-soft); }
 
 .chips { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 10px; max-height: 160px; overflow: auto; }
 .chip {
@@ -345,6 +366,7 @@ footer a { color: var(--hot); }
   <section id="chain-section" hidden>
     <div class="stage-label"><span class="num">03</span> <span>The chain</span>
       <span class="hint" id="chain-hint"></span></div>
+    <div class="budget" id="budget"></div>
     <div class="strip-controls">
       <button type="button" id="strip-prev" aria-label="Previous page">←</button>
       <label class="position">Start term
@@ -365,6 +387,7 @@ footer a { color: var(--hot); }
       <span><i style="background:var(--sym-terminal)"></i><b>terminal</b> link to the lexicon</span>
       <span><i style="background:var(--sym-shortcut)"></i><b>shortcut</b> signal</span>
       <span><i class="chain-marker"></i><b>selected chain</b></span>
+      <span><i class="width-marker"></i><b>width</b> is the cost: every cell is as wide as the bits it spends</span>
     </div>
   </section>
 
@@ -426,7 +449,7 @@ footer a { color: var(--hot); }
 <script src="link-codec.js"></script>
 <script>
 (function () {
-  const { encode, decode, open, search, buildChainIndex, step, planSuffixes, ENTRY_TERMINAL } = window.Ylk1;
+  const { encode, decode, open, search, buildChainIndex, measureStream, describeBits, step, planSuffixes, ENTRY_TERMINAL } = window.Ylk1;
   const { tokenize } = window.RePair;
 
   const $ = (id) => document.getElementById(id);
@@ -592,6 +615,7 @@ And God said, Let the waters under the heaven be gathered together unto one plac
         const decodeMs = performance.now() - t2;
 
         buildChainIndex(container);
+        const cost = measureStream(container);
         const chainWords = resolveChain(container);
 
         const postings = new Map();
@@ -602,13 +626,14 @@ And God said, Let the waters under the heaven be gathered together unto one plac
         }
 
         latest = {
-          text, options, result, container, chainWords, postings, roundTrip,
+          text, options, result, container, chainWords, postings, roundTrip, cost,
           encodeMs, openMs, decodeMs, planMs,
           originalBytes: new TextEncoder().encode(text).length,
           repair: null,
         };
 
         renderResult();
+        renderBudget();
         renderChain(0);
         renderSearch(null);
         renderDeltas();
@@ -746,6 +771,42 @@ And God said, Let the waters under the heaven be gathered together unto one plac
   // 03 — The chain
   // -------------------------------------------------------------------------
 
+  /** Pixels per bit in the chain strip. */
+  const BITS_TO_PIXELS = 1.7;
+
+  const BUDGET = [
+    ["directCodes", "direct terms", "var(--sym-direct)"],
+    ["deltaCodes", "delta buckets", "var(--sym-delta)"],
+    ["deltaPayload", "delta low bits", "var(--dmg-4)"],
+    ["terminalCodes", "terminal codes", "var(--sym-terminal)"],
+    ["terminalRows", "lexicon rows", "color-mix(in oklab, var(--sym-terminal) 60%, var(--ground))"],
+    ["shortcuts", "shortcut signals", "var(--sym-shortcut)"],
+    ["master", "master subfile", "var(--dmg-2)"],
+  ];
+
+  /**
+   * Where the stream's bits actually go. The surprise on the KJV is that the
+   * links are the minority: about half the stream is spent naming the common
+   * words that never enter the lexicon at all.
+   */
+  function renderBudget() {
+    const { totals, total } = latest.cost;
+    const present = BUDGET.filter(([key]) => totals[key] > 0);
+
+    $("budget").innerHTML =
+      `<div class="bar">` +
+      present.map(([key, label, color]) => {
+        const share = totals[key] / total;
+        return `<div style="flex:${share};background:${color}" title="${label}: ${fmt(Math.round(totals[key] / 8))} bytes">` +
+          (share > 0.08 ? escapeHtml(label) : "") + "</div>";
+      }).join("") +
+      `</div><div class="legend">` +
+      present.map(([key, label, color]) =>
+        `<span><i style="background:${color}"></i><b>${escapeHtml(label)}</b> ${fmt(Math.round(totals[key] / 8))} B · ${pct(totals[key] / total)}</span>`,
+      ).join("") +
+      `</div>`;
+  }
+
   function cellKind(container, termIndex) {
     const chainIndex = container.chainOf[termIndex];
     if (chainIndex < 0) return { kind: "direct", chainIndex, entry: null };
@@ -778,33 +839,35 @@ And God said, Let the waters under the heaven be gathered together unto one plac
     $("strip-position-num").max = String(max);
     $("strip-position").value = String(from);
     $("strip-position-num").value = String(from);
-    $("chain-hint").textContent = `terms ${fmt(from)}–${fmt(to - 1)} of ${fmt(result.termCount)}`;
-
+    const bits = latest.cost.bits;
     const strip = $("strip");
     const parts = [];
+    let windowBits = 0;
     for (let i = from; i < to; i++) {
       const { kind, entry } = cellKind(container, i);
+      windowBits += bits[i];
       let cls = "cell";
-      let style = "";
+      // Width is the cost. BITS_TO_PIXELS is above one so the difference between
+      // a 4-bit "the" and a 24-bit delta is legible rather than merely present;
+      // the floor keeps the cheapest cell clickable and the ceiling stops one
+      // rare long delta from owning a whole row.
+      let style = `width:${Math.max(4, Math.min(72, Math.round(bits[i] * BITS_TO_PIXELS)))}px`;
       if (kind === "delta") {
         cls += " k-delta";
         // Light means far: ramp on log2 of the delta, saturating around 4096.
-        const t = Math.min(1, Math.log2(entry.value + 1) / 12);
-        style = ` style="--t:${t.toFixed(3)}"`;
+        style += `;--t:${Math.min(1, Math.log2(entry.value + 1) / 12).toFixed(3)}`;
       } else if (kind === "terminal") cls += " k-terminal";
       else if (kind === "shortcut") cls += " k-shortcut";
-      parts.push(`<button type="button" class="${cls}"${style} data-i="${i}" aria-label="term ${i}"></button>`);
+      parts.push(
+        `<button type="button" class="${cls}" style="${style}" data-i="${i}" ` +
+        `title="term ${i}: ${bits[i]} bits" aria-label="term ${i}, ${bits[i]} bits"></button>`,
+      );
     }
     strip.innerHTML = parts.join("");
-    layoutStrip();
+    $("chain-hint").textContent =
+      `terms ${fmt(from)}–${fmt(to - 1)} of ${fmt(result.termCount)} · ` +
+      `${fmt(Math.round(windowBits / 8))} bytes, ${(windowBits / (to - from)).toFixed(2)} bits per term`;
     paintChain();
-  }
-
-  function layoutStrip() {
-    const strip = $("strip");
-    const width = strip.clientWidth || 900;
-    const columns = Math.max(8, Math.floor((width + 3) / 18));
-    strip.style.gridTemplateColumns = `repeat(${columns}, 15px)`;
   }
 
   /** Outline the selected word's occurrences and arc between the visible ones. */
@@ -863,6 +926,9 @@ And God said, Let the waters under the heaven be gathered together unto one plac
     const positions = kind === "direct" ? [] : latest.postings.get(word) || [];
     const ordinal = positions.indexOf(termIndex) + 1;
 
+    const spent = latest.cost.bits[termIndex];
+    const fields = describeBits(container, termIndex);
+
     let detail;
     if (kind === "direct") {
       detail = `directly encoded, table code <b>${container.directCodes[termIndex]}</b> — not searchable, never on a chain`;
@@ -875,12 +941,27 @@ And God said, Let the waters under the heaven be gathered together unto one plac
       detail = `forward delta <b>+${fmt(entry.value)}</b> entries, landing on term <b>${fmt(target)}</b>`;
     }
 
+    // The runs below carry their own labels, so the headline stays a total. It
+    // is derived from the same walk, which keeps it right under both coders.
+    const breakdown = `${spent} bits` + (fields.length > 1 ? ` across ${fields.length} runs` : "");
+
     $("chain-readout").innerHTML =
       `term <b>${fmt(termIndex)}</b> · <b>${escapeHtml(show(word))}</b>` +
       (positions.length ? ` · occurrence ${fmt(ordinal)} of ${fmt(positions.length)}` : "") +
-      `<br>${detail}`;
+      ` · costs <span class="hot">${breakdown}</span>` +
+      `<br>${detail}` +
+      renderBits(fields);
     $("chase-start").value = String(termIndex);
     resetChase(termIndex);
+  }
+
+  /** The literal bits this term occupies, run by run, as they sit in the file. */
+  function renderBits(fields) {
+    if (fields.length === 0) return "";
+    return `<div class="bits">` + fields.map((field) =>
+      `<span class="bitfield"><span class="bitrun ${field.kind}">${escapeHtml(field.bits)}</span>` +
+      `<small>${escapeHtml(field.label)}</small></span>`,
+    ).join("") + `</div>`;
   }
 
   // -------------------------------------------------------------------------
@@ -937,8 +1018,11 @@ And God said, Let the waters under the heaven be gathered together unto one plac
     const result = window.Ylk1.read(container, start, 40);
     const ms = performance.now() - t0;
     chaseState = { termIndex: start, at: -1, hops: result.hops, lines: [], done: true };
+    let screenBits = 0;
+    for (let i = start; i < Math.min(start + 40, container.termCount); i++) screenBits += latest.cost.bits[i];
     chaseState.lines.push(
-      `<span class="land">40 terms from ${fmt(start)} cost <b>${fmt(result.hops)}</b> link hops in ${ms.toFixed(2)} ms` +
+      `<span class="land">40 terms from ${fmt(start)} occupy <b>${fmt(Math.round(screenBits / 8))} bytes</b> and cost ` +
+      `<b>${fmt(result.hops)}</b> link hops in ${ms.toFixed(2)} ms` +
       (latest.options.shortcutInterval ? ` (shortcut interval ${fmt(latest.options.shortcutInterval)})` : " (no shortcut signals — try turning them on)") +
       `</span>`,
     );
@@ -1015,11 +1099,8 @@ And God said, Let the waters under the heaven be gathered together unto one plac
     const slot = innerW / used.length;
 
     let svg = "";
-    let meanBits = 0;
     used.forEach((w, i) => {
       const count = buckets[w];
-      const share = count / total;
-      meanBits += share * (Math.log2(total / count) + (w - 1));
       const h = (count / maxCount) * innerH;
       const x = padL + i * slot + slot * 0.15;
       const barW = slot * 0.7;
@@ -1031,14 +1112,17 @@ And God said, Let the waters under the heaven be gathered together unto one plac
     svg += `<text x="6" y="${padT + innerH}" fill="var(--ink-soft)" font-size="11">0</text>`;
     $("delta-chart").innerHTML = svg;
 
-    const { result } = latest;
+    const { result, cost } = latest;
     const bitsPerTerm = ((result.sizes.stream + result.sizes.master) * 8) / result.termCount;
+    const deltaBits = cost.totals.deltaCodes + cost.totals.deltaPayload;
+    const perDelta = total > 0 ? deltaBits / total : 0;
     $("delta-hint").textContent = `${fmt(total)} deltas across ${used.length} bit widths`;
     $("delta-note").innerHTML =
       `A word occurring <i>n</i> times in <i>L</i> terms leaves gaps averaging <i>L/n</i>, so a gap costs about ` +
       `log₂(<i>L/n</i>) bits — which is exactly that word's self-information. <b>The distance is the entropy code.</b> ` +
-      `Here the deltas cost ${meanBits.toFixed(2)} bits each on the bucket-plus-payload model, and the whole stream ` +
-      `averages ${bitsPerTerm.toFixed(2)} bits per term — while also being the index.`;
+      `Measured here: the deltas cost <b>${perDelta.toFixed(2)} bits</b> each, ` +
+      `${fmt(Math.round(deltaBits / 8))} bytes in all, and the whole stream averages ${bitsPerTerm.toFixed(2)} bits ` +
+      `per term — while also being the index.`;
   }
 
   // -------------------------------------------------------------------------
@@ -1153,7 +1237,7 @@ And God said, Let the waters under the heaven be gathered together unto one plac
     $(id).addEventListener("input", (event) => { if (latest) renderChain(Number(event.target.value)); });
   }
   $("strip-window").addEventListener("change", () => { if (latest) renderChain(stripState.from); });
-  window.addEventListener("resize", () => { if (latest) { layoutStrip(); paintChain(); } });
+  window.addEventListener("resize", () => { if (latest) paintChain(); });
 
   $("chase-step").addEventListener("click", () => {
     if (!latest) return;

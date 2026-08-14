@@ -28,7 +28,9 @@ var Ylk1 = (() => {
     LinkCodecError: () => LinkCodecError,
     buildChainIndex: () => buildChainIndex,
     decode: () => decode,
+    describeBits: () => describeBits,
     encode: () => encode,
+    measureStream: () => measureStream,
     open: () => open,
     planSuffixes: () => planSuffixes,
     read: () => read,
@@ -1020,7 +1022,9 @@ var Ylk1 = (() => {
       firstOccurrence,
       directCodes,
       entries,
-      termIndexOf: Int32Array.from(termIndex)
+      termIndexOf: Int32Array.from(termIndex),
+      streamLengths: streamCode ? streamCode.lengths : null,
+      masterLengths: masterCode ? masterCode.lengths : null
     };
   }
   function continueVarintEntry(input, base, value) {
@@ -1038,6 +1042,164 @@ var Ylk1 = (() => {
       return { kind: 0 /* Delta */, value: readDelta(bits, bits.read(DELTA_BUCKET_BITS)), shortcutRow: row };
     }
     return { kind: 0 /* Delta */, value: readDelta(bits, symbol - shortcut - 1), shortcutRow: -1 };
+  }
+  var varintBits = (v) => {
+    let bits = 8;
+    let x = v;
+    while (x >= 128) {
+      bits += 8;
+      x >>>= 7;
+    }
+    return bits;
+  };
+  function measureStream(container) {
+    if (container.cost) return container.cost;
+    const D = container.directTerms.length;
+    const TERMINAL = D;
+    const SHORTCUT = D + 1;
+    const rowBits = Math.max(1, bitWidth(Math.max(container.lexicon.length - 1, 1)));
+    const base = container.split ? 0 : D;
+    const huffman = container.coder === "huffman";
+    const streamLengths = container.streamLengths;
+    const masterLengths = container.masterLengths;
+    const bits = new Uint32Array(container.termCount);
+    const totals = {
+      directCodes: 0,
+      deltaCodes: 0,
+      deltaPayload: 0,
+      terminalCodes: 0,
+      terminalRows: 0,
+      shortcuts: 0,
+      master: 0
+    };
+    let chainIndex = 0;
+    for (let i = 0; i < container.termCount; i++) {
+      let spent = 0;
+      if (container.split) {
+        const symbol = container.directCodes[i] >= 0 ? container.directCodes[i] : D;
+        const master = huffman ? masterLengths[symbol] : 8;
+        totals.master += master;
+        spent += master;
+      }
+      const direct = container.directCodes[i];
+      if (direct >= 0) {
+        if (!container.split) {
+          const code = huffman ? streamLengths[direct] : varintBits(direct);
+          totals.directCodes += code;
+          spent += code;
+        }
+        bits[i] = spent;
+        continue;
+      }
+      const entry = container.entries[chainIndex++];
+      if (entry.kind === 1 /* Terminal */) {
+        const code = huffman ? streamLengths[TERMINAL] : varintBits(base);
+        const row = huffman ? rowBits : varintBits(entry.value);
+        totals.terminalCodes += code;
+        totals.terminalRows += row;
+        spent += code + row;
+      } else if (entry.shortcutRow >= 0) {
+        const cost = huffman ? streamLengths[SHORTCUT] + rowBits + DELTA_BUCKET_BITS + deltaPayloadBits(entry.value) : varintBits(base + 1) + varintBits(entry.shortcutRow) + varintBits(entry.value);
+        totals.shortcuts += cost;
+        spent += cost;
+      } else if (huffman) {
+        const code = streamLengths[D + 2 + deltaBucket(entry.value)];
+        const payload = deltaPayloadBits(entry.value);
+        totals.deltaCodes += code;
+        totals.deltaPayload += payload;
+        spent += code + payload;
+      } else {
+        const code = varintBits(base + 1 + entry.value);
+        totals.deltaCodes += code;
+        spent += code;
+      }
+      bits[i] = spent;
+    }
+    let total = 0;
+    for (const value of Object.values(totals)) total += value;
+    container.cost = { bits, totals, total };
+    return container.cost;
+  }
+  var codeCache = /* @__PURE__ */ new WeakMap();
+  function codesFor(container) {
+    let cached = codeCache.get(container);
+    if (!cached) {
+      cached = {
+        stream: container.streamLengths ? canonical(container.streamLengths) : null,
+        master: container.masterLengths ? canonical(container.masterLengths) : null
+      };
+      codeCache.set(container, cached);
+    }
+    return cached;
+  }
+  var bitString = (value, width) => width <= 0 ? "" : (value >>> 0).toString(2).padStart(width, "0").slice(-width);
+  function varintFields(value, label) {
+    const bytes = [];
+    let x = value;
+    while (x >= 128) {
+      bytes.push(x & 127 | 128);
+      x >>>= 7;
+    }
+    bytes.push(x);
+    return [{ label, bits: bytes.map((b) => bitString(b, 8)).join(" "), kind: "code" }];
+  }
+  function describeBits(container, termIndex) {
+    const D = container.directTerms.length;
+    const TERMINAL = D;
+    const SHORTCUT = D + 1;
+    const rowBits = Math.max(1, bitWidth(Math.max(container.lexicon.length - 1, 1)));
+    const base = container.split ? 0 : D;
+    const huffman = container.coder === "huffman";
+    const { stream, master } = codesFor(container);
+    const fields = [];
+    const code = (table, symbol, label) => ({ label, bits: bitString(table.codes[symbol], table.lengths[symbol]), kind: "code" });
+    if (container.split) {
+      const symbol = container.directCodes[termIndex] >= 0 ? container.directCodes[termIndex] : D;
+      const label = symbol === D ? "master: place holder" : "master: direct code";
+      fields.push(huffman ? code(master, symbol, label) : { label, bits: bitString(symbol === D ? 255 : symbol, 8), kind: "code" });
+    }
+    const direct = container.directCodes[termIndex];
+    if (direct >= 0) {
+      if (!container.split) {
+        fields.push(huffman ? code(stream, direct, "direct term") : varintFields(direct, "direct term")[0]);
+      }
+      return fields;
+    }
+    const chainIndex = buildChainIndex(container)[termIndex];
+    const entry = container.entries[chainIndex];
+    if (entry.kind === 1 /* Terminal */) {
+      if (huffman) {
+        fields.push(code(stream, TERMINAL, "terminal"));
+        fields.push({ label: "lexicon row", bits: bitString(entry.value, rowBits), kind: "raw" });
+      } else {
+        fields.push(...varintFields(base, "terminal"), ...varintFields(entry.value, "lexicon row"));
+      }
+      return fields;
+    }
+    if (entry.shortcutRow >= 0) {
+      if (huffman) {
+        fields.push(code(stream, SHORTCUT, "shortcut"));
+        fields.push({ label: "lexicon row", bits: bitString(entry.shortcutRow, rowBits), kind: "raw" });
+        fields.push({ label: "delta bucket", bits: bitString(deltaBucket(entry.value), DELTA_BUCKET_BITS), kind: "raw" });
+        const payload = deltaPayloadBits(entry.value);
+        if (payload > 0) fields.push({ label: "delta low bits", bits: bitString(entry.value, payload), kind: "raw" });
+      } else {
+        fields.push(
+          ...varintFields(base + 1, "shortcut"),
+          ...varintFields(entry.shortcutRow, "lexicon row"),
+          ...varintFields(entry.value, "delta")
+        );
+      }
+      return fields;
+    }
+    if (huffman) {
+      fields.push(code(stream, D + 2 + deltaBucket(entry.value), "delta bucket"));
+      const payload = deltaPayloadBits(entry.value);
+      if (payload > 0) fields.push({ label: "delta low bits", bits: bitString(entry.value, payload), kind: "raw" });
+    } else {
+      fields.push(...varintFields(base + 1 + entry.value, "delta"));
+    }
+    return fields;
   }
   function resolve(container, position) {
     let at = position;

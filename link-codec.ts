@@ -916,6 +916,12 @@ export interface LinkContainer {
   termIndexOf: Int32Array;
   /** Term index to chain position, built on demand by read(). */
   chainOf?: Int32Array;
+  /** Stream code lengths by symbol; null for the varint coder, whose costs are derivable. */
+  streamLengths: number[] | null;
+  /** Master-subfile code lengths by symbol; null unless split and Huffman-coded. */
+  masterLengths: number[] | null;
+  /** Per-term cost, built on demand by measureStream(). */
+  cost?: StreamCost;
 }
 
 export function open(bytes: Uint8Array): LinkContainer {
@@ -1021,6 +1027,8 @@ export function open(bytes: Uint8Array): LinkContainer {
     directCodes,
     entries,
     termIndexOf: Int32Array.from(termIndex),
+    streamLengths: streamCode ? streamCode.lengths : null,
+    masterLengths: masterCode ? masterCode.lengths : null,
   };
 }
 
@@ -1046,6 +1054,242 @@ function continueHuffmanEntry(
     return { kind: EntryKind.Delta, value: readDelta(bits, bits.read(DELTA_BUCKET_BITS)), shortcutRow: row };
   }
   return { kind: EntryKind.Delta, value: readDelta(bits, symbol - shortcut - 1), shortcutRow: -1 };
+}
+
+// ---------------------------------------------------------------------------
+// Cost accounting
+//
+// What each term actually spends in the stream. The interesting property of
+// this format is that the cost is not uniform and not arbitrary: a delta to a
+// nearby occurrence is cheap and a delta to a distant one is dear, in direct
+// proportion to how surprising the word is at that point. Being able to point
+// at one term and say how many bits it cost is the whole argument made visible,
+// so the codec reports it rather than leaving a UI to guess.
+// ---------------------------------------------------------------------------
+
+export interface StreamCostTotals {
+  /** Codes for directly encoded terms. */
+  directCodes: number;
+  /** Codes naming a delta's bucket. */
+  deltaCodes: number;
+  /** Raw low bits completing a delta inside its bucket. */
+  deltaPayload: number;
+  /** Codes marking the last occurrence of a word. */
+  terminalCodes: number;
+  /** Lexicon rows carried by those terminals. */
+  terminalRows: number;
+  /** The fourth type of linking signal, code and payload together. */
+  shortcuts: number;
+  /** The FIG. 4 master subfile, if there is one. */
+  master: number;
+}
+
+export interface StreamCost {
+  /** Bits spent on each term index, code and payload together. */
+  bits: Uint32Array;
+  totals: StreamCostTotals;
+  /** Every bit in the two stream sections, so the totals can be checked against it. */
+  total: number;
+}
+
+const varintBits = (v: number): number => {
+  let bits = 8;
+  let x = v;
+  while (x >= 0x80) {
+    bits += 8;
+    x >>>= 7;
+  }
+  return bits;
+};
+
+/**
+ * Bits per term index. Exact for both coders: the Huffman path reads the code
+ * lengths the container already carries, and the varint path re-derives the
+ * byte counts from the values, which is deterministic.
+ */
+export function measureStream(container: LinkContainer): StreamCost {
+  if (container.cost) return container.cost;
+
+  const D = container.directTerms.length;
+  const TERMINAL = D;
+  const SHORTCUT = D + 1;
+  const rowBits = Math.max(1, bitWidth(Math.max(container.lexicon.length - 1, 1)));
+  const base = container.split ? 0 : D;
+  const huffman = container.coder === "huffman";
+  const streamLengths = container.streamLengths;
+  const masterLengths = container.masterLengths;
+
+  const bits = new Uint32Array(container.termCount);
+  const totals: StreamCostTotals = {
+    directCodes: 0, deltaCodes: 0, deltaPayload: 0,
+    terminalCodes: 0, terminalRows: 0, shortcuts: 0, master: 0,
+  };
+
+  let chainIndex = 0;
+  for (let i = 0; i < container.termCount; i++) {
+    let spent = 0;
+
+    if (container.split) {
+      const symbol = container.directCodes[i] >= 0 ? container.directCodes[i] : D;
+      const master = huffman ? masterLengths![symbol] : 8;
+      totals.master += master;
+      spent += master;
+    }
+
+    const direct = container.directCodes[i];
+    if (direct >= 0) {
+      if (!container.split) {
+        const code = huffman ? streamLengths![direct] : varintBits(direct);
+        totals.directCodes += code;
+        spent += code;
+      }
+      bits[i] = spent;
+      continue;
+    }
+
+    const entry = container.entries[chainIndex++];
+    if (entry.kind === EntryKind.Terminal) {
+      const code = huffman ? streamLengths![TERMINAL] : varintBits(base);
+      const row = huffman ? rowBits : varintBits(entry.value);
+      totals.terminalCodes += code;
+      totals.terminalRows += row;
+      spent += code + row;
+    } else if (entry.shortcutRow >= 0) {
+      const cost = huffman
+        ? streamLengths![SHORTCUT] + rowBits + DELTA_BUCKET_BITS + deltaPayloadBits(entry.value)
+        : varintBits(base + 1) + varintBits(entry.shortcutRow) + varintBits(entry.value);
+      totals.shortcuts += cost;
+      spent += cost;
+    } else if (huffman) {
+      const code = streamLengths![D + 2 + deltaBucket(entry.value)];
+      const payload = deltaPayloadBits(entry.value);
+      totals.deltaCodes += code;
+      totals.deltaPayload += payload;
+      spent += code + payload;
+    } else {
+      const code = varintBits(base + 1 + entry.value);
+      totals.deltaCodes += code;
+      spent += code;
+    }
+    bits[i] = spent;
+  }
+
+  let total = 0;
+  for (const value of Object.values(totals)) total += value;
+  container.cost = { bits, totals, total };
+  return container.cost;
+}
+
+/** One run of bits in the stream, labelled with what it says. */
+export interface BitField {
+  /** What this run encodes, for a caption. */
+  label: string;
+  /** The bits themselves, most significant first. */
+  bits: string;
+  /** A code is chosen by the coder; raw bits are written as they are. */
+  kind: "code" | "raw";
+}
+
+/** Rebuilt canonical codes, kept beside their container rather than inside it. */
+const codeCache = new WeakMap<LinkContainer, { stream: HuffmanCode | null; master: HuffmanCode | null }>();
+
+function codesFor(container: LinkContainer) {
+  let cached = codeCache.get(container);
+  if (!cached) {
+    cached = {
+      stream: container.streamLengths ? canonical(container.streamLengths) : null,
+      master: container.masterLengths ? canonical(container.masterLengths) : null,
+    };
+    codeCache.set(container, cached);
+  }
+  return cached;
+}
+
+const bitString = (value: number, width: number): string =>
+  width <= 0 ? "" : (value >>> 0).toString(2).padStart(width, "0").slice(-width);
+
+/** A varint's bytes, most significant bit of each byte first. */
+function varintFields(value: number, label: string): BitField[] {
+  const bytes: number[] = [];
+  let x = value;
+  while (x >= 0x80) {
+    bytes.push((x & 0x7f) | 0x80);
+    x >>>= 7;
+  }
+  bytes.push(x);
+  return [{ label, bits: bytes.map((b) => bitString(b, 8)).join(" "), kind: "code" }];
+}
+
+/**
+ * The literal bits one term occupies, split into the runs that mean something.
+ * This is the same walk the encoder does, so what comes back is what is in the
+ * file — not a reconstruction of what it ought to be.
+ */
+export function describeBits(container: LinkContainer, termIndex: number): BitField[] {
+  const D = container.directTerms.length;
+  const TERMINAL = D;
+  const SHORTCUT = D + 1;
+  const rowBits = Math.max(1, bitWidth(Math.max(container.lexicon.length - 1, 1)));
+  const base = container.split ? 0 : D;
+  const huffman = container.coder === "huffman";
+  const { stream, master } = codesFor(container);
+  const fields: BitField[] = [];
+
+  const code = (table: HuffmanCode, symbol: number, label: string) =>
+    ({ label, bits: bitString(table.codes[symbol], table.lengths[symbol]), kind: "code" as const });
+
+  if (container.split) {
+    const symbol = container.directCodes[termIndex] >= 0 ? container.directCodes[termIndex] : D;
+    const label = symbol === D ? "master: place holder" : "master: direct code";
+    fields.push(huffman ? code(master!, symbol, label) : { label, bits: bitString(symbol === D ? 0xff : symbol, 8), kind: "code" });
+  }
+
+  const direct = container.directCodes[termIndex];
+  if (direct >= 0) {
+    if (!container.split) {
+      fields.push(huffman ? code(stream!, direct, "direct term") : varintFields(direct, "direct term")[0]);
+    }
+    return fields;
+  }
+
+  const chainIndex = buildChainIndex(container)[termIndex];
+  const entry = container.entries[chainIndex];
+
+  if (entry.kind === EntryKind.Terminal) {
+    if (huffman) {
+      fields.push(code(stream!, TERMINAL, "terminal"));
+      fields.push({ label: "lexicon row", bits: bitString(entry.value, rowBits), kind: "raw" });
+    } else {
+      fields.push(...varintFields(base, "terminal"), ...varintFields(entry.value, "lexicon row"));
+    }
+    return fields;
+  }
+
+  if (entry.shortcutRow >= 0) {
+    if (huffman) {
+      fields.push(code(stream!, SHORTCUT, "shortcut"));
+      fields.push({ label: "lexicon row", bits: bitString(entry.shortcutRow, rowBits), kind: "raw" });
+      fields.push({ label: "delta bucket", bits: bitString(deltaBucket(entry.value), DELTA_BUCKET_BITS), kind: "raw" });
+      const payload = deltaPayloadBits(entry.value);
+      if (payload > 0) fields.push({ label: "delta low bits", bits: bitString(entry.value, payload), kind: "raw" });
+    } else {
+      fields.push(
+        ...varintFields(base + 1, "shortcut"),
+        ...varintFields(entry.shortcutRow, "lexicon row"),
+        ...varintFields(entry.value, "delta"),
+      );
+    }
+    return fields;
+  }
+
+  if (huffman) {
+    fields.push(code(stream!, D + 2 + deltaBucket(entry.value), "delta bucket"));
+    const payload = deltaPayloadBits(entry.value);
+    if (payload > 0) fields.push({ label: "delta low bits", bits: bitString(entry.value, payload), kind: "raw" });
+  } else {
+    fields.push(...varintFields(base + 1 + entry.value, "delta"));
+  }
+  return fields;
 }
 
 // ---------------------------------------------------------------------------

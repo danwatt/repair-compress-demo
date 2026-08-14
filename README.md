@@ -66,6 +66,13 @@ search at all; adding a conventional inverted index to RPR1 costs 501,951 bytes,
 24.6% below the pair. `mise run bench-link` reproduces those numbers and verifies the round trip and
 every lexicon word's search results. `demo-ylk1.html` visualizes the chains.
 
+`measureStream()` reports what each term costs in bits and `describeBits()` returns the literal bit
+runs it occupies — the benchmark asserts the totals add back up to the sections the encoder wrote.
+`demo-ylk1.html` draws every cell as wide as the bits it spends and prints those runs for whichever
+cell you click, so "the" showing three bits and a rare word's delta showing twenty-seven is
+something you can read off the page. It also shows where the stream's bits go: on the KJV, 49% is
+spent on directly encoded common words and only 48% on the links themselves.
+
 The lexicon is packed with the same suffix table and header codebook `repair-codec.ts` uses, so the
 two codecs differ only in how their streams work. Planning that ending table is the slowest part of
 an encode and depends only on the corpus, so `LinkConfig.suffixes` accepts a table from
