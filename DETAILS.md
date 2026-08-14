@@ -26,6 +26,137 @@ decode(bytes)
   deserialize -> readStream -> expand -> detokenize
 ```
 
+## Both streams in pseudo-code
+
+Lexicon packing is left out here — both codecs use the same one, and it is covered under
+[Suffixes](#suffixes) below. What follows is only how a token reaches the stream and how a reader
+gets it back. The two formats put opposite things in a stream slot: RPR1 stores *which token this
+is* and leaves the occurrence list to be recomputed; YLK1 stores *how far to the next copy of this
+word* and leaves the word itself to be chased down.
+
+### RPR1
+
+```
+ENCODE(text):
+  tokens = tokenize(text)                  # words, punctuation, separators
+  ids    = [row of tok in lexicon for tok in tokens]      # terminals: 0 .. L-1
+
+  # --- Re-Pair: fold frequent adjacent pairs into rules ---
+  seq   = ids, as a doubly-linked list
+  rules = []                               # rule id L+k -> (left, right)
+  index = map (a,b) -> set of positions where a is followed by b
+  heap  = max-heap over index sizes
+
+  while len(rules) < maxPairs:
+      (a,b) = pop heap until the popped count still matches the index, count >= 2
+      if none: break
+
+      # Dry pass: a self-overlapping pair eats its own next occurrence,
+      # so "aa" can be taken twice in "aaaaa", not four times.
+      real = count of non-overlapping replaceable occurrences of (a,b)
+      if real * SYMBOL_BYTES - RULE_BYTES <= 0: continue
+          # the pair stays in the index; a later merge can grow it back into contention
+
+      new = L + len(rules)
+      for each live occurrence i of (a,b), j = next(i):
+          index.remove(prev(i), a); index.remove(b, next(j))
+          seq[i] = new; unlink j
+          index.add(prev(i), new); index.add(new, next(i))
+      rules.append((a,b))
+
+  seq = walk the linked list               # terminals and rule ids, mixed
+
+  # --- escape table: the N hottest symbols get a one-byte code ---
+  escape = top-N symbols by frequency in seq       # 2 bytes each in the table, 1 saved per use
+  N      = len(escape)                             # the threshold
+
+  # --- byte framing, with no tag bit anywhere ---
+  bytes = []
+  for id in seq:
+      if id in escape: bytes += [ index_of(id) ]                 # one byte, value < N
+      else:            bytes += [ (id >> 8) + N, id & 0xFF ]     # two bytes, lead >= N
+```
+
+```
+DECODE(bytes):
+  i = 0
+  while i < len(bytes):
+      lead = bytes[i++]
+      if lead < N: token = escape[lead]
+      else:        token = ((lead - N) << 8) | bytes[i++]
+      emit expand(token)
+
+expand(id):                                # rule DAG walk, iterative over an explicit stack
+  if id < L: yield lexicon[id]
+  else: (l,r) = rules[id - L]; expand(l); expand(r)
+```
+
+The framing is what sets the id ceiling: the largest addressable token is `(256 - N) * 256 - 1`.
+Nothing outside a byte says whether it is a lead or a trailer, which is why the stream can only be
+entered at a boundary the anchor table names.
+
+### YLK1
+
+```
+ENCODE(text):
+  terms   = tokenize(text)
+  direct  = the D hottest terms (default 254)   # function words and punctuation: written
+                                                # literally, never linked, never searchable
+  linked  = [t for t in terms if t not in direct]
+  lexicon = the distinct linked words, sorted in UTF-8 byte order
+
+  # --- chains: every occurrence points forward to the next one ---
+  for word, positions in occurrences_of(linked):
+      firstOccurrence[row(word)] = positions[0]      # the only entry point, kept in the lexicon
+      for i, at in enumerate(positions):
+          if last:  entries[at] = TERMINAL(row(word))         # the chain end names the word
+          else:     entries[at] = DELTA(positions[i+1] - at)
+          # with shortcutInterval > 0, every Nth occurrence also carries its row, so a reader
+          # that lands mid-chain learns the word without chasing to the end
+
+  # --- write the stream ---
+  for term in terms:
+      if term in direct:
+          write symbol = direct index
+      else:
+          entry = the next entry
+          TERMINAL: write symbol D,   then the row, raw in rowBits
+          SHORTCUT: write symbol D+1, then the row, the delta bucket, the delta payload
+          DELTA:    varint coder:  write symbol D+1+delta
+                    huffman coder: write symbol deltaBucket(delta), then the low bits raw
+```
+
+```
+DECODE(bytes):
+  entries = read the stream               # deltas and terminals; no word appears anywhere
+
+  # Resolve backwards: a word is only named at the end of its chain.
+  for i from len(entries)-1 down to 0:
+      words[i] = TERMINAL ? lexicon[entries[i].row] : words[i + entries[i].delta]
+
+  merge words back with the direct terms, in stream order
+
+SEARCH(word):
+  row = binary-search the lexicon         # a miss is zero occurrences, and the whole answer
+  at  = firstOccurrence[row]
+  loop: emit at; stop if entries[at] is TERMINAL; at += entries[at].delta
+```
+
+Delta zero is impossible — nothing is zero entries away from itself — so the delta range starts at
+one and the partition wastes nothing. Bucketing is what makes the Huffman coder practical: the KJV
+holds 44,008 distinct delta values but only 21 distinct bit widths, and a bucket is a width split
+into four parts, because short gaps dominate inside an octave.
+
+### What each one pays for
+
+| | RPR1 | YLK1 |
+|---|---|---|
+| A stream slot holds | which token this is | how far to the next copy of this word |
+| "what word is here" | free — read the slot | chase the chain to its terminal |
+| "where does word X occur" | full scan of the stream | free — the chain *is* the posting list |
+| Function words | ordinary tokens, and the first to get one-byte codes | in the stream, unsearchable by design |
+| Decode direction | forwards | one backwards pass, then forwards |
+
 ## Which pairs earn a rule
 
 The most frequent pair wins, but it still has to pay: a rule costs 4 bytes in section B and earns 2
