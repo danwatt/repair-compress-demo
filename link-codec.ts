@@ -41,8 +41,9 @@
 import {
   tokenize, detokenize,
   planLexiconSuffixes, planLexiconEntries, planLexiconHeaderCodebook, lexiconEntryTag,
+  planThesaurus, encodeThesaurus, decodeThesaurus,
   LEXICON_MODE, LEXICON_CHAIN_MORE, MAX_LEXICON_HEADER_CODES,
-  type LexiconEntry, type LexiconHeader,
+  type LexiconEntry, type LexiconHeader, type Thesaurus,
 } from "./repair-codec";
 
 const ENCODER = new TextEncoder();
@@ -113,6 +114,12 @@ export interface LinkConfig {
    * Not available with `split`, where a term sits in two subfiles at once.
    */
   anchors?: readonly number[];
+  /**
+   * Synonym groups, as words, filtered against this configuration's lexicon at
+   * encode time. Only search words can be in one: a direct term is not in the
+   * lexicon, so it has no row for a group to name.
+   */
+  thesaurus?: readonly (readonly string[])[];
 }
 
 export const DEFAULT_LINK_CONFIG: LinkConfig = {
@@ -154,6 +161,7 @@ export interface LinkSectionSizes {
   firstOccurrence: number;
   codeLengths: number;
   anchors: number;
+  thesaurus: number;
   master: number;
   stream: number;
   total: number;
@@ -164,6 +172,8 @@ export interface LinkEncodeResult {
   sizes: LinkSectionSizes;
   /** The seek table, in the order the requested positions were given. */
   anchors: LinkAnchor[];
+  /** Synonym groups over lexicon rows, in storage order. */
+  thesaurus: Thesaurus;
   /** Terms encoded directly, in stream-code order. */
   directTerms: string[];
   /** Search words, in lexicon-row order (UTF-8 byte order). */
@@ -805,9 +815,9 @@ const MAGIC = [0x59, 0x4c, 0x4b, 0x31]; // "YLK1"
 /**
  * 2 packed the lexicon with a suffix table and bit-packed the first-occurrence
  * array; 3 added order-1 context tables; 4 added the anchor table; 5 gave each
- * anchor its term position.
+ * anchor its term position; 6 added the thesaurus.
  */
-const FORMAT_VERSION = 5;
+const FORMAT_VERSION = 6;
 const HEADER_BYTES = 18;
 
 const hasLetter = (term: string): boolean => /\p{L}/u.test(term);
@@ -893,6 +903,8 @@ export function encode(text: string, config: LinkConfig = DEFAULT_LINK_CONFIG): 
       };
     }
   }
+
+  const thesaurus = planThesaurus(searchWords, config.thesaurus ?? []);
 
   const out = new ByteWriter();
   for (const b of MAGIC) out.u8(b);
@@ -1075,12 +1087,15 @@ export function encode(text: string, config: LinkConfig = DEFAULT_LINK_CONFIG): 
 
   writeAnchors(out, anchors);
   const afterAnchors = out.length;
+  out.raw(encodeThesaurus(thesaurus));
+  const afterThesaurus = out.length;
   out.raw(streamOut.finish());
 
   const bytes = out.finish();
   return {
     bytes,
     anchors,
+    thesaurus,
     sizes: {
       header: afterHeader,
       directTable: afterDirect - afterHeader,
@@ -1089,7 +1104,8 @@ export function encode(text: string, config: LinkConfig = DEFAULT_LINK_CONFIG): 
       codeLengths: afterCodeLengths - afterFirst,
       master: afterMaster - afterCodeLengths,
       anchors: afterAnchors - afterMaster,
-      stream: bytes.length - afterAnchors,
+      thesaurus: afterThesaurus - afterAnchors,
+      stream: bytes.length - afterThesaurus,
       total: bytes.length,
     },
     directTerms,
@@ -1125,6 +1141,8 @@ export interface LinkContainer {
   chainOf?: Int32Array;
   /** Stream positions a reader may start from; empty when nothing was indexed. */
   anchors: LinkAnchor[];
+  /** Synonym groups over lexicon rows. */
+  thesaurus: Thesaurus;
   /** Byte offset of the stream section, for a reader that seeks into it. */
   streamStart: number;
   /** How many hot direct terms carry their own code table; 0 is order-0. */
@@ -1241,6 +1259,8 @@ export function open(bytes: Uint8Array): LinkContainer {
   }
 
   const anchors = readAnchors(input, anchorCount);
+  const { groups: thesaurus, next } = decodeThesaurus(bytes, input.position);
+  input.seek(next);
   const streamStart = input.position;
 
   if (coder === "huffman") {
@@ -1291,6 +1311,7 @@ export function open(bytes: Uint8Array): LinkContainer {
     entries,
     termIndexOf: Int32Array.from(termIndex),
     anchors,
+    thesaurus,
     streamStart,
     contextDirectTerms,
     streamLengths: streamCodes.length > 0 ? streamCodes.map((code) => code.lengths) : null,
@@ -1748,6 +1769,7 @@ export function readAnchored(
   const anchors = readAnchors(input, prologue.anchorCount);
   const anchor = anchors[anchorIndex];
   if (anchor === undefined) throw new LinkCodecError(`no anchor ${anchorIndex}`);
+  input.seek(decodeThesaurus(bytes, input.position).next);
   const streamStart = input.position;
 
   const { directTerms, lexicon, rowBits, coder } = prologue;

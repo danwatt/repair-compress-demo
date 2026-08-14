@@ -29,6 +29,7 @@ Sources:
 | `demo-ylk1.html`                                | Interactive browser demo for YLK1: chain view, chase, and search.   |
 | `demo-verse.html`                               | Seeking one verse in both codecs, address by address.               |
 | `demo-search.html`                              | One query, both codecs, every byte each has to read.                |
+| `thesaurus.txt`                                 | Synonym groups, as words. Filtered against the lexicon at encode.   |
 | `kjv.csv`                                       | Full King James Bible source data, one verse per row.               |
 | `kjv-data.js` / `kjv-preencoded.js`             | Generated browser data used by the demo.                            |
 | `build-kjv-data.js` / `build-kjv-preencoded.ts` | Scripts that regenerate the browser data.                           |
@@ -96,6 +97,28 @@ is.
 Both codecs also pay for the word list itself. A front-coded list has no index, so a lookup is a walk
 from the front of the section — which is what the cartridge's 2,625-byte skip index at `0x0C2A` was
 for, and neither container here has one.
+
+### The double question mark
+
+A second question mark asked the device for synonyms: `love??` looked the word up in an on-device
+thesaurus, then expanded everything it found by the same stemming rule — so `love` reaches `charity`,
+`affection` and `delight`, and each of those reaches its own family of forms.
+
+`thesaurus.txt` holds 239 groups over words this corpus actually contains; `planThesaurus` maps them
+onto each container's own lexicon rows and drops the rest, so a group can name a word the text lacks
+and simply loses it. Stored, the whole thing is **1,006 bytes**, laid out after
+[US 5,551,049](https://patents.google.com/patent/US5551049A/en) (Kaplan and Kay, filed August 1990):
+a word is a dense row number rather than text, a group is a run of delta-coded rows, and a group's
+*length* is never written down — groups are ordered by size and a small class table says how many
+have each one, so the size follows from where the group sits.
+
+The relationship is stored once, in the group headed by its lowest row. That is the memory decision
+and it has a measurable price: finding a word as a head can stop early — the heads ascend inside a
+size class, and the class table carries the byte length to skip the rest — but finding it as a member
+means reading every group, and so does proving a word is in no group at all. `affection??` reaches its
+group after 113 bytes; `love??` reads all 1,006. Storing the reverse direction as a sorted
+(row → group) pair per member would cost about 1.5 KB, more than doubling the section, to save at
+most 1 KB per query term. One direction is the right call, and the demo shows the arithmetic.
 
 A query YLK1 cannot answer at all is `the light?`: `the` is one of its 254 direct terms, written into
 the stream literally and never linked, so it is not in the lexicon and has no chain. The patent says

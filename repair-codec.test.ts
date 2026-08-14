@@ -19,6 +19,11 @@ import {
   anchorFor,
   anchorTableBytes,
   searchStream,
+  planThesaurus,
+  encodeThesaurus,
+  decodeThesaurus,
+  thesaurusBytes,
+  lookupSynonyms,
   plainLexiconBytes,
   CodecError,
 } from "./repair-codec";
@@ -400,6 +405,78 @@ check("plainLexiconBytes measures the old format", plainLexiconBytes(["ab", "cd"
       return anchorFor(anchored.anchors, anchor.term) === i && anchorFor(anchored.anchors, inside) === i;
     }),
   );
+}
+
+// The thesaurus: groups of lexicon rows, stored the way US 5,551,049 stores
+// them — by size class, ascending inside each, with the length implied.
+{
+  const text = "God so loved the world@the world is round@a love of God@fear the LORD@";
+  const groups = [
+    ["love", "loved", "charity"],   // charity is not in this text and is dropped
+    ["fear", "dread"],              // dread is not either, so the group dies
+    ["world", "earth", "round"],    // earth is not; two survive
+    ["God", "LORD"],
+  ];
+  const built = encode(text, { thesaurus: groups });
+  const container = deserialize(built.bytes);
+  const lexicon = container.lexicon;
+  const words = (rows: readonly number[]) => rows.map((r) => lexicon[r]).join(" ");
+
+  check(
+    "planThesaurus keeps only words the lexicon has",
+    container.thesaurus.every((group) => group.every((row) => lexicon[row] !== undefined)),
+  );
+  check(
+    "planThesaurus drops a group that loses all but one member",
+    container.thesaurus.length === 3,
+    `${container.thesaurus.length} groups: ${container.thesaurus.map(words).join(" | ")}`,
+  );
+  check(
+    "groups are stored by size, then by first row",
+    container.thesaurus.every((group, i) => {
+      const previous = container.thesaurus[i - 1];
+      if (!previous) return true;
+      return previous.length < group.length || (previous.length === group.length && previous[0] < group[0]);
+    }),
+  );
+  check(
+    "the thesaurus survives the round trip",
+    JSON.stringify(container.thesaurus) === JSON.stringify(built.container.thesaurus),
+  );
+  check(
+    "thesaurus size accounting matches the bytes written",
+    built.stats.sizes.thesaurus === encodeThesaurus(built.container.thesaurus).length &&
+      built.bytes.length === built.stats.sizes.total,
+  );
+  check("thesaurus round trip", decode(built.bytes) === text);
+
+  const decoded = decodeThesaurus(encodeThesaurus(container.thesaurus), 0);
+  check(
+    "decodeThesaurus reports where it stopped",
+    decoded.next === thesaurusBytes(container.thesaurus) &&
+      JSON.stringify(decoded.groups) === JSON.stringify(container.thesaurus),
+  );
+
+  // One direction is stored; the other is a scan. Both find the same synonyms.
+  const loveRow = lexicon.indexOf("love");
+  const lovedRow = lexicon.indexOf("loved");
+  const forward = lookupSynonyms(container.thesaurus, Math.min(loveRow, lovedRow));
+  const backward = lookupSynonyms(container.thesaurus, Math.max(loveRow, lovedRow));
+  check("a head lookup finds the group", forward.asHead === 1 && forward.asMember === 0);
+  check("a member lookup finds the same group", backward.asMember === 1 && backward.asHead === 0);
+  check(
+    "both directions return the same pairing",
+    words(forward.rows) === lexicon[Math.max(loveRow, lovedRow)] &&
+      words(backward.rows) === lexicon[Math.min(loveRow, lovedRow)],
+  );
+  check(
+    "the head direction never reads more than the whole table",
+    forward.headBytes <= forward.bytes && backward.bytes === thesaurusBytes(container.thesaurus),
+    `${forward.headBytes} vs ${forward.bytes}`,
+  );
+
+  const empty = encode(text);
+  check("no thesaurus costs one byte", empty.stats.sizes.thesaurus === 1 && empty.container.thesaurus.length === 0);
 }
 
 // A big synthetic corpus: repeated structure, the case Re-Pair is built for.

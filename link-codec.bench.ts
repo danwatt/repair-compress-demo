@@ -100,6 +100,30 @@ for (const sample of SAMPLES) {
       }
     }
 
+    // The thesaurus rides along in the container and has to come back intact,
+    // mapped onto this configuration's lexicon rather than the text's words.
+    {
+      const groups = [["God", "LORD"], ["light", "day", "nothinghere"], ["quick", "brown"]];
+      const withThesaurus = encode(sample, { ...config, thesaurus: groups });
+      const reopened = open(withThesaurus.bytes);
+      check(label, decode(withThesaurus.bytes) === sample, "thesaurus decode mismatch");
+      check(
+        label,
+        JSON.stringify(reopened.thesaurus) === JSON.stringify(withThesaurus.thesaurus),
+        "thesaurus round trip",
+      );
+      check(
+        label,
+        reopened.thesaurus.every((group) => group.every((row) => reopened.lexicon[row] !== undefined)),
+        "thesaurus row out of range",
+      );
+      check(
+        label,
+        withThesaurus.sizes.total - result.sizes.total === withThesaurus.sizes.thesaurus - result.sizes.thesaurus,
+        "thesaurus is not the only difference in size",
+      );
+    }
+
     // Anchors: the encoder's bit offsets have to agree with the cost model, and
     // a reader starting at one has to see what a reader from the top sees.
     if (!config.split) {

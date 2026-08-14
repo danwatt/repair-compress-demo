@@ -30,8 +30,11 @@ node test.cjs
 [tasks.data]
 description = "Regenerate the raw and pre-encoded KJV browser data"
 depends = ["install"]
-sources = ["kjv.csv", "build-kjv-data.js", "build-kjv-preencoded.ts", "repair-codec.ts", "link-codec.ts"]
-outputs = ["kjv-data.js", "kjv-preencoded.js", "kjv-suffixes.js"]
+sources = [
+  "kjv.csv", "thesaurus.txt", "build-kjv-data.js", "build-kjv-preencoded.ts",
+  "repair-codec.ts", "link-codec.ts",
+]
+outputs = ["kjv-data.js", "kjv-preencoded.js", "kjv-suffixes.js", "kjv-thesaurus.js"]
 run = """
 node build-kjv-data.js
 npx esbuild build-kjv-preencoded.ts --bundle --platform=node --format=cjs --outfile=/tmp/build-kjv-preencoded.cjs

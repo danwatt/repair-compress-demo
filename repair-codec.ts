@@ -75,6 +75,11 @@ export interface CodecConfig {
    * book is, so the caller says where it wants to be able to start reading.
    */
   anchors: readonly number[];
+  /**
+   * Synonym groups, as words. Filtered against the lexicon at encode time, so a
+   * group can name words this corpus does not have and simply loses them.
+   */
+  thesaurus: readonly (readonly string[])[];
 }
 
 export const DEFAULT_CONFIG: CodecConfig = {
@@ -83,6 +88,7 @@ export const DEFAULT_CONFIG: CodecConfig = {
   maxPairs: 65535,
   maxSuffixLength: 4,
   anchors: [],
+  thesaurus: [],
 };
 
 /** left/right token ids of one grammar rule (a "4 byte block" in the ROM). */
@@ -98,6 +104,8 @@ export interface Container {
   stream: Uint8Array;
   /** Stream positions a reader may start from; empty when nothing was indexed. */
   anchors: Anchor[];
+  /** Synonym groups over lexicon rows; empty when the caller supplied none. */
+  thesaurus: Thesaurus;
 }
 
 export interface SectionSizes {
@@ -114,6 +122,8 @@ export interface SectionSizes {
   stream: number;
   /** The seek table, if the caller asked for one. */
   anchors: number;
+  /** The synonym groups, one byte even when there are none. */
+  thesaurus: number;
   total: number;
 }
 
@@ -768,6 +778,204 @@ export function readFrom(container: Container, anchor: Anchor, count: number): n
 }
 
 // ---------------------------------------------------------------------------
+// Thesaurus — synonym groups over lexicon rows
+//
+// After US 5,551,049 (Kaplan and Kay, filed August 1990), which is the same
+// problem on the same hardware generation: put a thesaurus on a handheld with a
+// few kilobytes to spend. Its three ideas are the three here.
+//
+//   * A word is not text, it is a dense fixed-width identifier — "slightly less
+//     than 2^14" of them in the patent, which is what a lexicon row already is.
+//     A group is a sequence of rows and costs nothing per member but a delta.
+//   * Group length is not stored per group. Groups are ordered by length, and a
+//     small class table says how many groups have each one, so the length of a
+//     group is implied by where it sits.
+//   * Inside a class the groups are sorted by their first row, "to enable
+//     efficient skipping": a reader looking for a row as the *head* of a group
+//     can stop as soon as the heads pass it, and skip the rest of the class.
+//
+// That last one is the asymmetry worth measuring. A relationship is stored once,
+// in the group its lowest row heads, so love -> adore costs nothing extra but
+// adore -> love is not written down anywhere. Finding a row as a head is a scan
+// that stops early; finding it as a member is the whole table, every time. One
+// direction is cheap because the other one was never stored.
+// ---------------------------------------------------------------------------
+
+/** Groups in storage order: by size, then by first row. */
+export type Thesaurus = number[][];
+
+/**
+ * Words to rows, dropping everything the lexicon does not have. A thesaurus for
+ * a corpus can only usefully hold words that corpus contains — the entry for a
+ * word that never occurs is a group member no query will ever reach.
+ */
+export function planThesaurus(
+  lexicon: readonly string[],
+  groups: readonly (readonly string[])[],
+): Thesaurus {
+  const row = new Map<string, number>();
+  lexicon.forEach((word, i) => {
+    if (!row.has(word)) row.set(word, i);
+  });
+
+  const planned: number[][] = [];
+  for (const group of groups) {
+    const rows = [...new Set(group.map((word) => row.get(word)).filter((r) => r !== undefined))] as number[];
+    if (rows.length < 2) continue;
+    rows.sort((a, b) => a - b);
+    planned.push(rows);
+  }
+  planned.sort((a, b) => a.length - b.length || a[0] - b[0]);
+  return planned;
+}
+
+/** The class table: one row per distinct group size, in size order. */
+function thesaurusClasses(groups: Thesaurus): { size: number; count: number; bytes: number }[] {
+  const classes: { size: number; count: number; bytes: number }[] = [];
+  let previousHead = 0;
+  for (const group of groups) {
+    let entry = classes[classes.length - 1];
+    if (entry === undefined || entry.size !== group.length) {
+      entry = { size: group.length, count: 0, bytes: 0 };
+      classes.push(entry);
+      previousHead = 0;
+    }
+    entry.count++;
+    entry.bytes += varintSize(group[0] - previousHead);
+    for (let i = 1; i < group.length; i++) entry.bytes += varintSize(group[i] - group[i - 1]);
+    previousHead = group[0];
+  }
+  return classes;
+}
+
+/** The whole section, ready to drop into either container. */
+export function encodeThesaurus(groups: Thesaurus): Uint8Array {
+  const w = new ByteWriter();
+  w.varint(groups.length);
+  if (groups.length === 0) return w.finish();
+
+  const classes = thesaurusClasses(groups);
+  w.varint(classes.length);
+  for (const entry of classes) {
+    w.varint(entry.size);
+    w.varint(entry.count);
+    w.varint(entry.bytes);
+  }
+  let previousHead = 0;
+  let size = -1;
+  for (const group of groups) {
+    if (group.length !== size) {
+      size = group.length;
+      previousHead = 0;
+    }
+    w.varint(group[0] - previousHead);
+    for (let i = 1; i < group.length; i++) w.varint(group[i] - group[i - 1]);
+    previousHead = group[0];
+  }
+  return w.finish();
+}
+
+export function decodeThesaurus(bytes: Uint8Array, offset: number): { groups: Thesaurus; next: number } {
+  const r = new ByteReader(bytes, offset);
+  const count = r.varint();
+  if (count === 0) return { groups: [], next: r.position };
+
+  const classCount = r.varint();
+  const classes: { size: number; count: number }[] = [];
+  for (let i = 0; i < classCount; i++) {
+    const size = r.varint();
+    const groupCount = r.varint();
+    r.varint(); // byte length, for a reader that means to skip the class
+    classes.push({ size, count: groupCount });
+  }
+
+  const groups: Thesaurus = [];
+  for (const entry of classes) {
+    let previousHead = 0;
+    for (let i = 0; i < entry.count; i++) {
+      const head = previousHead + r.varint();
+      const group = [head];
+      for (let member = 1; member < entry.size; member++) group.push(group[member - 1] + r.varint());
+      groups.push(group);
+      previousHead = head;
+    }
+  }
+  if (groups.length !== count) throw new CodecError(`thesaurus has ${groups.length} groups, header says ${count}`);
+  return { groups, next: r.position };
+}
+
+export function thesaurusBytes(groups: Thesaurus): number {
+  return encodeThesaurus(groups).length;
+}
+
+export interface SynonymLookup {
+  /** Rows in a group with the query row, the row itself excluded. */
+  rows: number[];
+  /** Groups this row heads. */
+  asHead: number;
+  /** Groups it is in without heading — the direction nothing points back from. */
+  asMember: number;
+  /** Bytes read to find every group holding it: the whole table. */
+  bytes: number;
+  /** Bytes read if only the head direction is wanted, stopping each class early. */
+  headBytes: number;
+}
+
+/**
+ * Every synonym of a row, and what finding them costs. The two byte counts are
+ * the point: `headBytes` is the direction the sort was chosen for, `bytes` is
+ * the one that was left to a scan.
+ */
+export function lookupSynonyms(groups: Thesaurus, row: number): SynonymLookup {
+  const found = new Set<number>();
+  let asHead = 0;
+  let asMember = 0;
+
+  const classes = thesaurusClasses(groups);
+  let header = varintSize(groups.length);
+  if (groups.length > 0) {
+    header += varintSize(classes.length);
+    for (const entry of classes) header += varintSize(entry.size) + varintSize(entry.count) + varintSize(entry.bytes);
+  }
+
+  let headBytes = header;
+  let previousHead = 0;
+  let size = -1;
+  let classDone = false;
+  for (const group of groups) {
+    if (group.length !== size) {
+      size = group.length;
+      previousHead = 0;
+      classDone = false;
+    }
+    let groupBytes = varintSize(group[0] - previousHead);
+    for (let i = 1; i < group.length; i++) groupBytes += varintSize(group[i] - group[i - 1]);
+    previousHead = group[0];
+
+    // The head scan stops at the first group whose head is past the row; the
+    // rest of the class is skipped on the byte length the class table carries.
+    if (!classDone) {
+      headBytes += groupBytes;
+      if (group[0] > row) classDone = true;
+    }
+
+    const at = group.indexOf(row);
+    if (at < 0) continue;
+    if (at === 0) asHead++;
+    else asMember++;
+    for (const member of group) if (member !== row) found.add(member);
+  }
+
+  return {
+    rows: [...found].sort((a, b) => a - b),
+    asHead,
+    asMember,
+    bytes: thesaurusBytes(groups),
+    headBytes,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Search — what it costs a format with no index at all
 //
 // RPR1 stores text and nothing else, so every query is a full scan. The naive
@@ -1394,9 +1602,10 @@ export function planLexiconSuffixes(
 const MAGIC = [0x52, 0x50, 0x52, 0x31]; // "RPR1"
 /**
  * 3 added the suffix table; 4 chains suffix codes; 5 codes lexicon headers;
- * 6 added the anchor table; 7 gave each anchor its terminal position.
+ * 6 added the anchor table; 7 gave each anchor its terminal position;
+ * 8 added the thesaurus.
  */
-const FORMAT_VERSION = 7;
+const FORMAT_VERSION = 8;
 const HEADER_BYTES = 18;
 
 class ByteWriter {
@@ -1430,8 +1639,13 @@ class ByteWriter {
 }
 
 class ByteReader {
-  private offset = 0;
-  constructor(private data: Uint8Array) {}
+  constructor(private data: Uint8Array, private offset = 0) {}
+  get position(): number {
+    return this.offset;
+  }
+  seek(offset: number): void {
+    this.offset = offset;
+  }
   u8(): number {
     return this.data[this.offset++];
   }
@@ -1478,6 +1692,7 @@ export function measure(container: Container, entries?: readonly LexiconEntry[])
   const rules = container.rules.length * 4;
   const stream = container.stream.length;
   const anchors = anchorTableBytes(container.anchors);
+  const thesaurus = thesaurusBytes(container.thesaurus);
   return {
     header: HEADER_BYTES,
     suffixTable,
@@ -1486,7 +1701,8 @@ export function measure(container: Container, entries?: readonly LexiconEntry[])
     rules,
     stream,
     anchors,
-    total: HEADER_BYTES + suffixTable + lexicon + escapeTable + rules + stream + anchors,
+    thesaurus,
+    total: HEADER_BYTES + suffixTable + lexicon + escapeTable + rules + stream + anchors + thesaurus,
   };
 }
 
@@ -1552,6 +1768,7 @@ export function serialize(container: Container): Uint8Array {
     previousTerm = anchor.term;
     previousOffset = anchor.offset;
   }
+  w.raw(encodeThesaurus(container.thesaurus));
   w.raw(container.stream);
   return w.finish();
 }
@@ -1657,7 +1874,9 @@ export function deserialize(bytes: Uint8Array): Container {
     anchorOffset += r.varint();
     anchors.push({ term: anchorTerm, offset: anchorOffset, skip: r.varint() });
   }
-  return { threshold, suffixes, lexicon, escapeTable, rules, anchors, stream: r.raw(streamLength) };
+  const { groups: thesaurus, next } = decodeThesaurus(bytes, r.position);
+  r.seek(next);
+  return { threshold, suffixes, lexicon, escapeTable, rules, anchors, thesaurus, stream: r.raw(streamLength) };
 }
 
 // ---------------------------------------------------------------------------
@@ -1703,7 +1922,8 @@ export function encode(text: string, config: Partial<CodecConfig> = {}): EncodeR
 
   const suffixes = planLexiconSuffixes(lexicon, { maxSuffixLength: cfg.maxSuffixLength });
   const anchors = planAnchors(sequence, rules, lexicon.length, escapeTable, threshold, cfg.anchors);
-  const container: Container = { threshold, suffixes, lexicon, escapeTable, rules, anchors, stream };
+  const thesaurus = planThesaurus(lexicon, cfg.thesaurus);
+  const container: Container = { threshold, suffixes, lexicon, escapeTable, rules, anchors, thesaurus, stream };
   const lexiconEntries = planLexiconEntries(lexicon, suffixes);
   const lexiconHeaderCodebook = planLexiconHeaderCodebook(lexiconEntries);
   const bytes = serialize(container);
@@ -1844,6 +2064,7 @@ export function sweepFromGrammar(
     escapeTable: [],
     rules,
     anchors: [],
+    thesaurus: [],
     stream: new Uint8Array(0),
   }).total;
   const highestId = lexicon.length + rules.length - 1;

@@ -19,6 +19,7 @@ encode(text)
   planLexiconEntries  lexicon   -> per-entry plan  shared prefix + literal + endings
   planLexiconHeaderCodebook     -> header table    repeated (shared, tag) pairs
   planAnchors         positions -> anchor table    where a reader may start
+  planThesaurus       word groups -> row groups     synonyms, filtered to the lexicon
   serialize           container -> Uint8Array      header + tables + lexicon + stream
 
 decode(bytes)
@@ -110,6 +111,47 @@ One more asymmetry worth stating: a term whose every spelling is one of YLK1's 2
 in its lexicon and has no chain, so YLK1 cannot search it at all and would have to fall back to the
 scan RPR1 does for everything. The patent is explicit that this is the trade — function words "are not
 search words" — and it is what buys the stream its size.
+
+### The thesaurus
+
+A double question mark on the Franklin machines asked for synonyms, and the constraint that shapes the
+answer is that a thesaurus has to fit beside everything else. `planThesaurus` takes groups as words,
+maps them to lexicon rows, and drops what the lexicon does not have — a thesaurus for a corpus can
+only usefully hold words that corpus contains. On the KJV that is 239 groups over 602 words in
+**1,006 bytes**, which is 0.1% of the container.
+
+The layout is [US 5,551,049](https://patents.google.com/patent/US5551049A/en) (Kaplan and Kay, filed
+August 1990), which is the same problem on the same hardware generation. Three ideas, all of which
+fall out of already having a lexicon:
+
+- **A word is a number.** The patent wants dense fixed-width identifiers, "slightly less than 2^14" of
+  them; a lexicon row already is one. A group member costs a delta, not a string.
+- **Length is not stored.** Groups are ordered by size, and a class table gives the count and byte
+  length of each size, so a group's length is implied by where it sits. That is a byte per group back.
+- **Heads ascend inside a class**, "to enable efficient skipping": a reader looking for a row as the
+  head of a group stops as soon as the heads pass it and skips the remainder of the class on the byte
+  length the class table carries.
+
+```
+varint groupCount
+varint classCount
+per class:  varint size, varint groups, varint bytes
+per group:  varint(head - previousHeadInClass), then size-1 member deltas
+```
+
+#### One direction, and what the other one would cost
+
+A relationship is written once, in the group headed by its lowest row. `love → charity` therefore
+costs nothing beyond the group, and `charity → love` is not stored anywhere. `lookupSynonyms` reports
+both numbers so the asymmetry is visible: `affection` heads its group and an early-exiting scan
+reaches it in 113 bytes, while `love` sits inside that group and finding it means reading all 1,006 —
+as does proving that a word is in no group at all.
+
+The obvious fix is a reverse index, one sorted (row → group) pair per member. On this table that is
+602 pairs at about 1.5 KB, which *more than doubles* the section to save at most 1 KB per query term,
+on a device where the query is already reading tens of kilobytes to walk the word list. Storing one
+direction is not a compromise here; it is the cheaper answer by a factor of the number of members per
+group, and it stays cheaper as long as the thesaurus is small enough to scan.
 
 ### Looking a word up
 
@@ -385,4 +427,4 @@ Full KJV, 4,137,743 bytes in, 85 single-byte codes, 29 suffix codes.
 
 Row 8 is the same container with an empty anchor table: two bytes for the entry count, which is all
 the addition costs a caller that does not want one. The 66 book anchors `build-kjv-preencoded.ts`
-writes bring `kjv-preencoded.js` to 958,837 bytes.
+writes bring `kjv-preencoded.js` to 958,837 bytes, and the 239-group thesaurus takes it to 959,843.

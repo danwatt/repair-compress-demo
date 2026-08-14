@@ -13,6 +13,15 @@ if (!textLine.startsWith(prefix) || !textLine.endsWith(";")) {
 
 const text = JSON.parse(textLine.slice(prefix.length, -1)) as string;
 
+// Synonym groups, as words. Both codecs map them onto their own lexicon rows
+// and drop whatever that lexicon does not have, so the source stays one list.
+const thesaurus = fs.readFileSync("thesaurus.txt", "utf8")
+  .split("\n")
+  .map((line) => line.trim())
+  .filter((line) => line.length > 0 && !line.startsWith("#"))
+  .map((line) => line.split(/\s+/));
+fs.writeFileSync("kjv-thesaurus.js", `window.KJV_THESAURUS = ${JSON.stringify(thesaurus)};\n`);
+
 // One anchor per book start, so demo-verse.html can seek the way the cartridge
 // would have: read the table, jump, and decode forward from there.
 const anchors: number[] = [];
@@ -22,7 +31,7 @@ tokenize(text).forEach((token, i) => {
 
 const knobs = { singleByteCount: 0x55, minPairCount: 3, maxPairs: 65535 };
 const started = performance.now();
-const result = encode(text, { ...knobs, anchors });
+const result = encode(text, { ...knobs, anchors, thesaurus });
 if (decode(result.bytes) !== text) throw new Error("pre-encoded KJV failed its round trip");
 const artifact = {
   config: knobs,
@@ -46,7 +55,8 @@ console.log(
   `${suffixes.length} lexicon endings in ${Math.round(performance.now() - suffixStarted)} ms -> kjv-suffixes.js`,
 );
 console.log(
-  `${anchors.length} book anchors cost ${result.stats.sizes.anchors} bytes`,
+  `${anchors.length} book anchors cost ${result.stats.sizes.anchors} bytes; ` +
+  `${result.container.thesaurus.length} synonym groups cost ${result.stats.sizes.thesaurus} bytes`,
 );
 console.log(
   `${result.stats.originalBytes} input bytes -> ${result.bytes.length} RPR1 bytes ` +

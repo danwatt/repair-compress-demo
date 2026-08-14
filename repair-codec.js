@@ -34,16 +34,19 @@ var RePair = (() => {
     buildLexicon: () => buildLexicon,
     decode: () => decode,
     decodeContainer: () => decodeContainer,
+    decodeThesaurus: () => decodeThesaurus,
     describeToken: () => describeToken,
     deserialize: () => deserialize,
     detokenize: () => detokenize,
     emitStream: () => emitStream,
     encode: () => encode,
+    encodeThesaurus: () => encodeThesaurus,
     expand: () => expand,
     expandToWords: () => expandToWords,
     isSeparator: () => isSeparator,
     lexiconEntrySizes: () => lexiconEntrySizes,
     lexiconEntryTag: () => lexiconEntryTag,
+    lookupSynonyms: () => lookupSynonyms,
     maxTokenIdFor: () => maxTokenIdFor,
     measure: () => measure,
     plainLexiconBytes: () => plainLexiconBytes,
@@ -51,6 +54,7 @@ var RePair = (() => {
     planLexiconEntries: () => planLexiconEntries,
     planLexiconHeaderCodebook: () => planLexiconHeaderCodebook,
     planLexiconSuffixes: () => planLexiconSuffixes,
+    planThesaurus: () => planThesaurus,
     readFrom: () => readFrom,
     readStream: () => readStream,
     repair: () => repair,
@@ -58,6 +62,7 @@ var RePair = (() => {
     serialize: () => serialize,
     sweepFromGrammar: () => sweepFromGrammar,
     sweepSingleByteCount: () => sweepSingleByteCount,
+    thesaurusBytes: () => thesaurusBytes,
     tokenize: () => tokenize
   });
   var SUFFIX_CODE_COUNT = 158 - 130 + 1;
@@ -66,7 +71,8 @@ var RePair = (() => {
     minPairCount: 3,
     maxPairs: 65535,
     maxSuffixLength: 4,
-    anchors: []
+    anchors: [],
+    thesaurus: []
   };
   var CodecError = class extends Error {
   };
@@ -439,6 +445,132 @@ var RePair = (() => {
     }
     return out;
   }
+  function planThesaurus(lexicon, groups) {
+    const row = /* @__PURE__ */ new Map();
+    lexicon.forEach((word, i) => {
+      if (!row.has(word)) row.set(word, i);
+    });
+    const planned = [];
+    for (const group of groups) {
+      const rows = [...new Set(group.map((word) => row.get(word)).filter((r) => r !== void 0))];
+      if (rows.length < 2) continue;
+      rows.sort((a, b) => a - b);
+      planned.push(rows);
+    }
+    planned.sort((a, b) => a.length - b.length || a[0] - b[0]);
+    return planned;
+  }
+  function thesaurusClasses(groups) {
+    const classes = [];
+    let previousHead = 0;
+    for (const group of groups) {
+      let entry = classes[classes.length - 1];
+      if (entry === void 0 || entry.size !== group.length) {
+        entry = { size: group.length, count: 0, bytes: 0 };
+        classes.push(entry);
+        previousHead = 0;
+      }
+      entry.count++;
+      entry.bytes += varintSize(group[0] - previousHead);
+      for (let i = 1; i < group.length; i++) entry.bytes += varintSize(group[i] - group[i - 1]);
+      previousHead = group[0];
+    }
+    return classes;
+  }
+  function encodeThesaurus(groups) {
+    const w = new ByteWriter();
+    w.varint(groups.length);
+    if (groups.length === 0) return w.finish();
+    const classes = thesaurusClasses(groups);
+    w.varint(classes.length);
+    for (const entry of classes) {
+      w.varint(entry.size);
+      w.varint(entry.count);
+      w.varint(entry.bytes);
+    }
+    let previousHead = 0;
+    let size = -1;
+    for (const group of groups) {
+      if (group.length !== size) {
+        size = group.length;
+        previousHead = 0;
+      }
+      w.varint(group[0] - previousHead);
+      for (let i = 1; i < group.length; i++) w.varint(group[i] - group[i - 1]);
+      previousHead = group[0];
+    }
+    return w.finish();
+  }
+  function decodeThesaurus(bytes, offset) {
+    const r = new ByteReader(bytes, offset);
+    const count = r.varint();
+    if (count === 0) return { groups: [], next: r.position };
+    const classCount = r.varint();
+    const classes = [];
+    for (let i = 0; i < classCount; i++) {
+      const size = r.varint();
+      const groupCount = r.varint();
+      r.varint();
+      classes.push({ size, count: groupCount });
+    }
+    const groups = [];
+    for (const entry of classes) {
+      let previousHead = 0;
+      for (let i = 0; i < entry.count; i++) {
+        const head = previousHead + r.varint();
+        const group = [head];
+        for (let member = 1; member < entry.size; member++) group.push(group[member - 1] + r.varint());
+        groups.push(group);
+        previousHead = head;
+      }
+    }
+    if (groups.length !== count) throw new CodecError(`thesaurus has ${groups.length} groups, header says ${count}`);
+    return { groups, next: r.position };
+  }
+  function thesaurusBytes(groups) {
+    return encodeThesaurus(groups).length;
+  }
+  function lookupSynonyms(groups, row) {
+    const found = /* @__PURE__ */ new Set();
+    let asHead = 0;
+    let asMember = 0;
+    const classes = thesaurusClasses(groups);
+    let header = varintSize(groups.length);
+    if (groups.length > 0) {
+      header += varintSize(classes.length);
+      for (const entry of classes) header += varintSize(entry.size) + varintSize(entry.count) + varintSize(entry.bytes);
+    }
+    let headBytes = header;
+    let previousHead = 0;
+    let size = -1;
+    let classDone = false;
+    for (const group of groups) {
+      if (group.length !== size) {
+        size = group.length;
+        previousHead = 0;
+        classDone = false;
+      }
+      let groupBytes = varintSize(group[0] - previousHead);
+      for (let i = 1; i < group.length; i++) groupBytes += varintSize(group[i] - group[i - 1]);
+      previousHead = group[0];
+      if (!classDone) {
+        headBytes += groupBytes;
+        if (group[0] > row) classDone = true;
+      }
+      const at = group.indexOf(row);
+      if (at < 0) continue;
+      if (at === 0) asHead++;
+      else asMember++;
+      for (const member of group) if (member !== row) found.add(member);
+    }
+    return {
+      rows: [...found].sort((a, b) => a - b),
+      asHead,
+      asMember,
+      bytes: thesaurusBytes(groups),
+      headBytes
+    };
+  }
   var BOUNDARY_BIT = 128;
   function searchStream(container, sets, boundaries) {
     if (sets.length > 7) throw new CodecError("searchStream takes at most seven sets");
@@ -776,7 +908,7 @@ var RePair = (() => {
     return chosen;
   }
   var MAGIC = [82, 80, 82, 49];
-  var FORMAT_VERSION = 7;
+  var FORMAT_VERSION = 8;
   var HEADER_BYTES = 18;
   var ByteWriter = class {
     constructor() {
@@ -810,9 +942,15 @@ var RePair = (() => {
     }
   };
   var ByteReader = class {
-    constructor(data) {
+    constructor(data, offset = 0) {
       __publicField(this, "data", data);
-      __publicField(this, "offset", 0);
+      __publicField(this, "offset", offset);
+    }
+    get position() {
+      return this.offset;
+    }
+    seek(offset) {
+      this.offset = offset;
     }
     u8() {
       return this.data[this.offset++];
@@ -857,6 +995,7 @@ var RePair = (() => {
     const rules = container.rules.length * 4;
     const stream = container.stream.length;
     const anchors = anchorTableBytes(container.anchors);
+    const thesaurus = thesaurusBytes(container.thesaurus);
     return {
       header: HEADER_BYTES,
       suffixTable,
@@ -865,7 +1004,8 @@ var RePair = (() => {
       rules,
       stream,
       anchors,
-      total: HEADER_BYTES + suffixTable + lexicon + escapeTable + rules + stream + anchors
+      thesaurus,
+      total: HEADER_BYTES + suffixTable + lexicon + escapeTable + rules + stream + anchors + thesaurus
     };
   }
   function serialize(container) {
@@ -926,6 +1066,7 @@ var RePair = (() => {
       previousTerm = anchor.term;
       previousOffset = anchor.offset;
     }
+    w.raw(encodeThesaurus(container.thesaurus));
     w.raw(container.stream);
     return w.finish();
   }
@@ -1023,7 +1164,9 @@ var RePair = (() => {
       anchorOffset += r.varint();
       anchors.push({ term: anchorTerm, offset: anchorOffset, skip: r.varint() });
     }
-    return { threshold, suffixes, lexicon, escapeTable, rules, anchors, stream: r.raw(streamLength) };
+    const { groups: thesaurus, next } = decodeThesaurus(bytes, r.position);
+    r.seek(next);
+    return { threshold, suffixes, lexicon, escapeTable, rules, anchors, thesaurus, stream: r.raw(streamLength) };
   }
   function maxTokenIdFor(threshold) {
     return (256 - threshold) * 256 - 1;
@@ -1055,7 +1198,8 @@ var RePair = (() => {
     const { stream, singleByteTokens, twoByteTokens } = emitStream(sequence, escapeTable, threshold);
     const suffixes = planLexiconSuffixes(lexicon, { maxSuffixLength: cfg.maxSuffixLength });
     const anchors = planAnchors(sequence, rules, lexicon.length, escapeTable, threshold, cfg.anchors);
-    const container = { threshold, suffixes, lexicon, escapeTable, rules, anchors, stream };
+    const thesaurus = planThesaurus(lexicon, cfg.thesaurus);
+    const container = { threshold, suffixes, lexicon, escapeTable, rules, anchors, thesaurus, stream };
     const lexiconEntries = planLexiconEntries(lexicon, suffixes);
     const lexiconHeaderCodebook = planLexiconHeaderCodebook(lexiconEntries);
     const bytes = serialize(container);
@@ -1148,6 +1292,7 @@ var RePair = (() => {
       escapeTable: [],
       rules,
       anchors: [],
+      thesaurus: [],
       stream: new Uint8Array(0)
     }).total;
     const highestId = lexicon.length + rules.length - 1;

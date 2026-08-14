@@ -43,6 +43,8 @@ var Ylk1 = (() => {
 
   // repair-codec.ts
   var SUFFIX_CODE_COUNT = 158 - 130 + 1;
+  var CodecError = class extends Error {
+  };
   var ENCODER = new TextEncoder();
   function sharedPrefix(a, b) {
     const n = Math.min(a.length, b.length);
@@ -98,6 +100,88 @@ var Ylk1 = (() => {
       }
     }
     return out;
+  }
+  function planThesaurus(lexicon, groups) {
+    const row = /* @__PURE__ */ new Map();
+    lexicon.forEach((word, i) => {
+      if (!row.has(word)) row.set(word, i);
+    });
+    const planned = [];
+    for (const group of groups) {
+      const rows = [...new Set(group.map((word) => row.get(word)).filter((r) => r !== void 0))];
+      if (rows.length < 2) continue;
+      rows.sort((a, b) => a - b);
+      planned.push(rows);
+    }
+    planned.sort((a, b) => a.length - b.length || a[0] - b[0]);
+    return planned;
+  }
+  function thesaurusClasses(groups) {
+    const classes = [];
+    let previousHead = 0;
+    for (const group of groups) {
+      let entry = classes[classes.length - 1];
+      if (entry === void 0 || entry.size !== group.length) {
+        entry = { size: group.length, count: 0, bytes: 0 };
+        classes.push(entry);
+        previousHead = 0;
+      }
+      entry.count++;
+      entry.bytes += varintSize(group[0] - previousHead);
+      for (let i = 1; i < group.length; i++) entry.bytes += varintSize(group[i] - group[i - 1]);
+      previousHead = group[0];
+    }
+    return classes;
+  }
+  function encodeThesaurus(groups) {
+    const w = new ByteWriter();
+    w.varint(groups.length);
+    if (groups.length === 0) return w.finish();
+    const classes = thesaurusClasses(groups);
+    w.varint(classes.length);
+    for (const entry of classes) {
+      w.varint(entry.size);
+      w.varint(entry.count);
+      w.varint(entry.bytes);
+    }
+    let previousHead = 0;
+    let size = -1;
+    for (const group of groups) {
+      if (group.length !== size) {
+        size = group.length;
+        previousHead = 0;
+      }
+      w.varint(group[0] - previousHead);
+      for (let i = 1; i < group.length; i++) w.varint(group[i] - group[i - 1]);
+      previousHead = group[0];
+    }
+    return w.finish();
+  }
+  function decodeThesaurus(bytes, offset) {
+    const r = new ByteReader(bytes, offset);
+    const count = r.varint();
+    if (count === 0) return { groups: [], next: r.position };
+    const classCount = r.varint();
+    const classes = [];
+    for (let i = 0; i < classCount; i++) {
+      const size = r.varint();
+      const groupCount = r.varint();
+      r.varint();
+      classes.push({ size, count: groupCount });
+    }
+    const groups = [];
+    for (const entry of classes) {
+      let previousHead = 0;
+      for (let i = 0; i < entry.count; i++) {
+        const head = previousHead + r.varint();
+        const group = [head];
+        for (let member = 1; member < entry.size; member++) group.push(group[member - 1] + r.varint());
+        groups.push(group);
+        previousHead = head;
+      }
+    }
+    if (groups.length !== count) throw new CodecError(`thesaurus has ${groups.length} groups, header says ${count}`);
+    return { groups, next: r.position };
   }
   var MODE_LITERAL = 0;
   var MODE_SUFFIX = 1;
@@ -360,22 +444,6 @@ var Ylk1 = (() => {
     }
     return chosen;
   }
-
-  // link-codec.ts
-  var ENCODER2 = new TextEncoder();
-  var DECODER = new TextDecoder();
-  var DEFAULT_LINK_CONFIG = {
-    directTermCount: 256,
-    split: false,
-    shortcutInterval: 0,
-    coder: "huffman",
-    contextDirectTerms: 0
-  };
-  var FUNCTION_WORDS = new Set(
-    "a an the and or but if for nor so yet of to in on at by with from into unto upon over under out off up down through against among between about after before while when where then than as that which who whom whose what this these those there here it its he him his she her they them their we us our you your ye thou thee thy thine i me my mine be am is are was were been being have has had hath having do does did doth done shall should will would may might must can could let not no all any both each every some such same other another one two more most much many few own very also even only ever never now still because since until though whether neither either".split(" ")
-  );
-  var LinkCodecError = class extends Error {
-  };
   var ByteWriter = class {
     constructor() {
       __publicField(this, "bytes", []);
@@ -408,6 +476,89 @@ var Ylk1 = (() => {
     }
   };
   var ByteReader = class {
+    constructor(data, offset = 0) {
+      __publicField(this, "data", data);
+      __publicField(this, "offset", offset);
+    }
+    get position() {
+      return this.offset;
+    }
+    seek(offset) {
+      this.offset = offset;
+    }
+    u8() {
+      return this.data[this.offset++];
+    }
+    u16() {
+      return this.u8() << 8 | this.u8();
+    }
+    u32() {
+      return (this.u8() << 24 | this.u8() << 16 | this.u8() << 8 | this.u8()) >>> 0;
+    }
+    varint() {
+      let result = 0;
+      let shift = 0;
+      for (; ; ) {
+        const b = this.u8();
+        result |= (b & 127) << shift;
+        if ((b & 128) === 0) return result >>> 0;
+        shift += 7;
+      }
+    }
+    raw(length) {
+      const slice = this.data.subarray(this.offset, this.offset + length);
+      this.offset += length;
+      return slice;
+    }
+  };
+
+  // link-codec.ts
+  var ENCODER2 = new TextEncoder();
+  var DECODER = new TextDecoder();
+  var DEFAULT_LINK_CONFIG = {
+    directTermCount: 256,
+    split: false,
+    shortcutInterval: 0,
+    coder: "huffman",
+    contextDirectTerms: 0
+  };
+  var FUNCTION_WORDS = new Set(
+    "a an the and or but if for nor so yet of to in on at by with from into unto upon over under out off up down through against among between about after before while when where then than as that which who whom whose what this these those there here it its he him his she her they them their we us our you your ye thou thee thy thine i me my mine be am is are was were been being have has had hath having do does did doth done shall should will would may might must can could let not no all any both each every some such same other another one two more most much many few own very also even only ever never now still because since until though whether neither either".split(" ")
+  );
+  var LinkCodecError = class extends Error {
+  };
+  var ByteWriter2 = class {
+    constructor() {
+      __publicField(this, "bytes", []);
+    }
+    u8(v) {
+      this.bytes.push(v & 255);
+    }
+    u16(v) {
+      this.bytes.push(v >> 8 & 255, v & 255);
+    }
+    u32(v) {
+      this.bytes.push(v >>> 24 & 255, v >>> 16 & 255, v >>> 8 & 255, v & 255);
+    }
+    varint(v) {
+      let x = v;
+      while (x >= 128) {
+        this.bytes.push(x & 127 | 128);
+        x >>>= 7;
+      }
+      this.bytes.push(x);
+    }
+    raw(data) {
+      for (const b of data) this.bytes.push(b);
+    }
+    get length() {
+      return this.bytes.length;
+    }
+    finish() {
+      return Uint8Array.from(this.bytes);
+    }
+  };
+  var ByteReader2 = class {
     constructor(data) {
       __publicField(this, "data", data);
       __publicField(this, "offset", 0);
@@ -823,7 +974,7 @@ var Ylk1 = (() => {
     return found;
   }
   var MAGIC = [89, 76, 75, 49];
-  var FORMAT_VERSION = 5;
+  var FORMAT_VERSION = 6;
   var HEADER_BYTES = 18;
   var hasLetter = (term) => /\p{L}/u.test(term);
   function chooseDirectTerms(frequency, firstSeen, budget) {
@@ -880,7 +1031,8 @@ var Ylk1 = (() => {
         };
       }
     }
-    const out = new ByteWriter();
+    const thesaurus = planThesaurus(searchWords, config.thesaurus ?? []);
+    const out = new ByteWriter2();
     for (const b of MAGIC) out.u8(b);
     out.u8(FORMAT_VERSION);
     out.u8((config.split ? 1 : 0) | (config.coder === "huffman" ? 2 : 0));
@@ -964,7 +1116,7 @@ var Ylk1 = (() => {
       }
     }
     const afterMaster = out.length;
-    const streamOut = new ByteWriter();
+    const streamOut = new ByteWriter2();
     const anchors = [];
     let nextAnchor = 0;
     if (config.coder === "huffman") {
@@ -1029,11 +1181,14 @@ var Ylk1 = (() => {
     }
     writeAnchors(out, anchors);
     const afterAnchors = out.length;
+    out.raw(encodeThesaurus(thesaurus));
+    const afterThesaurus = out.length;
     out.raw(streamOut.finish());
     const bytes = out.finish();
     return {
       bytes,
       anchors,
+      thesaurus,
       sizes: {
         header: afterHeader,
         directTable: afterDirect - afterHeader,
@@ -1042,7 +1197,8 @@ var Ylk1 = (() => {
         codeLengths: afterCodeLengths - afterFirst,
         master: afterMaster - afterCodeLengths,
         anchors: afterAnchors - afterMaster,
-        stream: bytes.length - afterAnchors,
+        thesaurus: afterThesaurus - afterAnchors,
+        stream: bytes.length - afterThesaurus,
         total: bytes.length
       },
       directTerms,
@@ -1103,7 +1259,7 @@ var Ylk1 = (() => {
     return (previous) => streamCodes[contextDirectTerms > 0 ? contextOf(previous, contextDirectTerms, directTerms.length) : 0];
   }
   function open(bytes) {
-    const input = new ByteReader(bytes);
+    const input = new ByteReader2(bytes);
     const prologue = readPrologue(input);
     const {
       split,
@@ -1142,6 +1298,8 @@ var Ylk1 = (() => {
       }
     }
     const anchors = readAnchors(input, anchorCount);
+    const { groups: thesaurus, next } = decodeThesaurus(bytes, input.position);
+    input.seek(next);
     const streamStart = input.position;
     if (coder === "huffman") {
       const bits = new BitReader(input);
@@ -1190,6 +1348,7 @@ var Ylk1 = (() => {
       entries,
       termIndexOf: Int32Array.from(termIndex),
       anchors,
+      thesaurus,
       streamStart,
       contextDirectTerms,
       streamLengths: streamCodes.length > 0 ? streamCodes.map((code) => code.lengths) : null,
@@ -1450,12 +1609,13 @@ var Ylk1 = (() => {
     return { terms, hops };
   }
   function readAnchored(bytes, anchorIndex, count, skip = 0) {
-    const input = new ByteReader(bytes);
+    const input = new ByteReader2(bytes);
     const prologue = readPrologue(input);
     if (prologue.split) throw new LinkCodecError("anchors need the unsplit stream");
     const anchors = readAnchors(input, prologue.anchorCount);
     const anchor = anchors[anchorIndex];
     if (anchor === void 0) throw new LinkCodecError(`no anchor ${anchorIndex}`);
+    input.seek(decodeThesaurus(bytes, input.position).next);
     const streamStart = input.position;
     const { directTerms, lexicon, rowBits, coder } = prologue;
     const D = directTerms.length;

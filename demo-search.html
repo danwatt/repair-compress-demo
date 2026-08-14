@@ -133,6 +133,10 @@ button[disabled] { opacity: .5; cursor: default; }
   color: var(--dmg-4); font-size: 12px;
 }
 .chip.direct { color: var(--ink-soft); border-style: dashed; }
+.chip.seed { color: var(--hot); border-color: var(--hot); }
+.chip.syn { color: var(--good); border-color: color-mix(in oklab, var(--good) 60%, var(--rule)); }
+.synonyms { margin-top: 8px; padding-left: 10px; border-left: 2px solid var(--rule); }
+.stage-note { font-size: 10px; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-soft); margin: 6px 0 2px; }
 .chip b { color: var(--hot); font-weight: 500; }
 .term-cost { display: flex; flex-wrap: wrap; gap: 4px 8px; margin-top: 8px; }
 .term-cost span {
@@ -199,6 +203,15 @@ footer a { color: var(--hot); }
   word against the words actually in the lexicon, matching regardless of case, and several terms were
   an AND over verses. <b>Two sets, and a verse has to contain a member of each.</b> That is the query
   this page runs, against both containers, counting every byte each one has to read to answer it.
+</p>
+<p class="thesis">
+  A <b>double</b> question mark went one step further: it looked the word up in a small on-device
+  thesaurus first, and expanded every synonym it found by the same stemming rule. So
+  <code>love??</code> becomes love, charity, affection, delight, and then each of those becomes its own
+  family of forms. The thesaurus here is 239 groups over words this corpus actually contains, in
+  <b>1,006 bytes</b> — laid out after <a href="https://patents.google.com/patent/US5551049A/en">US
+  5,551,049</a>, filed the same year as the link codec, which stores a group as a run of dense word
+  numbers and infers its length from where it sits.
 </p>
 <p class="thesis">
   The comparison is the whole point of YLK1's design. RPR1 stores text and only text, so it has no
@@ -306,7 +319,10 @@ footer a { color: var(--hot); }
   // Private-use sentinels, so highlighting survives detokenize and escaping.
   const OPEN = "\uE000";
   const CLOSE = "\uE001";
-  const EXAMPLES = ["God? love?", "Melchizedek", "shepherd? sheep?", "love? neighbour?", "the light?", "fear? LORD"];
+  const EXAMPLES = [
+    "God? love?", "love??", "fear?? LORD", "shepherd?? sheep?",
+    "Melchizedek", "wicked?? judgment?", "the light?",
+  ];
 
   function load(src) {
     return new Promise((resolve, reject) => {
@@ -432,20 +448,63 @@ footer a { color: var(--hot); }
       .map((raw) => raw.trim())
       .filter((raw) => raw.length > 0)
       .map((raw) => {
-        const wildcard = raw.endsWith("?") || raw.endsWith("*");
+        const marks = (raw.match(/[?*]+$/) || [""])[0].length;
         const word = raw.replace(/[?*]+$/, "");
-        return { raw, word, wildcard };
+        return { raw, word, wildcard: marks >= 1, synonyms: marks >= 2 };
       })
       .filter((term) => term.word.length > 0)
       .slice(0, 7);
+  }
+
+  /**
+   * The `??` stage: the query word's own rows, then every row grouped with them,
+   * back to words. What comes out is fed to the same stemming the single mark
+   * uses, so "love??" reaches "charity" and then "charitable" without either
+   * needing an entry of its own.
+   */
+  function synonymStage(container, word) {
+    const seeds = lookup(container.lexicon, word, false).rows;
+    const words = new Set();
+    let bytes = 0;
+    let headBytes = 0;
+    let asHead = 0;
+    let asMember = 0;
+    for (const row of seeds) {
+      const found = RePair.lookupSynonyms(container.thesaurus, row);
+      bytes = Math.max(bytes, found.bytes);
+      headBytes = Math.max(headBytes, found.headBytes);
+      asHead += found.asHead;
+      asMember += found.asMember;
+      for (const other of found.rows) words.add(container.lexicon[other]);
+    }
+    return { words: [...words], bytes, headBytes, asHead, asMember, seeds: seeds.length };
   }
 
   function expand(terms) {
     const rpr = state.rpr;
     const ylk = state.ylk;
     return terms.map((term) => {
-      const inText = lookup(rpr.container.lexicon, term.word, term.wildcard);
-      const inLexicon = lookup(ylk.container.lexicon, term.word, term.wildcard);
+      // Synonyms come from the container's own thesaurus, so the two codecs can
+      // disagree: a word YLK1 writes directly has no lexicon row to group.
+      const rprSyn = term.synonyms ? synonymStage(rpr.container, term.word) : null;
+      const ylkSyn = term.synonyms ? synonymStage(ylk.container, term.word) : null;
+      const roots = term.synonyms
+        ? [...new Set([term.word, ...rprSyn.words])]
+        : [term.word];
+
+      const merge = (container) => {
+        const rows = [];
+        let deepest = -1;
+        for (const root of roots) {
+          const found = lookup(container.lexicon, root, term.wildcard);
+          for (const row of found.rows) rows.push(row);
+          deepest = Math.max(deepest, found.deepest);
+        }
+        return { rows: [...new Set(rows)].sort((a, b) => a - b), deepest };
+      };
+
+      const inText = merge(rpr.container);
+      const inLexicon = merge(ylk.container);
       const searchable = new Set(inLexicon.rows.map((row) => ylk.container.lexicon[row]));
       const words = inText.rows.map((row) => ({
         word: rpr.container.lexicon[row],
@@ -454,6 +513,9 @@ footer a { color: var(--hot); }
       }));
       return {
         ...term,
+        roots,
+        rprSyn,
+        ylkSyn,
         words,
         ids: inText.rows,
         rows: inLexicon.rows,
@@ -625,11 +687,33 @@ footer a { color: var(--hot); }
         : set.words.slice(0, 60).map((w) =>
             `<span class="chip${w.searchable ? "" : " direct"}">${escapeHtml(w.word)}${w.searchable ? "" : " <b>·</b> direct"}</span>`).join("");
       const extra = set.words.length > 60 ? `<span class="chip">+${fmt(set.words.length - 60)} more</span>` : "";
-      const how = set.wildcard
-        ? `every lexicon entry starting with ${JSON.stringify(set.word)}, in any casing`
-        : `${JSON.stringify(set.word)} exactly, in any casing`;
+      const how = set.synonyms
+        ? `synonyms of ${JSON.stringify(set.word)}, then every lexicon entry starting with each of them`
+        : set.wildcard
+          ? `every lexicon entry starting with ${JSON.stringify(set.word)}, in any casing`
+          : `${JSON.stringify(set.word)} exactly, in any casing`;
+
+      const synonymStep = set.synonyms
+        ? `<div class="synonyms">
+             <div class="stage-note">thesaurus →</div>
+             <div class="chips">${set.roots.map((root, i) =>
+               `<span class="chip${i === 0 ? " seed" : " syn"}">${escapeHtml(root)}</span>`).join("")}</div>
+             <div class="term-cost">
+               <span>${set.rprSyn.asHead > 0 ? `heads its group — a head-only scan reaches it at <b>${fmt(set.rprSyn.headBytes)} B</b>`
+                 : set.rprSyn.asMember > 0 ? "in a group it does not head — nothing points back to it"
+                 : "in no group"}</span>
+               <span>thesaurus read <b>${kb(set.rprSyn.bytes)}</b> (the whole table)</span>
+               ${set.ylkSyn.words.length !== set.rprSyn.words.length
+                 ? `<span>YLK1 finds <b>${fmt(set.ylkSyn.words.length)}</b> of them — the rest are direct terms</span>`
+                 : ""}
+             </div>
+             <div class="stage-note">stemming →</div>
+           </div>`
+        : "";
+
       return `<div class="term-block">
         <div class="term-head"><span class="q">${escapeHtml(set.raw)}</span><span class="how">${escapeHtml(how)}</span></div>
+        ${synonymStep}
         <div class="chips">${chips}${extra}</div>
         <div class="term-cost">
           <span>words <b>${fmt(set.words.length)}</b></span>
@@ -671,10 +755,15 @@ footer a { color: var(--hot); }
   }
 
   function renderCost(sets, rprResult, ylkResult, rprLexBytes) {
+    const thesaurusBytes = {
+      rpr: sets.reduce((n, set) => n + (set.rprSyn ? set.rprSyn.bytes : 0), 0),
+      ylk: sets.reduce((n, set) => n + (set.ylkSyn ? set.ylkSyn.bytes : 0), 0),
+    };
     const rprParts = [
       { label: "rule table", bytes: rprResult.cost.rules, color: "#3d7fd9" },
       { label: "stream", bytes: rprResult.cost.stream, color: "#2a5aa8" },
       { label: "word list", bytes: rprLexBytes, color: "#008a63" },
+      { label: "thesaurus", bytes: thesaurusBytes.rpr, color: "#ffb454" },
     ];
     const rprTotal = rprParts.reduce((n, p) => n + p.bytes, 0);
 
@@ -683,6 +772,7 @@ footer a { color: var(--hot); }
       { label: "first-occurrence", bytes: ylkResult.cost.firstOccurrence, color: "#e8b923" },
       { label: "chains", bytes: ylkResult.cost.postings, color: "#ff6b9a" },
       { label: "verse resolution", bytes: ylkResult.cost.resolution, color: "#2a5aa8" },
+      { label: "thesaurus", bytes: thesaurusBytes.ylk, color: "#ffb454" },
     ];
     const ylkTotal = ylkParts.reduce((n, p) => n + p.bytes, 0);
     state.totals = { rpr: rprTotal, ylk: ylkTotal };
@@ -720,6 +810,17 @@ footer a { color: var(--hot); }
         </tr>`).join("");
 
     const chapterSaving = ylkResult.cost.resolution - ylkResult.cost.resolutionByChapter;
+    const synonymNote = sets.some((set) => set.synonyms)
+      ? `<br><br>The thesaurus is ${kb(state.thesaurusSize)} for ${fmt(state.rpr.container.thesaurus.length)} groups over
+         ${fmt(state.thesaurusMembers)} words, and a lookup reads <b>all of it</b>. That is the deliberate half of the
+         design: a relationship is written down once, in the group headed by its lowest row, so love → charity costs
+         nothing extra and charity → love is not stored at all. Finding a word as a head can stop early — the groups
+         inside a size class ascend, and the class table gives the byte length to skip the rest — but finding it as a
+         member means checking every group, and proving a word is in no group means the same thing. Storing the
+         reverse direction, one sorted (row → group) pair per member, would cost about
+         ${kb(state.reverseIndexBytes)} and ${state.reverseIndexBytes > state.thesaurusSize ? "more than double" : "grow"}
+         the section to save at most ${kb(state.thesaurusSize)} per query term.`
+      : "";
     const walkNote =
       `<br><br>Both codecs also pay ${kb(Math.max(rprLexBytes, ylkResult.cost.lexicon))} just to look the words up, and for the
        same reason: a front-coded word list has no index, so a lookup walks from the front of the section.
@@ -732,7 +833,7 @@ footer a { color: var(--hot); }
          has no answer for it at any price: to find the verses it would have to read the stream end to end, which is
          what RPR1 does for every query. The patent is explicit that this is the deal — "prepositions, conjunctions,
          common verbs and other words that are extremely common are not search words" — and it is what buys the rest
-         of the stream its size.` + walkNote;
+         of the stream its size.` + synonymNote + walkNote;
       return;
     }
     $("cost-note").innerHTML =
@@ -749,7 +850,7 @@ footer a { color: var(--hot); }
        ${kb(ylkResult.cost.resolution)}. A chapter table instead — ${fmt(state.chapterAnchors.length)} entries,
        about ${kb(state.chapterAnchorBytes)} — would bring that to ${kb(ylkResult.cost.resolutionByChapter)},
        ${chapterSaving > 0 ? `saving ${kb(chapterSaving)} on this query` : "no better on this query"}. Granularity
-       of the anchor table, not the link format, is what prices a reference.` + walkNote;
+       of the anchor table, not the link format, is what prices a reference.` + synonymNote + walkNote;
   }
 
   function renderMap(rprResult, ylkResult, positionsSample) {
@@ -904,6 +1005,7 @@ footer a { color: var(--hot); }
       if (!window.KJV_TEXT) await load("kjv-data.js");
       if (!window.KJV_PREENCODED) await load("kjv-preencoded.js");
       if (!window.KJV_SUFFIXES) await load("kjv-suffixes.js");
+      if (!window.KJV_THESAURUS) await load("kjv-thesaurus.js");
 
       $("status").textContent = "tokenizing…";
       await new Promise((r) => setTimeout(r, 0));
@@ -946,6 +1048,7 @@ footer a { color: var(--hot); }
         contextDirectTerms: 128,
         suffixes: window.KJV_SUFFIXES,
         anchors,
+        thesaurus: window.KJV_THESAURUS,
       });
       const linkContainer = Ylk1.open(encoded.bytes);
       const cost = Ylk1.measureStream(linkContainer);
@@ -975,6 +1078,22 @@ footer a { color: var(--hot); }
         const previous = i === 0 ? 0 : chapterAnchors[i - 1];
         const varint = (v) => (v < 0x80 ? 1 : v < 0x4000 ? 2 : v < 0x200000 ? 3 : 4);
         return total + varint(term - previous) + varint(Math.round(bitAt[term] - (i === 0 ? 0 : bitAt[previous]))) + 1;
+      }, 0);
+
+      const thesaurus = state.rpr.container.thesaurus;
+      state.thesaurusSize = RePair.thesaurusBytes(thesaurus);
+      state.thesaurusMembers = thesaurus.reduce((n, group) => n + group.length, 0);
+      const varint = (v) => (v < 0x80 ? 1 : v < 0x4000 ? 2 : 3);
+      const members = [];
+      thesaurus.forEach((group, index) => {
+        for (const row of group) members.push([row, index]);
+      });
+      members.sort((a, b) => a[0] - b[0]);
+      let previousRow = 0;
+      state.reverseIndexBytes = members.reduce((total, [row, index]) => {
+        const bytes = varint(row - previousRow) + varint(index);
+        previousRow = row;
+        return total + bytes;
       }, 0);
 
       $("run").addEventListener("click", run);

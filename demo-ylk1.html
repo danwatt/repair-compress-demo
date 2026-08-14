@@ -720,6 +720,7 @@ And God said, Let the waters under the heaven be gathered together unto one plac
     directTable: "var(--sym-direct)",
     codeLengths: "var(--warn)",
     anchors: "var(--dmg-3)",
+    thesaurus: "var(--warn)",
     header: "var(--rule)",
   };
   const SECTION_LABELS = {
@@ -730,6 +731,7 @@ And God said, Let the waters under the heaven be gathered together unto one plac
     directTable: "direct terms",
     codeLengths: "code lengths",
     anchors: "book table",
+    thesaurus: "thesaurus",
     header: "header",
   };
 
@@ -738,7 +740,7 @@ And God said, Let the waters under the heaven be gathered together unto one plac
     const sizes = result.sizes;
     const ratio = sizes.total / originalBytes;
 
-    const order = ["stream", "master", "lexicon", "firstOccurrence", "directTable", "codeLengths", "anchors", "header"];
+    const order = ["stream", "master", "lexicon", "firstOccurrence", "directTable", "codeLengths", "anchors", "thesaurus", "header"];
     const bar = order
       .filter((k) => sizes[k] > 0)
       .map((k) => {
