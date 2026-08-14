@@ -31,9 +31,19 @@
 //     Huffman code over the entry alphabet. The varint is the honest floor; the
 //     Huffman is the fair comparison, since repair-codec.ts also spends its
 //     cheapest codes on its most frequent tokens.
+//   * The lexicon is stored with repair-codec.ts's suffix table and header
+//     codebook rather than plain front coding. That machinery is orthogonal to
+//     the linking scheme — it is how a word list is packed, not how the text
+//     refers to it — so sharing it keeps the comparison between the two codecs
+//     about the streams.
 // ---------------------------------------------------------------------------
 
-import { tokenize, detokenize } from "./repair-codec";
+import {
+  tokenize, detokenize,
+  planLexiconSuffixes, planLexiconEntries, planLexiconHeaderCodebook, lexiconEntryTag,
+  LEXICON_MODE, LEXICON_CHAIN_MORE, MAX_LEXICON_HEADER_CODES,
+  type LexiconEntry, type LexiconHeader,
+} from "./repair-codec";
 
 const ENCODER = new TextEncoder();
 const DECODER = new TextDecoder();
@@ -71,6 +81,14 @@ export interface LinkConfig {
   shortcutInterval: number;
   /** How stream symbols are packed. */
   coder: Coder;
+  /**
+   * The ending table for the lexicon. Planning it is an exhaustive search over
+   * candidate endings — by far the slowest part of an encode, and it depends
+   * only on the word list, not on any other knob. Pass one from `planSuffixes`
+   * to reuse it across encodes of the same corpus; omit it to plan the exact
+   * best table for this configuration's lexicon.
+   */
+  suffixes?: readonly string[];
 }
 
 export const DEFAULT_LINK_CONFIG: LinkConfig = {
@@ -249,6 +267,9 @@ const sharedPrefix = (a: Uint8Array, b: Uint8Array): number => {
   return i;
 };
 
+/** Width of a chain position for a chain of the given length. */
+const chainPositionBits = (linkedCount: number): number => Math.max(1, bitWidth(Math.max(linkedCount - 1, 1)));
+
 /** Bits needed to hold v, so bitWidth(1) is 1 and bitWidth(0) is 0. */
 const bitWidth = (v: number): number => {
   let w = 0;
@@ -284,6 +305,131 @@ function readWordList(input: ByteReader): string[] {
     const bytes = new Uint8Array(shared + suffixLength);
     bytes.set(previous.subarray(0, shared));
     bytes.set(input.raw(suffixLength), shared);
+    words.push(DECODER.decode(bytes));
+    previous = bytes;
+  }
+  return words;
+}
+
+// ---------------------------------------------------------------------------
+// Lexicon block
+//
+// The search lexicon is sorted, so it front-codes well, and it is full of words
+// that differ only in their ending. repair-codec.ts already solves that: a small
+// table of common endings, a two-bit mode in the entry's length varint saying
+// whether the rest is spelled out or coded, and a codebook over the repeated
+// (shared-prefix, tag) headers. The planners and the tag encoding are imported
+// rather than reimplemented, so both codecs pack a word list the same way and
+// neither wins the comparison on this.
+//
+// The direct-term table keeps the plain writer above: it is ordered by stream
+// code rather than alphabetically, so there is no shared-prefix structure to
+// exploit and no ending table would pay for itself over 254 function words.
+// ---------------------------------------------------------------------------
+
+function writeLexiconBlock(out: ByteWriter, words: string[], supplied?: readonly string[]): void {
+  const suffixes = supplied ?? planLexiconSuffixes(words);
+  const entries = planLexiconEntries(words, suffixes);
+  const codebook = planLexiconHeaderCodebook(entries);
+  const codeOf = new Map<string, number>();
+  codebook.forEach(([shared, tag], i) => codeOf.set(`${shared},${tag}`, i));
+
+  out.varint(words.length);
+  if (suffixes.length > 0xff) throw new LinkCodecError("the suffix table holds at most 255 codes");
+  out.u8(suffixes.length);
+  out.u8(codebook.length);
+  for (const suffix of suffixes) {
+    const bytes = ENCODER.encode(suffix);
+    out.varint(bytes.length);
+    out.raw(bytes);
+  }
+  for (const [shared, tag] of codebook) {
+    out.varint(shared);
+    out.varint(tag);
+  }
+  for (const entry of entries) {
+    const tag = lexiconEntryTag(entry);
+    const code = codeOf.get(`${entry.shared},${tag}`);
+    if (code === undefined) {
+      out.varint(entry.shared + codebook.length);
+      out.varint(tag);
+    } else {
+      out.varint(code);
+    }
+    if (entry.codes.length > 1) {
+      for (let i = 1; i < entry.codes.length; i++) {
+        out.u8(entry.codes[i] | (i < entry.codes.length - 1 ? LEXICON_CHAIN_MORE : 0));
+      }
+    } else {
+      out.raw(entry.literal);
+      if (entry.codes.length === 1 && entry.literal.length > 0) out.u8(entry.codes[0]);
+    }
+  }
+}
+
+function readLexiconBlock(input: ByteReader): string[] {
+  const count = input.varint();
+  const suffixCount = input.u8();
+  const codebookSize = input.u8();
+  if (codebookSize > MAX_LEXICON_HEADER_CODES) {
+    throw new LinkCodecError(`lexicon header table has ${codebookSize} codes; maximum is ${MAX_LEXICON_HEADER_CODES}`);
+  }
+  const suffixes: Uint8Array[] = [];
+  for (let i = 0; i < suffixCount; i++) suffixes.push(input.raw(input.varint()));
+  const codebook: LexiconHeader[] = [];
+  for (let i = 0; i < codebookSize; i++) codebook.push([input.varint(), input.varint()]);
+
+  const ending = (code: number, at: number): Uint8Array => {
+    if (code >= suffixes.length) throw new LinkCodecError(`lexicon entry ${at} uses undefined suffix code ${code}`);
+    return suffixes[code];
+  };
+
+  const words: string[] = [];
+  let previous = new Uint8Array(0);
+  for (let i = 0; i < count; i++) {
+    const header = input.varint();
+    let shared: number;
+    let tag: number;
+    if (header < codebookSize) {
+      [shared, tag] = codebook[header];
+    } else {
+      shared = header - codebookSize;
+      tag = input.varint();
+    }
+    if (shared > previous.length) {
+      throw new LinkCodecError(`lexicon entry ${i} shares ${shared} bytes with a ${previous.length}-byte entry`);
+    }
+
+    const mode = tag & 3;
+    const n = tag >>> 2;
+    let literal = new Uint8Array(0);
+    let endings: Uint8Array[] = [];
+    if (mode === LEXICON_MODE.LITERAL) {
+      literal = input.raw(n);
+    } else if (mode === LEXICON_MODE.SUFFIX) {
+      endings = [ending(n, i)];
+    } else if (mode === LEXICON_MODE.BOTH) {
+      literal = input.raw(n);
+      endings = [ending(input.u8(), i)];
+    } else {
+      endings = [ending(n, i)];
+      for (;;) {
+        const code = input.u8();
+        endings.push(ending(code & ~LEXICON_CHAIN_MORE, i));
+        if ((code & LEXICON_CHAIN_MORE) === 0) break;
+      }
+    }
+
+    let length = shared + literal.length;
+    for (const end of endings) length += end.length;
+    const bytes = new Uint8Array(length);
+    bytes.set(previous.subarray(0, shared));
+    bytes.set(literal, shared);
+    let at = shared + literal.length;
+    for (const end of endings) {
+      bytes.set(end, at);
+      at += end.length;
+    }
     words.push(DECODER.decode(bytes));
     previous = bytes;
   }
@@ -440,11 +586,18 @@ function readCodeLengths(input: ByteReader): number[] {
 // spending a sign bit on every entry in the file.
 //
 // The Huffman coder uses the same cases as symbols, except that a delta becomes
-// its bit width (a symbol) plus its low bits (raw). That bucketing is what makes
-// the coder practical: the KJV has 44,008 distinct delta values but only 21
-// distinct widths. It also fixes a real flaw in the varint layout, where a
-// larger direct table pushes every delta up the value space and can cost more
-// than the direct terms save.
+// a bucket (a symbol) plus its low bits (raw). That bucketing is what makes the
+// coder practical: the KJV has 44,008 distinct delta values but only 21 distinct
+// bit widths. It also fixes a real flaw in the varint layout, where a larger
+// direct table pushes every delta up the value space and can cost more than the
+// direct terms save.
+//
+// A bucket is a bit width split into DELTA_SUBBUCKETS equal parts, not the bare
+// width. Deltas are not uniform inside an octave — short gaps dominate — so the
+// extra resolution lets the Huffman code see that shape instead of spending
+// uniform payload bits on it. Measured on the KJV: one part per octave costs
+// 1,101,551 bytes, two 1,100,981, four 1,100,776, eight 1,100,799 — the code
+// table starts outgrowing the gain past four.
 // ---------------------------------------------------------------------------
 
 const enum EntryKind {
@@ -464,16 +617,50 @@ interface Entry {
   shortcutRow: number;
 }
 
-const DELTA_BUCKETS = 32;
+/** Parts per octave. Must be a power of two; the bucket math shifts by its log2. */
+const DELTA_SUBBUCKETS = 4;
+const DELTA_SUBBUCKET_BITS = 2;
+const DELTA_BUCKETS = 32 * DELTA_SUBBUCKETS;
+/** Enough bits to name any bucket, for the shortcut signal's out-of-band delta. */
+const DELTA_BUCKET_BITS = 7;
 const PLACEHOLDER_BYTE = 0xff;
+
+/** Which bucket a delta of at least 1 falls in. */
+function deltaBucket(delta: number): number {
+  const width = bitWidth(delta);
+  const base = 1 << (width - 1);
+  const part = ((delta - base) * DELTA_SUBBUCKETS) >>> (width - 1);
+  return (width - 1) * DELTA_SUBBUCKETS + part;
+}
+
+/** Bits left to write raw once the bucket is known. */
+function deltaPayloadBits(delta: number): number {
+  return Math.max(0, bitWidth(delta) - 1 - DELTA_SUBBUCKET_BITS);
+}
+
+function writeDelta(bits: BitWriter, delta: number): void {
+  const payload = deltaPayloadBits(delta);
+  if (payload > 0) bits.write(delta & ((1 << payload) - 1), payload);
+}
+
+/** Rebuild a delta from its bucket, reading the payload bits it implies. */
+function readDelta(bits: BitReader, bucket: number): number {
+  const width = (bucket / DELTA_SUBBUCKETS | 0) + 1;
+  const part = bucket % DELTA_SUBBUCKETS;
+  const base = 1 << (width - 1);
+  const floor = base + ((part * base) >>> DELTA_SUBBUCKET_BITS);
+  const payload = Math.max(0, width - 1 - DELTA_SUBBUCKET_BITS);
+  return payload > 0 ? floor | bits.read(payload) : floor;
+}
 
 // ---------------------------------------------------------------------------
 // Encode
 // ---------------------------------------------------------------------------
 
 const MAGIC = [0x59, 0x4c, 0x4b, 0x31]; // "YLK1"
-const FORMAT_VERSION = 1;
-const HEADER_BYTES = 12;
+/** 2 packed the lexicon with a suffix table and bit-packed the first-occurrence array. */
+const FORMAT_VERSION = 2;
+const HEADER_BYTES = 16;
 
 const hasLetter = (term: string): boolean => /\p{L}/u.test(term);
 
@@ -492,6 +679,17 @@ function chooseDirectTerms(frequency: Map<string, number>, firstSeen: Map<string
     .filter((t) => hasLetter(t) && FUNCTION_WORDS.has(t.toLowerCase()))
     .sort(byFrequency);
   return [...symbols, ...functionWords].slice(0, budget);
+}
+
+/**
+ * The ending table for every word in `text` that could ever reach the lexicon.
+ * A superset of any one configuration's lexicon, so the result is reusable as
+ * `LinkConfig.suffixes` no matter where the direct-term knob sits.
+ */
+export function planSuffixes(text: string): string[] {
+  const words = [...new Set(tokenize(text))].filter(hasLetter);
+  words.sort((a, b) => compareBytes(ENCODER.encode(a), ENCODER.encode(b)));
+  return planLexiconSuffixes(words);
 }
 
 export function encode(text: string, config: LinkConfig = DEFAULT_LINK_CONFIG): LinkEncodeResult {
@@ -555,24 +753,32 @@ export function encode(text: string, config: LinkConfig = DEFAULT_LINK_CONFIG): 
   out.u8(0);
   out.u8(0);
   out.u32(terms.length);
+  out.u32(linkedTerm.length);
   if (out.length !== HEADER_BYTES) throw new LinkCodecError(`header is ${out.length} bytes, expected ${HEADER_BYTES}`);
 
   const afterHeader = out.length;
   writeWordList(out, directTerms);
   const afterDirect = out.length;
-  writeWordList(out, searchWords);
+  writeLexiconBlock(out, searchWords, config.suffixes);
   const afterLexicon = out.length;
 
   // The third type of linking signal: lexicon row to first occurrence. The
-  // lexicon is in alphabetical rather than textual order, so these do not
-  // delta-code usefully and are written flat.
-  for (const position of firstOccurrence) out.varint(position);
+  // lexicon is alphabetical rather than textual, so these are scattered over the
+  // chain and neither sort nor delta-code usefully. They are, however, all
+  // bounded by the chain length, so a fixed-width bit field beats a varint: no
+  // value pays for a continuation bit it does not need.
+  const positionBits = chainPositionBits(linkedTerm.length);
+  {
+    const bits = new BitWriter(out);
+    for (const position of firstOccurrence) bits.write(position, positionBits);
+    bits.flush();
+  }
   const afterFirst = out.length;
 
   const rowBits = Math.max(1, bitWidth(Math.max(searchWords.length - 1, 1)));
   const TERMINAL = directTerms.length;
   const SHORTCUT = directTerms.length + 1;
-  const deltaSymbol = (delta: number) => directTerms.length + 2 + bitWidth(delta) - 1;
+  const deltaSymbol = (delta: number) => directTerms.length + 2 + deltaBucket(delta);
 
   let streamCode: HuffmanCode | null = null;
   let masterCode: HuffmanCode | null = null;
@@ -635,13 +841,11 @@ export function encode(text: string, config: LinkConfig = DEFAULT_LINK_CONFIG): 
       } else if (entry.shortcutRow >= 0) {
         writeCode(bits, streamCode!, SHORTCUT);
         bits.write(entry.shortcutRow, rowBits);
-        const width = bitWidth(entry.value);
-        bits.write(width, 5);
-        bits.write(entry.value & ((1 << (width - 1)) - 1), width - 1);
+        bits.write(deltaBucket(entry.value), DELTA_BUCKET_BITS);
+        writeDelta(bits, entry.value);
       } else {
         writeCode(bits, streamCode!, deltaSymbol(entry.value));
-        const width = bitWidth(entry.value);
-        bits.write(entry.value & ((1 << (width - 1)) - 1), width - 1);
+        writeDelta(bits, entry.value);
       }
     }
     bits.flush();
@@ -727,11 +931,17 @@ export function open(bytes: Uint8Array): LinkContainer {
   input.u8();
   input.u8();
   const termCount = input.u32();
+  const linkedCount = input.u32();
 
   const directTerms = readWordList(input);
-  const lexicon = readWordList(input);
+  const lexicon = readLexiconBlock(input);
   const firstOccurrence: number[] = [];
-  for (let i = 0; i < lexicon.length; i++) firstOccurrence.push(input.varint());
+  {
+    const positionBits = chainPositionBits(linkedCount);
+    const bits = new BitReader(input);
+    for (let i = 0; i < lexicon.length; i++) firstOccurrence.push(bits.read(positionBits));
+    bits.align();
+  }
 
   const rowBits = Math.max(1, bitWidth(Math.max(lexicon.length - 1, 1)));
   const TERMINAL = directTerms.length;
@@ -833,15 +1043,9 @@ function continueHuffmanEntry(
   if (symbol === terminal) return { kind: EntryKind.Terminal, value: bits.read(rowBits), shortcutRow: -1 };
   if (symbol === shortcut) {
     const row = bits.read(rowBits);
-    const width = bits.read(5);
-    return { kind: EntryKind.Delta, value: readDelta(bits, width), shortcutRow: row };
+    return { kind: EntryKind.Delta, value: readDelta(bits, bits.read(DELTA_BUCKET_BITS)), shortcutRow: row };
   }
-  return { kind: EntryKind.Delta, value: readDelta(bits, symbol - shortcut), shortcutRow: -1 };
-}
-
-/** The leading one is implied by the width, so only width - 1 bits are stored. */
-function readDelta(bits: BitReader, width: number): number {
-  return width === 1 ? 1 : (1 << (width - 1)) | bits.read(width - 1);
+  return { kind: EntryKind.Delta, value: readDelta(bits, symbol - shortcut - 1), shortcutRow: -1 };
 }
 
 // ---------------------------------------------------------------------------

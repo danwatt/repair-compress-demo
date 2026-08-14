@@ -659,7 +659,7 @@ export const MAX_LEXICON_HEADER_CODES = 0x7f;
 /** One decoded lexicon-entry header: shared prefix length and tagged payload. */
 export type LexiconHeader = readonly [shared: number, tag: number];
 
-function lexiconEntryTag(entry: LexiconEntry): number {
+export function lexiconEntryTag(entry: LexiconEntry): number {
   if (entry.codes.length > 1) return (entry.codes[0] << 2) | MODE_CHAIN;
   if (entry.codes.length === 1 && entry.literal.length === 0) {
     return (entry.codes[0] << 2) | MODE_SUFFIX;
@@ -667,6 +667,18 @@ function lexiconEntryTag(entry: LexiconEntry): number {
   if (entry.codes.length === 1) return (entry.literal.length << 2) | MODE_BOTH;
   return (entry.literal.length << 2) | MODE_LITERAL;
 }
+
+/**
+ * The four entry modes and the chain continuation bit, exported so link-codec.ts
+ * can write the same lexicon block without a second copy of the encoding.
+ */
+export const LEXICON_MODE = {
+  LITERAL: MODE_LITERAL,
+  SUFFIX: MODE_SUFFIX,
+  BOTH: MODE_BOTH,
+  CHAIN: MODE_CHAIN,
+} as const;
+export const LEXICON_CHAIN_MORE = CHAIN_MORE;
 
 const lexiconHeaderKey = (shared: number, tag: number): string => `${shared},${tag}`;
 

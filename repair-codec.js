@@ -24,6 +24,8 @@ var RePair = (() => {
   __export(repair_codec_exports, {
     CodecError: () => CodecError,
     DEFAULT_CONFIG: () => DEFAULT_CONFIG,
+    LEXICON_CHAIN_MORE: () => LEXICON_CHAIN_MORE,
+    LEXICON_MODE: () => LEXICON_MODE,
     MAX_LEXICON_HEADER_CODES: () => MAX_LEXICON_HEADER_CODES,
     SUFFIX_CODE_COUNT: () => SUFFIX_CODE_COUNT,
     assignSingleBytes: () => assignSingleBytes,
@@ -38,6 +40,7 @@ var RePair = (() => {
     expand: () => expand,
     expandToWords: () => expandToWords,
     isSeparator: () => isSeparator,
+    lexiconEntryTag: () => lexiconEntryTag,
     maxTokenIdFor: () => maxTokenIdFor,
     measure: () => measure,
     plainLexiconBytes: () => plainLexiconBytes,
@@ -359,6 +362,13 @@ var RePair = (() => {
     if (entry.codes.length === 1) return entry.literal.length << 2 | MODE_BOTH;
     return entry.literal.length << 2 | MODE_LITERAL;
   }
+  var LEXICON_MODE = {
+    LITERAL: MODE_LITERAL,
+    SUFFIX: MODE_SUFFIX,
+    BOTH: MODE_BOTH,
+    CHAIN: MODE_CHAIN
+  };
+  var LEXICON_CHAIN_MORE = CHAIN_MORE;
   var lexiconHeaderKey = (shared, tag) => `${shared},${tag}`;
   function planLexiconHeaderCodebook(entries) {
     const byKey = /* @__PURE__ */ new Map();

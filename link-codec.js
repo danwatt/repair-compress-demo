@@ -30,6 +30,7 @@ var Ylk1 = (() => {
     decode: () => decode,
     encode: () => encode,
     open: () => open,
+    planSuffixes: () => planSuffixes,
     read: () => read,
     resolve: () => resolve,
     search: () => search,
@@ -39,6 +40,14 @@ var Ylk1 = (() => {
   // repair-codec.ts
   var SUFFIX_CODE_COUNT = 158 - 130 + 1;
   var ENCODER = new TextEncoder();
+  function sharedPrefix(a, b) {
+    const n = Math.min(a.length, b.length);
+    let i = 0;
+    while (i < n && a[i] === b[i]) i++;
+    return i;
+  }
+  var varintSize = (v) => v < 128 ? 1 : v < 16384 ? 2 : 3;
+  var utf8Length = (s) => ENCODER.encode(s).length;
   var EMPTY = new Uint8Array(0);
   var TOKEN_RE = /\s+|[\p{L}\p{N}]+(?:['\u2019][\p{L}\p{N}]+)*|[^\s\p{L}\p{N}]/gu;
   var ATTACHED_PUNCTUATION = /* @__PURE__ */ new Set([",", ".", ";", ":", "!", "?"]);
@@ -85,6 +94,262 @@ var Ylk1 = (() => {
       }
     }
     return out;
+  }
+  var MODE_LITERAL = 0;
+  var MODE_SUFFIX = 1;
+  var MODE_BOTH = 2;
+  var MODE_CHAIN = 3;
+  var CHAIN_MORE = 128;
+  var MAX_CHAINABLE_CODE = 127;
+  var MAX_LEXICON_HEADER_CODES = 127;
+  function lexiconEntryTag(entry) {
+    if (entry.codes.length > 1) return entry.codes[0] << 2 | MODE_CHAIN;
+    if (entry.codes.length === 1 && entry.literal.length === 0) {
+      return entry.codes[0] << 2 | MODE_SUFFIX;
+    }
+    if (entry.codes.length === 1) return entry.literal.length << 2 | MODE_BOTH;
+    return entry.literal.length << 2 | MODE_LITERAL;
+  }
+  var LEXICON_MODE = {
+    LITERAL: MODE_LITERAL,
+    SUFFIX: MODE_SUFFIX,
+    BOTH: MODE_BOTH,
+    CHAIN: MODE_CHAIN
+  };
+  var LEXICON_CHAIN_MORE = CHAIN_MORE;
+  var lexiconHeaderKey = (shared, tag) => `${shared},${tag}`;
+  function planLexiconHeaderCodebook(entries) {
+    const byKey = /* @__PURE__ */ new Map();
+    for (const entry of entries) {
+      const tag = lexiconEntryTag(entry);
+      const key = lexiconHeaderKey(entry.shared, tag);
+      const candidate = byKey.get(key);
+      if (candidate) candidate.count++;
+      else byKey.set(key, { shared: entry.shared, tag, count: 1 });
+    }
+    const candidates = [...byKey.values()];
+    let best = [];
+    let bestBytes = Infinity;
+    const limit = Math.min(MAX_LEXICON_HEADER_CODES, candidates.length);
+    for (let count = 0; count <= limit; count++) {
+      const ranked = candidates.map((candidate) => {
+        const rawBytes = varintSize(candidate.shared + count) + varintSize(candidate.tag);
+        const tableBytes = varintSize(candidate.shared) + varintSize(candidate.tag);
+        return {
+          candidate,
+          saving: candidate.count * (rawBytes - 1) - tableBytes
+        };
+      }).sort((a, b) => b.saving - a.saving || b.candidate.count - a.candidate.count || a.candidate.shared - b.candidate.shared || a.candidate.tag - b.candidate.tag);
+      const chosen = ranked.slice(0, count);
+      const chosenKeys = new Set(chosen.map(({ candidate }) => lexiconHeaderKey(candidate.shared, candidate.tag)));
+      let bytes = 0;
+      for (const candidate of candidates) {
+        if (chosenKeys.has(lexiconHeaderKey(candidate.shared, candidate.tag))) {
+          bytes += varintSize(candidate.shared) + varintSize(candidate.tag) + candidate.count;
+        } else {
+          bytes += candidate.count * (varintSize(candidate.shared + count) + varintSize(candidate.tag));
+        }
+      }
+      if (bytes < bestBytes) {
+        bestBytes = bytes;
+        best = chosen.map(({ candidate }) => candidate);
+      }
+    }
+    return best.map(({ shared, tag }) => [shared, tag]);
+  }
+  function measureLexiconStorage(entries, codebook) {
+    const index = /* @__PURE__ */ new Map();
+    codebook.forEach(([shared, tag], i) => index.set(lexiconHeaderKey(shared, tag), i));
+    let bytes = 0;
+    for (const [shared, tag] of codebook) bytes += varintSize(shared) + varintSize(tag);
+    for (const entry of entries) {
+      const tag = lexiconEntryTag(entry);
+      const code = index.get(lexiconHeaderKey(entry.shared, tag));
+      const oldHeaderBytes = varintSize(entry.shared) + varintSize(tag);
+      const newHeaderBytes = code === void 0 ? varintSize(entry.shared + codebook.length) + varintSize(tag) : varintSize(code);
+      bytes += entry.bytes - oldHeaderBytes + newHeaderBytes;
+    }
+    return bytes;
+  }
+  function matchesAt(haystack, offset, needle) {
+    if (needle.length === 0 || offset < 0 || offset + needle.length > haystack.length) return false;
+    for (let i = 0; i < needle.length; i++) {
+      if (haystack[offset + i] !== needle[i]) return false;
+    }
+    return true;
+  }
+  function endsWith(haystack, needle) {
+    return matchesAt(haystack, haystack.length - needle.length, needle);
+  }
+  var suffixTableCost = (suffix) => {
+    const n = utf8Length(suffix);
+    return varintSize(n) + n;
+  };
+  function planLexiconEntries(lexicon, suffixes) {
+    return planLexicon(lexicon, suffixes, false).entries;
+  }
+  function planLexicon(lexicon, suffixes, keepLinks) {
+    const table = suffixes.map((s) => ENCODER.encode(s));
+    const chainable = table.length > 0 && table.length - 1 <= MAX_CHAINABLE_CODE;
+    const entries = [];
+    const allLinks = [];
+    let previous = EMPTY;
+    const links = [];
+    const choice = [];
+    for (const word of lexicon) {
+      const bytes = ENCODER.encode(word);
+      const maxShared = sharedPrefix(previous, bytes);
+      let shared = maxShared;
+      let literalEnd = bytes.length;
+      let codes = [];
+      let size = varintSize(maxShared) + varintSize(bytes.length - maxShared << 2 | MODE_LITERAL) + (bytes.length - maxShared);
+      for (let code = 0; code < table.length; code++) {
+        if (!endsWith(bytes, table[code])) continue;
+        const cut = bytes.length - table[code].length;
+        const start = Math.min(maxShared, cut);
+        const remainder = cut - start;
+        const candidate = remainder === 0 ? varintSize(start) + varintSize(code << 2 | MODE_SUFFIX) : varintSize(start) + varintSize(remainder << 2 | MODE_BOTH) + remainder + 1;
+        if (candidate < size) {
+          size = candidate;
+          shared = start;
+          literalEnd = cut;
+          codes = [code];
+        }
+      }
+      if (chainable) {
+        const unreachable = bytes.length + 1;
+        links[bytes.length] = 0;
+        for (let pos = bytes.length - 1; pos >= 0; pos--) {
+          links[pos] = unreachable;
+          choice[pos] = -1;
+          for (let code = 0; code < table.length; code++) {
+            const end = pos + table[code].length;
+            if (end > bytes.length || links[end] === unreachable) continue;
+            if (!matchesAt(bytes, pos, table[code])) continue;
+            if (links[end] + 1 < links[pos]) {
+              links[pos] = links[end] + 1;
+              choice[pos] = code;
+            }
+          }
+        }
+        for (let cut = Math.min(maxShared, bytes.length); cut >= 0; cut--) {
+          for (let code = 0; code < table.length; code++) {
+            const end = cut + table[code].length;
+            if (end > bytes.length || links[end] === unreachable) continue;
+            if (!matchesAt(bytes, cut, table[code])) continue;
+            const count = links[end] + 1;
+            if (count < 2) continue;
+            const candidate = varintSize(cut) + varintSize(code << 2 | MODE_CHAIN) + (count - 1);
+            if (candidate >= size) continue;
+            size = candidate;
+            shared = cut;
+            literalEnd = cut;
+            codes = [code];
+            for (let pos = end; pos < bytes.length; pos += table[choice[pos]].length) {
+              codes.push(choice[pos]);
+            }
+          }
+        }
+      }
+      if (keepLinks) {
+        const kept = new Int16Array(bytes.length + 1).fill(-1);
+        if (chainable) {
+          const unreachable = bytes.length + 1;
+          for (let pos = 0; pos <= bytes.length; pos++) {
+            if (links[pos] !== unreachable) kept[pos] = links[pos];
+          }
+        } else {
+          kept[bytes.length] = 0;
+        }
+        allLinks.push(kept);
+      }
+      entries.push({ shared, literal: bytes.subarray(shared, literalEnd), codes, bytes: size });
+      previous = bytes;
+    }
+    return { entries, links: allLinks };
+  }
+  function planLexiconSuffixes(lexicon, options = {}) {
+    if (lexicon.length === 0) return [];
+    const maxChars = options.maxSuffixLength ?? 4;
+    const decoder = new TextDecoder();
+    const codeTagSize = varintSize(SUFFIX_CODE_COUNT - 1 << 2 | MODE_SUFFIX);
+    const words = lexicon.map((w) => ENCODER.encode(w));
+    const maxShared = words.map((w, i) => i === 0 ? 0 : sharedPrefix(words[i - 1], w));
+    const endings = /* @__PURE__ */ new Set();
+    for (const bytes of words) {
+      let chars = 0;
+      for (let start = bytes.length - 1; start >= 0 && chars < maxChars; start--) {
+        if ((bytes[start] & 192) === 128) continue;
+        chars++;
+        endings.add(decoder.decode(bytes.subarray(start)));
+      }
+    }
+    const SITE_SCALE = 256;
+    const sites = /* @__PURE__ */ new Map();
+    for (let i = 0; i < words.length; i++) {
+      const bytes = words[i];
+      for (let start = 0; start < bytes.length && start < SITE_SCALE; start++) {
+        if ((bytes[start] & 192) === 128) continue;
+        let chars = 0;
+        for (let end = start + 1; end <= bytes.length && chars < maxChars; end++) {
+          if (end < bytes.length && (bytes[end] & 192) === 128) continue;
+          chars++;
+          const piece = decoder.decode(bytes.subarray(start, end));
+          if (!endings.has(piece)) continue;
+          let list = sites.get(piece);
+          if (!list) sites.set(piece, list = []);
+          list.push(i * SITE_SCALE + start);
+        }
+      }
+    }
+    for (const [piece, list] of sites) if (list.length < 2) sites.delete(piece);
+    const chosen = [];
+    let plan = planLexicon(lexicon, chosen, true);
+    let total = measureLexiconStorage(plan.entries, planLexiconHeaderCodebook(plan.entries));
+    for (let round = 0; round < SUFFIX_CODE_COUNT; round++) {
+      let best = "";
+      let bestScore = 0;
+      for (const [piece, list] of sites) {
+        const length = ENCODER.encode(piece).length;
+        let score = -suffixTableCost(piece);
+        let entry = -1;
+        let bestHere = 0;
+        for (const site of list) {
+          const i = site / SITE_SCALE | 0;
+          if (i !== entry) {
+            score += bestHere;
+            bestHere = 0;
+            entry = i;
+          }
+          const at = site % SITE_SCALE;
+          const rest = plan.links[i][at + length];
+          if (rest < 0) continue;
+          const count = rest + 1;
+          let cost = at <= maxShared[i] ? varintSize(at) + codeTagSize + (count - 1) : Infinity;
+          if (count === 1) {
+            const shared = Math.min(maxShared[i], at);
+            const remainder = at - shared;
+            cost = Math.min(cost, varintSize(shared) + varintSize(remainder << 2 | MODE_BOTH) + remainder + 1);
+          }
+          const saving = plan.entries[i].bytes - cost;
+          if (saving > bestHere) bestHere = saving;
+        }
+        score += bestHere;
+        if (score > bestScore || score === bestScore && best !== "" && (piece.length > best.length || piece.length === best.length && piece < best)) {
+          bestScore = score;
+          best = piece;
+        }
+      }
+      if (best === "") break;
+      const trial = planLexicon(lexicon, [...chosen, best], true);
+      const trialTotal = measureLexiconStorage(trial.entries, planLexiconHeaderCodebook(trial.entries));
+      if (trialTotal + suffixTableCost(best) >= total) break;
+      chosen.push(best);
+      sites.delete(best);
+      plan = trial;
+      total = trialTotal;
+    }
+    return chosen;
   }
 
   // link-codec.ts
@@ -209,12 +474,13 @@ var Ylk1 = (() => {
     for (let i = 0; i < n; i++) if (a[i] !== b[i]) return a[i] - b[i];
     return a.length - b.length;
   };
-  var sharedPrefix = (a, b) => {
+  var sharedPrefix2 = (a, b) => {
     const n = Math.min(a.length, b.length, 255);
     let i = 0;
     while (i < n && a[i] === b[i]) i++;
     return i;
   };
+  var chainPositionBits = (linkedCount) => Math.max(1, bitWidth(Math.max(linkedCount - 1, 1)));
   var bitWidth = (v) => {
     let w = 0;
     while (v >>> w) w++;
@@ -225,7 +491,7 @@ var Ylk1 = (() => {
     let previous = new Uint8Array(0);
     for (const word of words) {
       const bytes = ENCODER2.encode(word);
-      const shared = sharedPrefix(previous, bytes);
+      const shared = sharedPrefix2(previous, bytes);
       out.u8(shared);
       out.varint(bytes.length - shared);
       out.raw(bytes.subarray(shared));
@@ -242,6 +508,108 @@ var Ylk1 = (() => {
       const bytes = new Uint8Array(shared + suffixLength);
       bytes.set(previous.subarray(0, shared));
       bytes.set(input.raw(suffixLength), shared);
+      words.push(DECODER.decode(bytes));
+      previous = bytes;
+    }
+    return words;
+  }
+  function writeLexiconBlock(out, words, supplied) {
+    const suffixes = supplied ?? planLexiconSuffixes(words);
+    const entries = planLexiconEntries(words, suffixes);
+    const codebook = planLexiconHeaderCodebook(entries);
+    const codeOf = /* @__PURE__ */ new Map();
+    codebook.forEach(([shared, tag], i) => codeOf.set(`${shared},${tag}`, i));
+    out.varint(words.length);
+    if (suffixes.length > 255) throw new LinkCodecError("the suffix table holds at most 255 codes");
+    out.u8(suffixes.length);
+    out.u8(codebook.length);
+    for (const suffix of suffixes) {
+      const bytes = ENCODER2.encode(suffix);
+      out.varint(bytes.length);
+      out.raw(bytes);
+    }
+    for (const [shared, tag] of codebook) {
+      out.varint(shared);
+      out.varint(tag);
+    }
+    for (const entry of entries) {
+      const tag = lexiconEntryTag(entry);
+      const code = codeOf.get(`${entry.shared},${tag}`);
+      if (code === void 0) {
+        out.varint(entry.shared + codebook.length);
+        out.varint(tag);
+      } else {
+        out.varint(code);
+      }
+      if (entry.codes.length > 1) {
+        for (let i = 1; i < entry.codes.length; i++) {
+          out.u8(entry.codes[i] | (i < entry.codes.length - 1 ? LEXICON_CHAIN_MORE : 0));
+        }
+      } else {
+        out.raw(entry.literal);
+        if (entry.codes.length === 1 && entry.literal.length > 0) out.u8(entry.codes[0]);
+      }
+    }
+  }
+  function readLexiconBlock(input) {
+    const count = input.varint();
+    const suffixCount = input.u8();
+    const codebookSize = input.u8();
+    if (codebookSize > MAX_LEXICON_HEADER_CODES) {
+      throw new LinkCodecError(`lexicon header table has ${codebookSize} codes; maximum is ${MAX_LEXICON_HEADER_CODES}`);
+    }
+    const suffixes = [];
+    for (let i = 0; i < suffixCount; i++) suffixes.push(input.raw(input.varint()));
+    const codebook = [];
+    for (let i = 0; i < codebookSize; i++) codebook.push([input.varint(), input.varint()]);
+    const ending = (code, at) => {
+      if (code >= suffixes.length) throw new LinkCodecError(`lexicon entry ${at} uses undefined suffix code ${code}`);
+      return suffixes[code];
+    };
+    const words = [];
+    let previous = new Uint8Array(0);
+    for (let i = 0; i < count; i++) {
+      const header = input.varint();
+      let shared;
+      let tag;
+      if (header < codebookSize) {
+        [shared, tag] = codebook[header];
+      } else {
+        shared = header - codebookSize;
+        tag = input.varint();
+      }
+      if (shared > previous.length) {
+        throw new LinkCodecError(`lexicon entry ${i} shares ${shared} bytes with a ${previous.length}-byte entry`);
+      }
+      const mode = tag & 3;
+      const n = tag >>> 2;
+      let literal = new Uint8Array(0);
+      let endings = [];
+      if (mode === LEXICON_MODE.LITERAL) {
+        literal = input.raw(n);
+      } else if (mode === LEXICON_MODE.SUFFIX) {
+        endings = [ending(n, i)];
+      } else if (mode === LEXICON_MODE.BOTH) {
+        literal = input.raw(n);
+        endings = [ending(input.u8(), i)];
+      } else {
+        endings = [ending(n, i)];
+        for (; ; ) {
+          const code = input.u8();
+          endings.push(ending(code & ~LEXICON_CHAIN_MORE, i));
+          if ((code & LEXICON_CHAIN_MORE) === 0) break;
+        }
+      }
+      let length = shared + literal.length;
+      for (const end of endings) length += end.length;
+      const bytes = new Uint8Array(length);
+      bytes.set(previous.subarray(0, shared));
+      bytes.set(literal, shared);
+      let at = shared + literal.length;
+      for (const end of endings) {
+        bytes.set(end, at);
+        at += end.length;
+      }
       words.push(DECODER.decode(bytes));
       previous = bytes;
     }
@@ -343,11 +711,35 @@ var Ylk1 = (() => {
   }
   var ENTRY_DELTA = 0 /* Delta */;
   var ENTRY_TERMINAL = 1 /* Terminal */;
-  var DELTA_BUCKETS = 32;
+  var DELTA_SUBBUCKETS = 4;
+  var DELTA_SUBBUCKET_BITS = 2;
+  var DELTA_BUCKETS = 32 * DELTA_SUBBUCKETS;
+  var DELTA_BUCKET_BITS = 7;
   var PLACEHOLDER_BYTE = 255;
+  function deltaBucket(delta) {
+    const width = bitWidth(delta);
+    const base = 1 << width - 1;
+    const part = (delta - base) * DELTA_SUBBUCKETS >>> width - 1;
+    return (width - 1) * DELTA_SUBBUCKETS + part;
+  }
+  function deltaPayloadBits(delta) {
+    return Math.max(0, bitWidth(delta) - 1 - DELTA_SUBBUCKET_BITS);
+  }
+  function writeDelta(bits, delta) {
+    const payload = deltaPayloadBits(delta);
+    if (payload > 0) bits.write(delta & (1 << payload) - 1, payload);
+  }
+  function readDelta(bits, bucket) {
+    const width = (bucket / DELTA_SUBBUCKETS | 0) + 1;
+    const part = bucket % DELTA_SUBBUCKETS;
+    const base = 1 << width - 1;
+    const floor = base + (part * base >>> DELTA_SUBBUCKET_BITS);
+    const payload = Math.max(0, width - 1 - DELTA_SUBBUCKET_BITS);
+    return payload > 0 ? floor | bits.read(payload) : floor;
+  }
   var MAGIC = [89, 76, 75, 49];
-  var FORMAT_VERSION = 1;
-  var HEADER_BYTES = 12;
+  var FORMAT_VERSION = 2;
+  var HEADER_BYTES = 16;
   var hasLetter = (term) => /\p{L}/u.test(term);
   function chooseDirectTerms(frequency, firstSeen, budget) {
     if (budget <= 0) return [];
@@ -355,6 +747,11 @@ var Ylk1 = (() => {
     const symbols = [...frequency.keys()].filter((t) => !hasLetter(t)).sort(byFrequency);
     const functionWords = [...frequency.keys()].filter((t) => hasLetter(t) && FUNCTION_WORDS.has(t.toLowerCase())).sort(byFrequency);
     return [...symbols, ...functionWords].slice(0, budget);
+  }
+  function planSuffixes(text) {
+    const words = [...new Set(tokenize(text))].filter(hasLetter);
+    words.sort((a, b) => compareBytes(ENCODER2.encode(a), ENCODER2.encode(b)));
+    return planLexiconSuffixes(words);
   }
   function encode(text, config = DEFAULT_LINK_CONFIG) {
     const terms = tokenize(text);
@@ -405,18 +802,24 @@ var Ylk1 = (() => {
     out.u8(0);
     out.u8(0);
     out.u32(terms.length);
+    out.u32(linkedTerm.length);
     if (out.length !== HEADER_BYTES) throw new LinkCodecError(`header is ${out.length} bytes, expected ${HEADER_BYTES}`);
     const afterHeader = out.length;
     writeWordList(out, directTerms);
     const afterDirect = out.length;
-    writeWordList(out, searchWords);
+    writeLexiconBlock(out, searchWords, config.suffixes);
     const afterLexicon = out.length;
-    for (const position of firstOccurrence) out.varint(position);
+    const positionBits = chainPositionBits(linkedTerm.length);
+    {
+      const bits = new BitWriter(out);
+      for (const position of firstOccurrence) bits.write(position, positionBits);
+      bits.flush();
+    }
     const afterFirst = out.length;
     const rowBits = Math.max(1, bitWidth(Math.max(searchWords.length - 1, 1)));
     const TERMINAL = directTerms.length;
     const SHORTCUT = directTerms.length + 1;
-    const deltaSymbol = (delta) => directTerms.length + 2 + bitWidth(delta) - 1;
+    const deltaSymbol = (delta) => directTerms.length + 2 + deltaBucket(delta);
     let streamCode = null;
     let masterCode = null;
     if (config.coder === "huffman") {
@@ -472,13 +875,11 @@ var Ylk1 = (() => {
         } else if (entry.shortcutRow >= 0) {
           writeCode(bits, streamCode, SHORTCUT);
           bits.write(entry.shortcutRow, rowBits);
-          const width = bitWidth(entry.value);
-          bits.write(width, 5);
-          bits.write(entry.value & (1 << width - 1) - 1, width - 1);
+          bits.write(deltaBucket(entry.value), DELTA_BUCKET_BITS);
+          writeDelta(bits, entry.value);
         } else {
           writeCode(bits, streamCode, deltaSymbol(entry.value));
-          const width = bitWidth(entry.value);
-          bits.write(entry.value & (1 << width - 1) - 1, width - 1);
+          writeDelta(bits, entry.value);
         }
       }
       bits.flush();
@@ -537,10 +938,16 @@ var Ylk1 = (() => {
     input.u8();
     input.u8();
     const termCount = input.u32();
+    const linkedCount = input.u32();
     const directTerms = readWordList(input);
-    const lexicon = readWordList(input);
+    const lexicon = readLexiconBlock(input);
     const firstOccurrence = [];
-    for (let i = 0; i < lexicon.length; i++) firstOccurrence.push(input.varint());
+    {
+      const positionBits = chainPositionBits(linkedCount);
+      const bits = new BitReader(input);
+      for (let i = 0; i < lexicon.length; i++) firstOccurrence.push(bits.read(positionBits));
+      bits.align();
+    }
     const rowBits = Math.max(1, bitWidth(Math.max(lexicon.length - 1, 1)));
     const TERMINAL = directTerms.length;
     const SHORTCUT = directTerms.length + 1;
@@ -628,13 +1035,9 @@ var Ylk1 = (() => {
     if (symbol === terminal) return { kind: 1 /* Terminal */, value: bits.read(rowBits), shortcutRow: -1 };
     if (symbol === shortcut) {
       const row = bits.read(rowBits);
-      const width = bits.read(5);
-      return { kind: 0 /* Delta */, value: readDelta(bits, width), shortcutRow: row };
+      return { kind: 0 /* Delta */, value: readDelta(bits, bits.read(DELTA_BUCKET_BITS)), shortcutRow: row };
     }
-    return { kind: 0 /* Delta */, value: readDelta(bits, symbol - shortcut), shortcutRow: -1 };
-  }
-  function readDelta(bits, width) {
-    return width === 1 ? 1 : 1 << width - 1 | bits.read(width - 1);
+    return { kind: 0 /* Delta */, value: readDelta(bits, symbol - shortcut - 1), shortcutRow: -1 };
   }
   function resolve(container, position) {
     let at = position;

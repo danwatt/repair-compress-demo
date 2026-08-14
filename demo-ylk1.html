@@ -426,7 +426,7 @@ footer a { color: var(--hot); }
 <script src="link-codec.js"></script>
 <script>
 (function () {
-  const { encode, decode, open, search, buildChainIndex, step, ENTRY_TERMINAL } = window.Ylk1;
+  const { encode, decode, open, search, buildChainIndex, step, planSuffixes, ENTRY_TERMINAL } = window.Ylk1;
   const { tokenize } = window.RePair;
 
   const $ = (id) => document.getElementById(id);
@@ -452,6 +452,23 @@ And God said, Let the waters under the heaven be gathered together unto one plac
   let latest = null;
   let stripState = null;
   let chaseState = null;
+
+  /**
+   * Planning the lexicon's ending table is an exhaustive search and the slowest
+   * part of an encode — about a second on the full KJV — but it depends only on
+   * the words in the text, not on any knob. Cache it per input so moving a knob
+   * re-encodes in a third of the time. Reusing one table across knob settings
+   * costs at most a few dozen bytes against planning it per configuration.
+   */
+  const suffixCache = { text: null, suffixes: null };
+
+  function suffixesFor(text) {
+    if (suffixCache.text !== text) {
+      suffixCache.suffixes = planSuffixes(text);
+      suffixCache.text = text;
+    }
+    return suffixCache.suffixes;
+  }
 
   // -------------------------------------------------------------------------
   // Knobs
@@ -558,7 +575,10 @@ And God said, Let the waters under the heaven be gathered together unto one plac
 
     setTimeout(() => {
       try {
-        const options = config();
+        const tPlan = performance.now();
+        const options = { ...config(), suffixes: suffixesFor(text) };
+        const planMs = performance.now() - tPlan;
+
         const t0 = performance.now();
         const result = encode(text, options);
         const encodeMs = performance.now() - t0;
@@ -583,7 +603,7 @@ And God said, Let the waters under the heaven be gathered together unto one plac
 
         latest = {
           text, options, result, container, chainWords, postings, roundTrip,
-          encodeMs, openMs, decodeMs,
+          encodeMs, openMs, decodeMs, planMs,
           originalBytes: new TextEncoder().encode(text).length,
           repair: null,
         };
@@ -596,6 +616,7 @@ And God said, Let the waters under the heaven be gathered together unto one plac
         resetChase(0);
         $("download").disabled = false;
         $("timing").textContent =
+          (planMs > 20 ? `ending table ${Math.round(planMs)} ms · ` : "") +
           `encode ${Math.round(encodeMs)} ms · open ${Math.round(openMs)} ms · full decode ${Math.round(decodeMs)} ms`;
       } catch (error) {
         latest = null;
@@ -1074,13 +1095,25 @@ And God said, Let the waters under the heaven be gathered together unto one plac
     button.disabled = true;
     button.textContent = "loading…";
     if (!kjvPromise) {
-      kjvPromise = new Promise((resolve, reject) => {
-        if (window.KJV_TEXT) return resolve(window.KJV_TEXT);
+      const load = (src) => new Promise((resolve, reject) => {
         const s = document.createElement("script");
-        s.src = "kjv-data.js";
-        s.onload = () => resolve(window.KJV_TEXT);
-        s.onerror = () => reject(new Error("Could not load kjv-data.js — run `mise run data` to generate it."));
+        s.src = src;
+        s.onload = resolve;
+        s.onerror = () => reject(new Error(`Could not load ${src} — run \`mise run data\` to generate it.`));
         document.head.appendChild(s);
+      });
+      // The ending table is shipped alongside the corpus: planning it is a
+      // several-second exhaustive search cold, and it never changes for a fixed
+      // text. Everything else the demo shows is still encoded live.
+      kjvPromise = Promise.all([
+        window.KJV_TEXT ? null : load("kjv-data.js"),
+        window.KJV_SUFFIXES ? null : load("kjv-suffixes.js"),
+      ]).then(() => {
+        if (window.KJV_SUFFIXES) {
+          suffixCache.text = window.KJV_TEXT;
+          suffixCache.suffixes = window.KJV_SUFFIXES;
+        }
+        return window.KJV_TEXT;
       });
     }
     kjvPromise.then((text) => {
