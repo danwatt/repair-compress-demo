@@ -750,36 +750,64 @@ function readDelta(bits: BitReader, bucket: number): number {
  * of the stream, which is what selects the order-1 table for the first code.
  */
 export interface LinkAnchor {
+  /** Term index this anchor names, so the table also reads position -> region. */
+  term: number;
   bit: number;
   previous: number;
 }
 
-/** Ascending bit offsets, so only the gaps are stored. */
+/** Both columns ascend, so only the gaps are stored. */
 function writeAnchors(out: ByteWriter, anchors: readonly LinkAnchor[]): void {
+  let previousTerm = 0;
   let previousBit = 0;
   for (const anchor of anchors) {
+    out.varint(anchor.term - previousTerm);
     out.varint(anchor.bit - previousBit);
     out.varint(anchor.previous + 1);
+    previousTerm = anchor.term;
     previousBit = anchor.bit;
   }
 }
 
 function readAnchors(input: ByteReader, count: number): LinkAnchor[] {
   const anchors: LinkAnchor[] = [];
+  let term = 0;
   let bit = 0;
   for (let i = 0; i < count; i++) {
+    term += input.varint();
     bit += input.varint();
-    anchors.push({ bit, previous: input.varint() - 1 });
+    anchors.push({ term, bit, previous: input.varint() - 1 });
   }
   return anchors;
+}
+
+/**
+ * The last anchor at or before a term position, or -1 before the first one.
+ * Search finds positions; this is what turns a position into a region.
+ */
+export function anchorFor(anchors: readonly LinkAnchor[], term: number): number {
+  let low = 0;
+  let high = anchors.length - 1;
+  let found = -1;
+  while (low <= high) {
+    const mid = (low + high) >> 1;
+    if (anchors[mid].term <= term) {
+      found = mid;
+      low = mid + 1;
+    } else {
+      high = mid - 1;
+    }
+  }
+  return found;
 }
 
 const MAGIC = [0x59, 0x4c, 0x4b, 0x31]; // "YLK1"
 /**
  * 2 packed the lexicon with a suffix table and bit-packed the first-occurrence
- * array; 3 added order-1 context tables; 4 added the anchor table.
+ * array; 3 added order-1 context tables; 4 added the anchor table; 5 gave each
+ * anchor its term position.
  */
-const FORMAT_VERSION = 4;
+const FORMAT_VERSION = 5;
 const HEADER_BYTES = 18;
 
 const hasLetter = (term: string): boolean => /\p{L}/u.test(term);
@@ -992,7 +1020,7 @@ export function encode(text: string, config: LinkConfig = DEFAULT_LINK_CONFIG): 
       if (direct !== undefined && config.split) continue;
 
       while (nextAnchor < anchorPositions.length && anchorPositions[nextAnchor] === i) {
-        anchors.push({ bit: bits.position, previous });
+        anchors.push({ term: i, bit: bits.position, previous });
         nextAnchor++;
       }
 
@@ -1020,7 +1048,7 @@ export function encode(text: string, config: LinkConfig = DEFAULT_LINK_CONFIG): 
     for (let i = 0; i < terms.length; i++) {
       const term = terms[i];
       while (nextAnchor < anchorPositions.length && anchorPositions[nextAnchor] === i) {
-        anchors.push({ bit: streamOut.length * 8, previous: -1 });
+        anchors.push({ term: i, bit: streamOut.length * 8, previous: -1 });
         nextAnchor++;
       }
       const direct = directIndex.get(term);

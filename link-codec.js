@@ -26,6 +26,7 @@ var Ylk1 = (() => {
     ENTRY_DELTA: () => ENTRY_DELTA,
     ENTRY_TERMINAL: () => ENTRY_TERMINAL,
     LinkCodecError: () => LinkCodecError,
+    anchorFor: () => anchorFor,
     buildChainIndex: () => buildChainIndex,
     decode: () => decode,
     describeBits: () => describeBits,
@@ -160,18 +161,23 @@ var Ylk1 = (() => {
     }
     return best.map(({ shared, tag }) => [shared, tag]);
   }
-  function measureLexiconStorage(entries, codebook) {
+  function storedEntryBytes(entry, index, codebookLength) {
+    const tag = lexiconEntryTag(entry);
+    const code = index.get(lexiconHeaderKey(entry.shared, tag));
+    const oldHeaderBytes = varintSize(entry.shared) + varintSize(tag);
+    const newHeaderBytes = code === void 0 ? varintSize(entry.shared + codebookLength) + varintSize(tag) : varintSize(code);
+    return entry.bytes - oldHeaderBytes + newHeaderBytes;
+  }
+  var headerIndexOf = (codebook) => {
     const index = /* @__PURE__ */ new Map();
     codebook.forEach(([shared, tag], i) => index.set(lexiconHeaderKey(shared, tag), i));
+    return index;
+  };
+  function measureLexiconStorage(entries, codebook) {
+    const index = headerIndexOf(codebook);
     let bytes = 0;
     for (const [shared, tag] of codebook) bytes += varintSize(shared) + varintSize(tag);
-    for (const entry of entries) {
-      const tag = lexiconEntryTag(entry);
-      const code = index.get(lexiconHeaderKey(entry.shared, tag));
-      const oldHeaderBytes = varintSize(entry.shared) + varintSize(tag);
-      const newHeaderBytes = code === void 0 ? varintSize(entry.shared + codebook.length) + varintSize(tag) : varintSize(code);
-      bytes += entry.bytes - oldHeaderBytes + newHeaderBytes;
-    }
+    for (const entry of entries) bytes += storedEntryBytes(entry, index, codebook.length);
     return bytes;
   }
   function matchesAt(haystack, offset, needle) {
@@ -780,24 +786,44 @@ var Ylk1 = (() => {
     return payload > 0 ? floor | bits.read(payload) : floor;
   }
   function writeAnchors(out, anchors) {
+    let previousTerm = 0;
     let previousBit = 0;
     for (const anchor of anchors) {
+      out.varint(anchor.term - previousTerm);
       out.varint(anchor.bit - previousBit);
       out.varint(anchor.previous + 1);
+      previousTerm = anchor.term;
       previousBit = anchor.bit;
     }
   }
   function readAnchors(input, count) {
     const anchors = [];
+    let term = 0;
     let bit = 0;
     for (let i = 0; i < count; i++) {
+      term += input.varint();
       bit += input.varint();
-      anchors.push({ bit, previous: input.varint() - 1 });
+      anchors.push({ term, bit, previous: input.varint() - 1 });
     }
     return anchors;
   }
+  function anchorFor(anchors, term) {
+    let low = 0;
+    let high = anchors.length - 1;
+    let found = -1;
+    while (low <= high) {
+      const mid = low + high >> 1;
+      if (anchors[mid].term <= term) {
+        found = mid;
+        low = mid + 1;
+      } else {
+        high = mid - 1;
+      }
+    }
+    return found;
+  }
   var MAGIC = [89, 76, 75, 49];
-  var FORMAT_VERSION = 4;
+  var FORMAT_VERSION = 5;
   var HEADER_BYTES = 18;
   var hasLetter = (term) => /\p{L}/u.test(term);
   function chooseDirectTerms(frequency, firstSeen, budget) {
@@ -951,7 +977,7 @@ var Ylk1 = (() => {
         const direct = directIndex.get(term);
         if (direct !== void 0 && config.split) continue;
         while (nextAnchor < anchorPositions.length && anchorPositions[nextAnchor] === i) {
-          anchors.push({ bit: bits.position, previous });
+          anchors.push({ term: i, bit: bits.position, previous });
           nextAnchor++;
         }
         const symbol = symbols[at++];
@@ -977,7 +1003,7 @@ var Ylk1 = (() => {
       for (let i = 0; i < terms.length; i++) {
         const term = terms[i];
         while (nextAnchor < anchorPositions.length && anchorPositions[nextAnchor] === i) {
-          anchors.push({ bit: streamOut.length * 8, previous: -1 });
+          anchors.push({ term: i, bit: streamOut.length * 8, previous: -1 });
           nextAnchor++;
         }
         const direct = directIndex.get(term);

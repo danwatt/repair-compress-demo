@@ -16,7 +16,9 @@ import {
   deserialize,
   measure,
   readFrom,
+  anchorFor,
   anchorTableBytes,
+  searchStream,
   plainLexiconBytes,
   CodecError,
 } from "./repair-codec";
@@ -343,6 +345,61 @@ check("plainLexiconBytes measures the old format", plainLexiconBytes(["ab", "cd"
     descending = e instanceof CodecError ? e.message : "wrong error type";
   }
   check("rejects unsorted anchors", descending.includes("ascend"), descending);
+}
+
+// Search: a format with no index still has to answer the question, and the
+// answer has to be the same one a brute-force pass over the tokens gives.
+{
+  const text = "God so loved the world@the world is round@God is love@a love of God@";
+  const searched = encode(text);
+  const container = searched.container;
+  const idOf = (word: string) => container.lexicon.indexOf(word);
+  const sets = [[idOf("God")], [idOf("love"), idOf("loved")]];
+  const found = searchStream(container, sets, [idOf("@")]);
+  const searchTokens = tokenize(text);
+
+  const regionsOf = (tokens: string[]) => {
+    const out: { start: number; end: number }[] = [];
+    let start = 0;
+    tokens.forEach((token, i) => {
+      if (token !== "@") return;
+      out.push({ start, end: i });
+      start = i + 1;
+    });
+    return out;
+  };
+  const wanted = regionsOf(searchTokens).filter((region) =>
+    sets.every((ids) => searchTokens.slice(region.start, region.end).some((w) => ids.includes(idOf(w)))));
+
+  check(
+    "searchStream finds the regions a brute-force pass finds",
+    JSON.stringify(found.hits) === JSON.stringify(wanted),
+    `${JSON.stringify(found.hits)} vs ${JSON.stringify(wanted)}`,
+  );
+  check("searchStream counts every occurrence", JSON.stringify(found.counts) === "[3,3]", JSON.stringify(found.counts));
+  check("searchStream crosses every region", found.regions === 4, String(found.regions));
+  check(
+    "searchStream reads the rule table and the stream, and nothing else twice",
+    found.cost.stream === container.stream.length && found.cost.rules === container.rules.length * 4,
+  );
+  check(
+    "searchStream expands only the tokens it has to",
+    found.cost.expansions <= searched.stats.sequenceLength,
+    `${found.cost.expansions} expansions of ${searched.stats.sequenceLength} tokens`,
+  );
+
+  // Anchors, read the other way: a position turned back into a region.
+  const anchorPositions = searchTokens.map((t, i) => (t === "@" ? i + 1 : -1)).filter((i) => i > 0 && i < searchTokens.length);
+  const anchored = deserialize(encode(text, { anchors: [0, ...anchorPositions] }).bytes);
+  check("anchorFor lands before the first anchor", anchorFor(anchored.anchors, -1) === -1);
+  check(
+    "anchorFor finds the region a position fell in",
+    anchored.anchors.every((anchor, i) => {
+      const next = anchored.anchors[i + 1];
+      const inside = next ? next.term - 1 : searchTokens.length - 1;
+      return anchorFor(anchored.anchors, anchor.term) === i && anchorFor(anchored.anchors, inside) === i;
+    }),
+  );
 }
 
 // A big synthetic corpus: repeated structure, the case Re-Pair is built for.

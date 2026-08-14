@@ -59,24 +59,68 @@ on indefinitely, but the boundary belonging to terminal 700,000 cannot be found 
 700,000 of them. That is what the cartridge's book table was for, and what this container had no way
 to express until `CodecConfig.anchors` was added.
 
-An anchor is two numbers: a **byte offset** into the stream, and a **skip count**. The second one is
+An anchor is three numbers: the **terminal position** it names, a **byte offset** into the stream, and
+a **skip count**. The skip is
 the part the format forces. A Re-Pair token expands to a whole phrase, so a position the caller cares
 about lands wherever it lands inside one — the book anchor for John sits four terminals into its
 token — and the reader has to drop those four before the anchored word comes out. Nothing else in the
 format moves: `stream[anchor.offset]` is a lead byte because the encoder said so, and `readFrom`
 reads normally from there.
 
-Offsets ascend, so the table stores gaps as varints; 66 book starts cost 220 bytes on the KJV, and
-reaching the 43rd of them means reading the 42 in front of it — 149 bytes, one small sequential read.
+The terminal position is what makes the table readable in both directions. Forwards it is not needed
+at all — "start at the 43rd book" is an index into the table. Backwards it is the whole point:
+`anchorFor` binary-searches it to say which region a position fell in, and a search result is a
+position, not a reference. `demo-search.html` is where that matters, and where the cost of *coarse*
+anchors shows up: with 66 book entries, placing a hit in its verse means scanning from the book start,
+which on a two-word query costs more than the posting lists by two orders of magnitude.
+
+Both columns ascend, so the table stores gaps as varints; 66 book starts cost 375 bytes on the KJV,
+and reaching the 43rd of them means reading the 42 in front of it — one small sequential read.
 Anchors are data, not a knob: the codec has no idea what a book is, and `planAnchors` will index any
 ascending list of token positions. `demo-verse.html` is the reason it exists.
 
 YLK1 carries the same table with the same two-varint shape, but its entries are a **bit** offset and
-the **symbol before it**. Bits because there are no byte boundaries in a Huffman stream to point at,
+the **symbol before it**, alongside the same term position. Bits because there are no byte boundaries
+in a Huffman stream to point at,
 and the preceding symbol because with order-1 tables the reader cannot pick the table for the first
 code without knowing what came before — the one piece of decoder state the bits themselves do not
 carry. `readAnchored` does the seek and reports what the read cost, which is how `demo-verse.html`
 prices a verse in both formats without either of them simulating the other.
+
+## Search
+
+RPR1 stores text and nothing else, so a query is a full scan. What the container does give you is that
+a rule is a fixed pair, which makes "does this rule contain a wanted word" decidable once, bottom up,
+in a single forward pass over the rule table: `mark[i] = mark(left) | mark(right)`. After that the
+stream scan is one table lookup per token, and only the tokens whose mark is non-zero get expanded.
+
+`searchStream` does exactly that and reports what it read. On the KJV that is 116 KB of rule table
+plus 781 KB of stream, **whatever the query asks** — the same for a word occurring twice as for one
+occurring four thousand times. It takes up to seven terminal-id sets and a set of boundary ids, and
+returns the regions where every set appeared, which is the AND a search screen wants.
+
+The comparison this exists for is in `demo-search.html`. YLK1 answers the same query by chasing the
+chains, and the chains *are* the posting lists — 5,275 occurrences cost 6.4 KB, because an occurrence
+is a delta of a few bits and there is no separate index to read. Then it pays for what the format
+leaves out: a position is not a reference, and turning one into the other means scanning from the
+nearest anchor. That cost is set by anchor granularity, not by the link format, which is why the page
+prices a chapter table beside the book table.
+
+One more asymmetry worth stating: a term whose every spelling is one of YLK1's 254 direct terms is not
+in its lexicon and has no chain, so YLK1 cannot search it at all and would have to fall back to the
+scan RPR1 does for everything. The patent is explicit that this is the trade — function words "are not
+search words" — and it is what buys the stream its size.
+
+### Looking a word up
+
+Both codecs pack the word list the same way, front-coded and sorted, which means a lookup is a walk
+from the front of the section: there is no index into a list stored as differences from its neighbour.
+`lexiconEntrySizes` returns the stored size of every entry so a caller can price that walk — reaching
+the `l` words costs about 27 KB on the KJV, and a two-term query pays it twice. The ROM answered this
+with a 2,625-byte skip index at `0x0C2A`; neither container here has one.
+
+The same walk is what makes the question-mark expansion nearly free once you have arrived. The words
+`love?` wants are the rows immediately after the prefix, in the order they are already being read.
 
 ## Suffixes
 
@@ -341,4 +385,4 @@ Full KJV, 4,137,743 bytes in, 85 single-byte codes, 29 suffix codes.
 
 Row 8 is the same container with an empty anchor table: two bytes for the entry count, which is all
 the addition costs a caller that does not want one. The 66 book anchors `build-kjv-preencoded.ts`
-writes bring `kjv-preencoded.js` to 958,682 bytes.
+writes bring `kjv-preencoded.js` to 958,837 bytes.

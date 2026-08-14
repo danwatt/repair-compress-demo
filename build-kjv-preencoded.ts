@@ -26,8 +26,6 @@ const result = encode(text, { ...knobs, anchors });
 if (decode(result.bytes) !== text) throw new Error("pre-encoded KJV failed its round trip");
 const artifact = {
   config: knobs,
-  /** Token index of each book's leading % marker, in canonical order. */
-  anchors,
   bytes: Buffer.from(result.bytes).toString("base64"),
   stats: result.stats,
 };

@@ -28,6 +28,7 @@ var RePair = (() => {
     LEXICON_MODE: () => LEXICON_MODE,
     MAX_LEXICON_HEADER_CODES: () => MAX_LEXICON_HEADER_CODES,
     SUFFIX_CODE_COUNT: () => SUFFIX_CODE_COUNT,
+    anchorFor: () => anchorFor,
     anchorTableBytes: () => anchorTableBytes,
     assignSingleBytes: () => assignSingleBytes,
     buildLexicon: () => buildLexicon,
@@ -41,6 +42,7 @@ var RePair = (() => {
     expand: () => expand,
     expandToWords: () => expandToWords,
     isSeparator: () => isSeparator,
+    lexiconEntrySizes: () => lexiconEntrySizes,
     lexiconEntryTag: () => lexiconEntryTag,
     maxTokenIdFor: () => maxTokenIdFor,
     measure: () => measure,
@@ -52,6 +54,7 @@ var RePair = (() => {
     readFrom: () => readFrom,
     readStream: () => readStream,
     repair: () => repair,
+    searchStream: () => searchStream,
     serialize: () => serialize,
     sweepFromGrammar: () => sweepFromGrammar,
     sweepSingleByteCount: () => sweepSingleByteCount,
@@ -374,7 +377,7 @@ var RePair = (() => {
       if (next >= positions.length) break;
       const span = id < lexiconSize ? 1 : width[id - lexiconSize];
       while (next < positions.length && positions[next] < terminal + span) {
-        anchors.push({ offset, skip: positions[next] - terminal });
+        anchors.push({ term: positions[next], offset, skip: positions[next] - terminal });
         next++;
       }
       terminal += span;
@@ -387,12 +390,29 @@ var RePair = (() => {
   }
   function anchorTableBytes(anchors) {
     let total = 0;
-    let previous = 0;
+    let previousTerm = 0;
+    let previousOffset = 0;
     for (const anchor of anchors) {
-      total += varintSize(anchor.offset - previous) + varintSize(anchor.skip);
-      previous = anchor.offset;
+      total += varintSize(anchor.term - previousTerm) + varintSize(anchor.offset - previousOffset) + varintSize(anchor.skip);
+      previousTerm = anchor.term;
+      previousOffset = anchor.offset;
     }
     return total;
+  }
+  function anchorFor(anchors, term) {
+    let low = 0;
+    let high = anchors.length - 1;
+    let found = -1;
+    while (low <= high) {
+      const mid = low + high >> 1;
+      if (anchors[mid].term <= term) {
+        found = mid;
+        low = mid + 1;
+      } else {
+        high = mid - 1;
+      }
+    }
+    return found;
   }
   function readFrom(container, anchor, count) {
     const { stream, escapeTable, threshold, rules, lexicon } = container;
@@ -418,6 +438,71 @@ var RePair = (() => {
       }
     }
     return out;
+  }
+  var BOUNDARY_BIT = 128;
+  function searchStream(container, sets, boundaries) {
+    if (sets.length > 7) throw new CodecError("searchStream takes at most seven sets");
+    const lexiconSize = container.lexicon.length;
+    const rules = container.rules;
+    const all = (1 << sets.length) - 1;
+    const terminalMark = new Uint8Array(lexiconSize);
+    sets.forEach((ids, i) => {
+      for (const id of ids) terminalMark[id] |= 1 << i;
+    });
+    for (const id of boundaries) terminalMark[id] |= BOUNDARY_BIT;
+    const ruleMark = new Uint8Array(rules.length);
+    const markOf = (id) => id < lexiconSize ? terminalMark[id] : ruleMark[id - lexiconSize];
+    for (let i = 0; i < rules.length; i++) ruleMark[i] = markOf(rules[i][0]) | markOf(rules[i][1]);
+    const width = expansionWidths(rules, lexiconSize);
+    const widthOf = (id) => id < lexiconSize ? 1 : width[id - lexiconSize];
+    const hits = [];
+    const counts = new Array(sets.length).fill(0);
+    const cost = { rules: rules.length * 4, stream: container.stream.length, expansions: 0, expandedTerminals: 0 };
+    const stream = container.stream;
+    const threshold = container.threshold;
+    let term = 0;
+    let regionStart = 0;
+    let regions = 0;
+    let seen = 0;
+    for (let i = 0; i < stream.length; ) {
+      const lead = stream[i++];
+      let id;
+      if (lead < threshold) {
+        id = container.escapeTable[lead];
+        if (id === void 0) throw new CodecError(`escape code ${lead} is not in the table`);
+      } else {
+        if (i >= stream.length) throw new CodecError("stream ends mid-token");
+        id = lead - threshold << 8 | stream[i++];
+      }
+      const mark = markOf(id);
+      if (mark === 0) {
+        term += widthOf(id);
+        continue;
+      }
+      const { terminals } = expand([id], rules, lexiconSize);
+      cost.expansions++;
+      cost.expandedTerminals += terminals.length;
+      for (const terminal of terminals) {
+        const terminalBits = terminalMark[terminal];
+        if (terminalBits & BOUNDARY_BIT) {
+          regions++;
+          if (seen === all && all !== 0) hits.push({ start: regionStart, end: term });
+          regionStart = term + 1;
+          seen = 0;
+        } else if (terminalBits !== 0) {
+          seen |= terminalBits;
+          for (let setIndex = 0; setIndex < sets.length; setIndex++) {
+            if (terminalBits & 1 << setIndex) counts[setIndex]++;
+          }
+        }
+        term++;
+      }
+    }
+    if (seen === all && all !== 0 && regionStart < term) {
+      regions++;
+      hits.push({ start: regionStart, end: term });
+    }
+    return { hits, counts, regions, cost };
   }
   var MODE_LITERAL = 0;
   var MODE_SUFFIX = 1;
@@ -481,19 +566,34 @@ var RePair = (() => {
     }
     return best.map(({ shared, tag }) => [shared, tag]);
   }
-  function measureLexiconStorage(entries, codebook) {
+  function storedEntryBytes(entry, index, codebookLength) {
+    const tag = lexiconEntryTag(entry);
+    const code = index.get(lexiconHeaderKey(entry.shared, tag));
+    const oldHeaderBytes = varintSize(entry.shared) + varintSize(tag);
+    const newHeaderBytes = code === void 0 ? varintSize(entry.shared + codebookLength) + varintSize(tag) : varintSize(code);
+    return entry.bytes - oldHeaderBytes + newHeaderBytes;
+  }
+  var headerIndexOf = (codebook) => {
     const index = /* @__PURE__ */ new Map();
     codebook.forEach(([shared, tag], i) => index.set(lexiconHeaderKey(shared, tag), i));
+    return index;
+  };
+  function measureLexiconStorage(entries, codebook) {
+    const index = headerIndexOf(codebook);
     let bytes = 0;
     for (const [shared, tag] of codebook) bytes += varintSize(shared) + varintSize(tag);
-    for (const entry of entries) {
-      const tag = lexiconEntryTag(entry);
-      const code = index.get(lexiconHeaderKey(entry.shared, tag));
-      const oldHeaderBytes = varintSize(entry.shared) + varintSize(tag);
-      const newHeaderBytes = code === void 0 ? varintSize(entry.shared + codebook.length) + varintSize(tag) : varintSize(code);
-      bytes += entry.bytes - oldHeaderBytes + newHeaderBytes;
-    }
+    for (const entry of entries) bytes += storedEntryBytes(entry, index, codebook.length);
     return bytes;
+  }
+  function lexiconEntrySizes(lexicon, suffixes) {
+    const entries = planLexiconEntries(lexicon, suffixes);
+    const codebook = planLexiconHeaderCodebook(entries);
+    const index = headerIndexOf(codebook);
+    const sizes = new Int32Array(entries.length);
+    entries.forEach((entry, i) => {
+      sizes[i] = storedEntryBytes(entry, index, codebook.length);
+    });
+    return sizes;
   }
   function matchesAt(haystack, offset, needle) {
     if (needle.length === 0 || offset < 0 || offset + needle.length > haystack.length) return false;
@@ -676,7 +776,7 @@ var RePair = (() => {
     return chosen;
   }
   var MAGIC = [82, 80, 82, 49];
-  var FORMAT_VERSION = 6;
+  var FORMAT_VERSION = 7;
   var HEADER_BYTES = 18;
   var ByteWriter = class {
     constructor() {
@@ -817,10 +917,13 @@ var RePair = (() => {
       w.u16(left);
       w.u16(right);
     }
+    let previousTerm = 0;
     let previousOffset = 0;
     for (const anchor of container.anchors) {
+      w.varint(anchor.term - previousTerm);
       w.varint(anchor.offset - previousOffset);
       w.varint(anchor.skip);
+      previousTerm = anchor.term;
       previousOffset = anchor.offset;
     }
     w.raw(container.stream);
@@ -913,10 +1016,12 @@ var RePair = (() => {
     const rules = [];
     for (let i = 0; i < ruleCount; i++) rules.push([r.u16(), r.u16()]);
     const anchors = [];
+    let anchorTerm = 0;
     let anchorOffset = 0;
     for (let i = 0; i < anchorCount; i++) {
+      anchorTerm += r.varint();
       anchorOffset += r.varint();
-      anchors.push({ offset: anchorOffset, skip: r.varint() });
+      anchors.push({ term: anchorTerm, offset: anchorOffset, skip: r.varint() });
     }
     return { threshold, suffixes, lexicon, escapeTable, rules, anchors, stream: r.raw(streamLength) };
   }

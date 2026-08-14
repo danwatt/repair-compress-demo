@@ -1,0 +1,995 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Searching both codecs — God? love?</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Silkscreen:wght@400;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root {
+  --ground: #0a0e1a;
+  --panel: #121a2e;
+  --ink: #f2f4fa;
+  --ink-soft: #8b96b3;
+  --rule: #253253;
+  --dmg-4: #5b9dff;
+  --dmg-3: #3d7fd9;
+  --dmg-2: #2a5aa8;
+  --dmg-1: #163262;
+  --hot: #e8b923;
+  --hot-soft: #f6d878;
+  --warn: #ffb454;
+  --good: #008a63;
+  --pink: #ff6b9a;
+  --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --pixel: "Silkscreen", "IBM Plex Mono", monospace;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--ground);
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+.wrap { max-width: 1120px; margin: 0 auto; padding: 32px 20px 80px; }
+
+.eyebrow {
+  font-family: var(--pixel);
+  font-size: 10px;
+  letter-spacing: .12em;
+  color: var(--dmg-3);
+  text-transform: uppercase;
+  margin: 0 0 14px;
+}
+
+h1 {
+  font-family: var(--pixel);
+  font-weight: 400;
+  font-size: clamp(20px, 4.4vw, 34px);
+  line-height: 1.25;
+  margin: 0 0 12px;
+  color: var(--dmg-4);
+}
+
+.thesis { max-width: 66ch; margin: 0 0 10px; color: var(--ink-soft); }
+.thesis a { color: var(--hot); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+.thesis b { color: var(--ink); font-weight: 500; }
+.thesis code, code { color: var(--hot); }
+
+section { margin-top: 34px; }
+
+.stage-label {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  font-family: var(--pixel);
+  font-size: 10px;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: var(--dmg-3);
+  margin-bottom: 12px;
+}
+.stage-label .num { color: var(--hot); }
+.stage-label .hint {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--ink-soft);
+  margin-left: auto;
+}
+
+.panel { background: var(--panel); border: 1px solid var(--rule); border-radius: 2px; padding: 14px; }
+.two { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; align-items: start; }
+@media (max-width: 860px) { .two { grid-template-columns: 1fr; } }
+
+.codec-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 10px; }
+.codec-head h3 { margin: 0; font-family: var(--pixel); font-size: 12px; font-weight: 400; color: var(--dmg-4); }
+.codec-head .sub { font-size: 11px; color: var(--ink-soft); }
+.codec-head.ylk h3 { color: var(--hot); }
+
+/* Query bar --------------------------------------------------------------- */
+
+.query { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.query input[type=search] {
+  flex: 1; min-width: 260px; padding: 10px 12px;
+  border: 1px solid var(--rule); background: var(--ground); color: var(--ink);
+  font-family: var(--mono); font-size: 15px; border-radius: 2px;
+}
+.query input[type=search]:focus-visible, button:focus-visible { outline: 2px solid var(--hot); outline-offset: 2px; }
+
+button {
+  font-family: var(--mono); font-size: 12px; font-weight: 500;
+  padding: 8px 13px; border-radius: 2px; cursor: pointer;
+  border: 1px solid var(--dmg-4); background: var(--ground); color: var(--dmg-4);
+}
+button:hover { background: var(--dmg-1); }
+button.primary { background: var(--hot); border-color: var(--hot); color: var(--ground); }
+button.primary:hover { background: var(--hot-soft); }
+button[disabled] { opacity: .5; cursor: default; }
+.examples { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.examples button { font-size: 11px; padding: 4px 9px; border-color: var(--rule); color: var(--ink-soft); }
+.examples button:hover { border-color: var(--hot); color: var(--hot); }
+.status { font-size: 11px; color: var(--ink-soft); margin-top: 8px; }
+
+/* Expansion --------------------------------------------------------------- */
+
+.term-block { border-top: 1px solid var(--rule); padding: 12px 0; }
+.term-block:first-child { border-top: 0; padding-top: 0; }
+.term-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.term-head .q { font-size: 15px; color: var(--hot); font-weight: 600; }
+.term-head .how { font-size: 11px; color: var(--ink-soft); }
+.chips { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
+.chip {
+  padding: 2px 8px; border: 1px solid var(--rule); border-radius: 2px; background: var(--ground);
+  color: var(--dmg-4); font-size: 12px;
+}
+.chip.direct { color: var(--ink-soft); border-style: dashed; }
+.chip b { color: var(--hot); font-weight: 500; }
+.term-cost { display: flex; flex-wrap: wrap; gap: 4px 8px; margin-top: 8px; }
+.term-cost span {
+  font-size: 10px; padding: 2px 6px; border-radius: 2px;
+  border: 1px solid var(--rule); background: var(--ground); color: var(--ink-soft);
+  font-variant-numeric: tabular-nums;
+}
+.term-cost span b { color: var(--dmg-4); font-weight: 600; }
+
+/* Cost -------------------------------------------------------------------- */
+
+.stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 14px 20px; }
+.stat .k { font-size: 10px; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-soft); }
+.stat .v { font-size: 19px; font-variant-numeric: tabular-nums; }
+.stat .v.hot { color: var(--hot); }
+.stat .v.good { color: var(--good); }
+.stat .n { font-size: 10px; color: var(--ink-soft); }
+
+.bar { display: flex; height: 30px; border: 1px solid var(--rule); border-radius: 2px; overflow: hidden; margin-top: 14px; }
+.bar div { display: flex; align-items: center; justify-content: center; font-size: 10px; color: #fff; min-width: 0; overflow: hidden; }
+.legend { display: flex; flex-wrap: wrap; gap: 4px 16px; margin-top: 10px; font-size: 11px; }
+.legend span { display: flex; align-items: center; gap: 6px; color: var(--ink-soft); }
+.legend i { width: 11px; height: 11px; display: inline-block; border-radius: 1px; }
+
+table { width: 100%; border-collapse: collapse; font-size: 12px; }
+th, td { text-align: left; padding: 5px 10px; border-bottom: 1px solid var(--rule); white-space: nowrap; }
+th { font-weight: 500; color: var(--ink-soft); }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+.table-wrap { max-height: 320px; overflow: auto; border: 1px solid var(--rule); background: var(--panel); border-radius: 2px; margin-top: 14px; }
+.table-wrap thead th { position: sticky; top: 0; background: var(--panel); box-shadow: inset 0 -1px 0 var(--rule); z-index: 1; }
+.table-wrap tr:last-child td { border-bottom: 0; }
+td.word { color: var(--dmg-4); }
+
+/* Map --------------------------------------------------------------------- */
+
+.map { width: 100%; display: block; }
+.map-note { font-size: 11px; color: var(--ink-soft); margin-top: 8px; }
+
+/* Results ----------------------------------------------------------------- */
+
+.hit { border-top: 1px solid var(--rule); padding: 10px 0; }
+.hit:first-child { border-top: 0; }
+.hit .ref { font-size: 11px; color: var(--hot); }
+.hit .text { color: var(--ink); font-size: 14px; line-height: 1.65; }
+.hit .text mark { background: transparent; color: var(--hot); font-weight: 600; }
+.results-head { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 8px; }
+.results-head .count { font-size: 19px; color: var(--dmg-4); font-variant-numeric: tabular-nums; }
+.results-head .agree { font-size: 11px; color: var(--good); }
+.results-head .agree.bad { color: var(--warn); }
+
+.note { font-size: 11px; color: var(--ink-soft); margin-top: 12px; max-width: 88ch; }
+.note b { color: var(--ink); font-weight: 500; }
+footer { margin-top: 44px; font-size: 11px; color: var(--ink-soft); }
+footer a { color: var(--hot); }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<p class="eyebrow">RPR1 · YLK1 · query path</p>
+<h1>Searching both codecs</h1>
+<p class="thesis">
+  The Franklin machines took a query like <code>God? love?</code>: a trailing question mark expanded a
+  word against the words actually in the lexicon, matching regardless of case, and several terms were
+  an AND over verses. <b>Two sets, and a verse has to contain a member of each.</b> That is the query
+  this page runs, against both containers, counting every byte each one has to read to answer it.
+</p>
+<p class="thesis">
+  The comparison is the whole point of YLK1's design. RPR1 stores text and only text, so it has no
+  choice but to read all of it. YLK1 stores each word as a pointer to its own next occurrence, which
+  means the chains <i>are</i> the posting lists — the index is not a second structure to be read, it is
+  the same bytes as the text.
+</p>
+
+<div class="panel" style="margin-top:20px">
+  <div class="query">
+    <input type="search" id="q" value="God? love?" spellcheck="false" aria-label="query">
+    <button class="primary" id="run">Search</button>
+  </div>
+  <div class="examples" id="examples"></div>
+  <div class="status" id="status">loading…</div>
+</div>
+
+<section id="app" hidden>
+
+<div class="stage-label"><span class="num">01</span> Expansion <span class="hint">what the question mark grew into</span></div>
+<div class="panel" id="expansion"></div>
+<p class="note" id="expansion-note"></p>
+
+<section>
+<div class="stage-label"><span class="num">02</span> What the query cost <span class="hint">bytes each container had to read</span></div>
+<div class="two">
+  <div class="panel">
+    <div class="codec-head"><h3>RPR1</h3><span class="sub">text only, no index</span></div>
+    <div class="stat-grid" id="rpr-stats"></div>
+    <div class="bar" id="rpr-bar"></div>
+    <div class="legend" id="rpr-legend"></div>
+  </div>
+  <div class="panel">
+    <div class="codec-head ylk"><h3>YLK1</h3><span class="sub">the chains are the posting lists</span></div>
+    <div class="stat-grid" id="ylk-stats"></div>
+    <div class="bar" id="ylk-bar"></div>
+    <div class="legend" id="ylk-legend"></div>
+  </div>
+</div>
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        <th>word</th>
+        <th class="num">lexicon row</th>
+        <th class="num">occurrences</th>
+        <th class="num">chain bytes</th>
+        <th class="num">bits each</th>
+      </tr>
+    </thead>
+    <tbody id="word-costs"></tbody>
+  </table>
+</div>
+<p class="note" id="cost-note"></p>
+</section>
+
+<section>
+<div class="stage-label"><span class="num">03</span> Where the reads land <span class="hint">the whole file, left to right</span></div>
+<div class="panel">
+  <svg class="map" id="map" viewBox="0 0 1000 210" preserveAspectRatio="none" role="img" aria-label="memory map of both containers"></svg>
+  <div class="legend" id="map-legend"></div>
+  <p class="map-note" id="map-note"></p>
+</div>
+</section>
+
+<section>
+<div class="stage-label"><span class="num">04</span> Results <span class="hint">both codecs, same verses</span></div>
+<div class="panel">
+  <div class="results-head">
+    <span class="count" id="hit-count">—</span>
+    <span id="hit-label">verses</span>
+    <span class="agree" id="agree"></span>
+  </div>
+  <div id="hits"></div>
+</div>
+</section>
+
+</section>
+
+<footer>
+  <a href="demo.html">RPR1 demo</a> · <a href="demo-ylk1.html">YLK1 demo</a> ·
+  <a href="demo-verse.html">Finding John 3:16</a> ·
+  YLK1 after <a href="https://patents.google.com/patent/US5153831A/en">US 5,153,831</a>
+</footer>
+</div>
+
+<script src="repair-codec.js"></script>
+<script src="link-codec.js"></script>
+<script>
+(() => {
+  "use strict";
+  const $ = (id) => document.getElementById(id);
+  const fmt = (n) => Math.round(n).toLocaleString("en-US");
+  const hex = (n, width = 6) => "0x" + n.toString(16).toUpperCase().padStart(width, "0");
+  const escapeHtml = (s) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+  const kb = (bytes) => bytes >= 1024 ? (bytes / 1024).toFixed(1) + " KB" : fmt(bytes) + " B";
+  /** Bits needed to hold v, matching the codec's own width function. */
+  const bitWidth = (v) => {
+    let w = 0;
+    while (v >>> w) w++;
+    return Math.max(1, w);
+  };
+
+  const MARKERS = ["%", "$", "#", "@"];
+  // Private-use sentinels, so highlighting survives detokenize and escaping.
+  const OPEN = "\uE000";
+  const CLOSE = "\uE001";
+  const EXAMPLES = ["God? love?", "Melchizedek", "shepherd? sheep?", "love? neighbour?", "the light?", "fear? LORD"];
+
+  function load(src) {
+    return new Promise((resolve, reject) => {
+      const s = document.createElement("script");
+      s.src = src;
+      s.onload = resolve;
+      s.onerror = () => reject(new Error("could not load " + src));
+      document.head.appendChild(s);
+    });
+  }
+
+  function base64ToBytes(b64) {
+    const binary = atob(b64);
+    const out = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) out[i] = binary.charCodeAt(i);
+    return out;
+  }
+
+  const state = {};
+
+  // -------------------------------------------------------------------------
+  // Corpus structure
+  // -------------------------------------------------------------------------
+
+  /** Every verse as a term range, plus the term -> verse map the page checks against. */
+  function buildStructure(tokens, books) {
+    const verses = [];
+    let book = -1;
+    let chapter = 1;
+    let verse = 1;
+    let start = 0;
+    for (let i = 0; i < tokens.length; i++) {
+      const token = tokens[i];
+      if (token === "%") {
+        book++;
+        chapter = 1;
+        verse = 1;
+        start = i + 1;
+        continue;
+      }
+      if (token !== "@" && token !== "#" && token !== "$") continue;
+      verses.push({ start, end: i, book, chapter, verse });
+      if (token === "#") {
+        chapter++;
+        verse = 1;
+      } else if (token === "@") {
+        verse++;
+      }
+      start = i + 1;
+    }
+    const verseOf = new Int32Array(tokens.length).fill(-1);
+    verses.forEach((v, i) => {
+      for (let t = v.start; t <= v.end; t++) verseOf[t] = i;
+    });
+    let longest = 0;
+    for (const v of verses) longest = Math.max(longest, v.end - v.start);
+    return { verses, verseOf, longest, books };
+  }
+
+  const referenceOf = (v) => `${state.structure.books[v.book]} ${v.chapter}:${v.verse}`;
+
+  // -------------------------------------------------------------------------
+  // Lexicon lookup — a front-coded list has no index, so a lookup is a walk
+  // -------------------------------------------------------------------------
+
+  /** Cumulative stored bytes, so "how far in is row N" is one subtraction. */
+  function lexiconPrefix(lexicon, suffixes) {
+    const sizes = RePair.lexiconEntrySizes(lexicon, suffixes);
+    const prefix = new Float64Array(sizes.length + 1);
+    for (let i = 0; i < sizes.length; i++) prefix[i + 1] = prefix[i] + sizes[i];
+    return prefix;
+  }
+
+  const lowerBound = (lexicon, value) => {
+    let low = 0;
+    let high = lexicon.length;
+    while (low < high) {
+      const mid = (low + high) >> 1;
+      if (lexicon[mid] < value) low = mid + 1;
+      else high = mid;
+    }
+    return low;
+  };
+
+  /** The case variants a query word is looked up under. */
+  function caseVariants(word) {
+    const lower = word.toLowerCase();
+    const capital = lower.charAt(0).toUpperCase() + lower.slice(1);
+    const upper = lower.toUpperCase();
+    return [...new Set([lower, capital, upper])];
+  }
+
+  /**
+   * Rows matching one query word in one lexicon. A trailing question mark takes
+   * the whole prefix range; without it, only the word itself, in any casing.
+   * The rows come back with the deepest one reached, which is what the walk cost
+   * is measured against.
+   */
+  function lookup(lexicon, word, wildcard) {
+    const rows = [];
+    let deepest = -1;
+    for (const variant of caseVariants(word)) {
+      let i = lowerBound(lexicon, variant);
+      while (i < lexicon.length) {
+        const entry = lexicon[i];
+        if (wildcard ? !entry.startsWith(variant) : entry !== variant) break;
+        rows.push(i);
+        deepest = Math.max(deepest, i);
+        i++;
+      }
+    }
+    rows.sort((a, b) => a - b);
+    return { rows, deepest };
+  }
+
+  // -------------------------------------------------------------------------
+  // Query
+  // -------------------------------------------------------------------------
+
+  function parseQuery(text) {
+    return text
+      .split(/[\s,;]+/)
+      .map((raw) => raw.trim())
+      .filter((raw) => raw.length > 0)
+      .map((raw) => {
+        const wildcard = raw.endsWith("?") || raw.endsWith("*");
+        const word = raw.replace(/[?*]+$/, "");
+        return { raw, word, wildcard };
+      })
+      .filter((term) => term.word.length > 0)
+      .slice(0, 7);
+  }
+
+  function expand(terms) {
+    const rpr = state.rpr;
+    const ylk = state.ylk;
+    return terms.map((term) => {
+      const inText = lookup(rpr.container.lexicon, term.word, term.wildcard);
+      const inLexicon = lookup(ylk.container.lexicon, term.word, term.wildcard);
+      const searchable = new Set(inLexicon.rows.map((row) => ylk.container.lexicon[row]));
+      const words = inText.rows.map((row) => ({
+        word: rpr.container.lexicon[row],
+        id: row,
+        searchable: searchable.has(rpr.container.lexicon[row]),
+      }));
+      return {
+        ...term,
+        words,
+        ids: inText.rows,
+        rows: inLexicon.rows,
+        rprWalk: inText.deepest < 0 ? 0 : rpr.lexPrefix[inText.deepest + 1],
+        ylkWalk: inLexicon.deepest < 0 ? 0 : ylk.lexPrefix[inLexicon.deepest + 1],
+      };
+    });
+  }
+
+  // -------------------------------------------------------------------------
+  // YLK1 — chase every chain, then find out which verses the hits fell in
+  // -------------------------------------------------------------------------
+
+  function ylkSearch(sets) {
+    const ylk = state.ylk;
+    const container = ylk.container;
+    const perWord = [];
+    const positions = sets.map(() => []);
+
+    // A term whose every spelling is a direct term is not in YLK1's lexicon and
+    // has no chain to follow. The format cannot answer at all — which is the
+    // patent's own trade: function words were declared not worth searching.
+    const blocked = sets.filter((set) => set.rows.length === 0);
+    if (blocked.length > 0) {
+      return {
+        blocked,
+        perWord: [],
+        candidates: 0,
+        positions: 0,
+        hits: [],
+        cost: {
+          lexicon: sets.reduce((n, set) => n + set.ylkWalk, 0),
+          firstOccurrence: 0, postings: 0, resolution: 0, resolutionByChapter: 0, scans: 0, spans: [],
+        },
+      };
+    }
+
+    sets.forEach((set, setIndex) => {
+      for (const row of set.rows) {
+        const word = container.lexicon[row];
+        const found = Ylk1.search(container, word);
+        let bits = 0;
+        for (const position of found.positions) bits += ylk.cost.bits[position];
+        perWord.push({ word, row, set: setIndex, occurrences: found.positions.length, hops: found.hops, bits, positions: found.positions });
+        for (const position of found.positions) positions[setIndex].push(position);
+      }
+    });
+    for (const list of positions) list.sort((a, b) => a - b);
+
+    // A verse is at most this long, so a position with no partner inside that
+    // window cannot be in a verse that matches, and never needs resolving.
+    const window = state.structure.longest;
+    const near = (list, position) => {
+      let low = 0;
+      let high = list.length - 1;
+      while (low <= high) {
+        const mid = (low + high) >> 1;
+        if (list[mid] < position - window) low = mid + 1;
+        else if (list[mid] > position + window) high = mid - 1;
+        else return true;
+      }
+      return false;
+    };
+
+    const driver = positions.reduce((a, b) => (a.length <= b.length ? a : b), positions[0] || []);
+    const candidates = sets.length === 1
+      ? (positions[0] || []).slice()
+      : driver.filter((position) => positions.every((list) => list === driver || near(list, position)));
+
+    // The candidates are positions; a verse reference needs the markers between
+    // an anchor and the position, which means a scan from the nearest anchor.
+    const resolution = resolveVerses(candidates);
+
+    // Group every position by verse, but only inside verses a candidate opened.
+    const seen = new Map();
+    const wanted = new Set(resolution.verseOfCandidate.values());
+    positions.forEach((list, setIndex) => {
+      for (const position of list) {
+        const verse = state.structure.verseOf[position];
+        if (verse < 0 || !wanted.has(verse)) continue;
+        seen.set(verse, (seen.get(verse) ?? 0) | (1 << setIndex));
+      }
+    });
+    const all = (1 << sets.length) - 1;
+    const hits = [...seen.entries()].filter(([, mask]) => mask === all).map(([verse]) => verse).sort((a, b) => a - b);
+
+    const firstOccurrenceBits = perWord.length * state.ylk.rowBits;
+    const postingsBits = perWord.reduce((n, w) => n + w.bits, 0);
+    return {
+      blocked: [],
+      perWord,
+      candidates: candidates.length,
+      positions: positions.reduce((n, list) => n + list.length, 0),
+      hits,
+      cost: {
+        lexicon: sets.reduce((n, set) => n + set.ylkWalk, 0),
+        firstOccurrence: firstOccurrenceBits / 8,
+        postings: postingsBits / 8,
+        resolution: resolution.bits / 8,
+        resolutionByChapter: resolution.chapterBits / 8,
+        scans: resolution.scans,
+        spans: resolution.spans,
+      },
+    };
+  }
+
+  /**
+   * What it costs to turn candidate positions into verse references: for each
+   * anchored region holding candidates, a scan from the anchor to the last one.
+   * The markers are direct terms, so the scan itself is just reading codes.
+   */
+  function resolveVerses(candidates) {
+    const ylk = state.ylk;
+    const anchors = ylk.container.anchors;
+    const lastIn = new Map();
+    for (const position of candidates) {
+      const anchor = Ylk1.anchorFor(anchors, position);
+      if (anchor < 0) continue;
+      lastIn.set(anchor, Math.max(lastIn.get(anchor) ?? -1, position));
+    }
+    let bits = 0;
+    const spans = [];
+    for (const [anchor, last] of lastIn) {
+      bits += ylk.bitAt[last + 1] - ylk.bitAt[anchors[anchor].term];
+      spans.push({ from: anchors[anchor].term, to: last + 1 });
+    }
+
+    // The same walk against a finer table, to price what granularity buys.
+    const chapters = state.chapterAnchors;
+    const lastInChapter = new Map();
+    for (const position of candidates) {
+      const anchor = chapterAnchorFor(chapters, position);
+      if (anchor < 0) continue;
+      lastInChapter.set(anchor, Math.max(lastInChapter.get(anchor) ?? -1, position));
+    }
+    let chapterBits = 0;
+    for (const [anchor, last] of lastInChapter) chapterBits += ylk.bitAt[last + 1] - ylk.bitAt[chapters[anchor]];
+
+    const verseOfCandidate = new Map();
+    for (const position of candidates) {
+      const verse = state.structure.verseOf[position];
+      if (verse >= 0) verseOfCandidate.set(position, verse);
+    }
+    return { bits, chapterBits, scans: lastIn.size, spans, verseOfCandidate };
+  }
+
+  function chapterAnchorFor(terms, position) {
+    let low = 0;
+    let high = terms.length - 1;
+    let found = -1;
+    while (low <= high) {
+      const mid = (low + high) >> 1;
+      if (terms[mid] <= position) {
+        found = mid;
+        low = mid + 1;
+      } else high = mid - 1;
+    }
+    return found;
+  }
+
+  // -------------------------------------------------------------------------
+  // Rendering
+  // -------------------------------------------------------------------------
+
+  function renderExpansion(sets) {
+    $("expansion").innerHTML = sets.map((set) => {
+      const chips = set.words.length === 0
+        ? `<span class="chip direct">no word in the lexicon starts with that</span>`
+        : set.words.slice(0, 60).map((w) =>
+            `<span class="chip${w.searchable ? "" : " direct"}">${escapeHtml(w.word)}${w.searchable ? "" : " <b>·</b> direct"}</span>`).join("");
+      const extra = set.words.length > 60 ? `<span class="chip">+${fmt(set.words.length - 60)} more</span>` : "";
+      const how = set.wildcard
+        ? `every lexicon entry starting with ${JSON.stringify(set.word)}, in any casing`
+        : `${JSON.stringify(set.word)} exactly, in any casing`;
+      return `<div class="term-block">
+        <div class="term-head"><span class="q">${escapeHtml(set.raw)}</span><span class="how">${escapeHtml(how)}</span></div>
+        <div class="chips">${chips}${extra}</div>
+        <div class="term-cost">
+          <span>words <b>${fmt(set.words.length)}</b></span>
+          <span>searchable in YLK1 <b>${fmt(set.rows.length)}</b></span>
+          <span>RPR1 word-list walk <b>${kb(set.rprWalk)}</b></span>
+          <span>YLK1 word-list walk <b>${kb(set.ylkWalk)}</b></span>
+        </div>
+      </div>`;
+    }).join("");
+
+    const unsearchable = sets.filter((set) => set.rows.length === 0 && set.words.length > 0);
+    $("expansion-note").innerHTML =
+      `Both lexicons are front-coded and sorted, so a lookup is a walk from the front of the section — there
+       is no index into a word list that is stored as differences from its neighbour. That is also what makes
+       the expansion cheap once you are there: the words a question mark wants are the rows immediately after
+       the prefix, already in hand.` +
+      (unsearchable.length > 0
+        ? ` <b>${unsearchable.map((s) => escapeHtml(s.raw)).join(", ")} is not in YLK1's lexicon at all</b> — it
+           is a direct term, one of the 254 function words and symbols the format writes literally and never
+           links, exactly as the patent's FIG. 3 describes. YLK1 cannot search it; it would have to fall back
+           to a scan, which is the one thing it never does otherwise.`
+        : "");
+  }
+
+  function stat(k, v, note, cls) {
+    return `<div class="stat"><div class="k">${k}</div><div class="v${cls ? " " + cls : ""}">${v}</div><div class="n">${note || ""}</div></div>`;
+  }
+
+  function bar(parts) {
+    const total = parts.reduce((n, p) => n + p.bytes, 0) || 1;
+    return parts.filter((p) => p.bytes > 0)
+      .map((p) => `<div style="flex:${p.bytes / total};background:${p.color}" title="${p.label}: ${kb(p.bytes)}">` +
+        (p.bytes / total > 0.12 ? escapeHtml(p.label) : "") + "</div>").join("");
+  }
+
+  function legend(parts) {
+    return parts.filter((p) => p.bytes > 0)
+      .map((p) => `<span><i style="background:${p.color}"></i>${escapeHtml(p.label)} ${kb(p.bytes)}</span>`).join("");
+  }
+
+  function renderCost(sets, rprResult, ylkResult, rprLexBytes) {
+    const rprParts = [
+      { label: "rule table", bytes: rprResult.cost.rules, color: "#3d7fd9" },
+      { label: "stream", bytes: rprResult.cost.stream, color: "#2a5aa8" },
+      { label: "word list", bytes: rprLexBytes, color: "#008a63" },
+    ];
+    const rprTotal = rprParts.reduce((n, p) => n + p.bytes, 0);
+
+    const ylkParts = [
+      { label: "word list", bytes: ylkResult.cost.lexicon, color: "#008a63" },
+      { label: "first-occurrence", bytes: ylkResult.cost.firstOccurrence, color: "#e8b923" },
+      { label: "chains", bytes: ylkResult.cost.postings, color: "#ff6b9a" },
+      { label: "verse resolution", bytes: ylkResult.cost.resolution, color: "#2a5aa8" },
+    ];
+    const ylkTotal = ylkParts.reduce((n, p) => n + p.bytes, 0);
+    state.totals = { rpr: rprTotal, ylk: ylkTotal };
+
+    $("rpr-stats").innerHTML =
+      stat("bytes read", kb(rprTotal), "every query, whatever it asks", "hot") +
+      stat("stream", kb(rprResult.cost.stream), "all of it — there is nowhere else to look") +
+      stat("rule table", kb(rprResult.cost.rules), "one pass, marking rules that contain a hit") +
+      stat("tokens expanded", fmt(rprResult.cost.expansions), `of ${fmt(state.rpr.sequenceLength)}, only the marked ones`);
+    $("rpr-bar").innerHTML = bar(rprParts);
+    $("rpr-legend").innerHTML = legend(rprParts);
+
+    const byChapter = ylkTotal - ylkResult.cost.resolution + ylkResult.cost.resolutionByChapter;
+    $("ylk-stats").innerHTML = ylkResult.blocked.length > 0
+      ? stat("cannot answer", "—", `${ylkResult.blocked.map((s) => escapeHtml(s.raw)).join(", ")} is a direct term`, "hot") +
+        stat("word list", kb(ylkResult.cost.lexicon), "the walk that found nothing to link to") +
+        stat("chains", "0", "there is no chain for a term that was never linked") +
+        stat("what it would take", kb(rprTotal), "a scan, the same one RPR1 does")
+      : stat("bytes read", kb(ylkTotal), `${(rprTotal / Math.max(ylkTotal, 1)).toFixed(1)}× less than RPR1`, "good") +
+        stat("chain postings", kb(ylkResult.cost.postings), `${fmt(ylkResult.positions)} occurrences, ${fmt(ylkResult.perWord.reduce((n, w) => n + w.hops, 0))} hops`) +
+        stat("verse resolution", kb(ylkResult.cost.resolution), `${fmt(ylkResult.candidates)} positions, ${fmt(ylkResult.cost.scans)} scans from a book anchor`, ylkResult.cost.resolution > ylkResult.cost.postings ? "hot" : "") +
+        stat("with a chapter table", kb(byChapter), `${(rprTotal / Math.max(byChapter, 1)).toFixed(1)}× less than RPR1`, "good");
+    $("ylk-bar").innerHTML = bar(ylkParts);
+    $("ylk-legend").innerHTML = legend(ylkParts);
+
+    const rows = ylkResult.perWord.slice().sort((a, b) => b.occurrences - a.occurrences).slice(0, 200);
+    $("word-costs").innerHTML = rows.length === 0
+      ? `<tr><td colspan="5">nothing searchable in this query</td></tr>`
+      : rows.map((w) => `<tr>
+          <td class="word">${escapeHtml(w.word)}</td>
+          <td class="num">${fmt(w.row)}</td>
+          <td class="num">${fmt(w.occurrences)}</td>
+          <td class="num">${kb(w.bits / 8)}</td>
+          <td class="num">${(w.bits / Math.max(w.occurrences, 1)).toFixed(1)}</td>
+        </tr>`).join("");
+
+    const chapterSaving = ylkResult.cost.resolution - ylkResult.cost.resolutionByChapter;
+    const walkNote =
+      `<br><br>Both codecs also pay ${kb(Math.max(rprLexBytes, ylkResult.cost.lexicon))} just to look the words up, and for the
+       same reason: a front-coded word list has no index, so a lookup walks from the front of the section.
+       The cartridge answered exactly this with a 2,625-byte skip index at <code>0x0C2A</code>, which neither
+       container here has.`;
+    if (ylkResult.blocked.length > 0) {
+      $("cost-note").innerHTML =
+        `<b>${ylkResult.blocked.map((s) => escapeHtml(s.raw)).join(", ")} is one of YLK1's 254 direct terms</b> — written
+         into the stream literally, never linked, and therefore not in its lexicon and not on any chain. The format
+         has no answer for it at any price: to find the verses it would have to read the stream end to end, which is
+         what RPR1 does for every query. The patent is explicit that this is the deal — "prepositions, conjunctions,
+         common verbs and other words that are extremely common are not search words" — and it is what buys the rest
+         of the stream its size.` + walkNote;
+      return;
+    }
+    $("cost-note").innerHTML =
+      `RPR1's number does not move with the query. Marking the rule table is a single bottom-up pass — a rule
+       contains a wanted word if either half does — and after that the stream scan is a table lookup per token,
+       expanding only the tokens the marks flagged. It still reads
+       <b>${kb(rprResult.cost.rules + rprResult.cost.stream)}</b>, because a container with no index has no
+       smaller answer available to it, and it would read the same amount for a word that occurs twice.` +
+      `<br><br>YLK1 reads the chains and nothing else: ${fmt(ylkResult.positions)} occurrences cost
+       ${kb(ylkResult.cost.postings)}, because an occurrence <i>is</i> a delta of a few bits and the posting list
+       is the text. What it then pays for is the thing the patent's format does not store —
+       <b>which verse a position is in</b>. With only the 66 book anchors, that is
+       ${fmt(ylkResult.cost.scans)} scan${ylkResult.cost.scans === 1 ? "" : "s"} costing
+       ${kb(ylkResult.cost.resolution)}. A chapter table instead — ${fmt(state.chapterAnchors.length)} entries,
+       about ${kb(state.chapterAnchorBytes)} — would bring that to ${kb(ylkResult.cost.resolutionByChapter)},
+       ${chapterSaving > 0 ? `saving ${kb(chapterSaving)} on this query` : "no better on this query"}. Granularity
+       of the anchor table, not the link format, is what prices a reference.` + walkNote;
+  }
+
+  function renderMap(rprResult, ylkResult, positionsSample) {
+    const W = 1000;
+    const rpr = state.rpr;
+    const ylk = state.ylk;
+    const scale = Math.max(rpr.offsets.total, ylk.sizes.total);
+    const x = (byte) => (byte / scale) * W;
+    const svg = [];
+
+    const band = (y, from, to, color, label, opacity) =>
+      `<rect x="${x(from)}" y="${y}" width="${Math.max(0.6, x(to) - x(from))}" height="26" fill="${color}" opacity="${opacity}"><title>${label}</title></rect>`;
+
+    // RPR1: the rule table and the stream, both end to end.
+    svg.push(`<text x="0" y="16" fill="#8b96b3" font-size="11" font-family="monospace">RPR1 — reads ${kb(state.totals.rpr)} of ${fmt(rpr.offsets.total)}</text>`);
+    svg.push(band(24, 0, rpr.offsets.escapeTable, "#008a63", "word list", 0.45));
+    svg.push(band(24, rpr.offsets.lexicon, rpr.offsets.lexicon + rpr.lexWalk, "#008a63", "word-list walk", 0.95));
+    svg.push(band(24, rpr.offsets.rules, rpr.offsets.anchors, "#3d7fd9", "rule table, read end to end", 0.95));
+    svg.push(band(24, rpr.offsets.anchors, rpr.offsets.stream, "#e8b923", "anchor table", 0.5));
+    svg.push(band(24, rpr.offsets.stream, rpr.offsets.total, "#ff6b9a", "stream, read end to end", 0.95));
+
+    // YLK1: the word list to the query's rows, then scattered chain entries.
+    const streamStart = ylk.container.streamStart;
+    svg.push(`<text x="0" y="112" fill="#8b96b3" font-size="11" font-family="monospace">YLK1 — reads ${kb(state.totals.ylk)} of ${fmt(ylk.sizes.total)}</text>`);
+    svg.push(band(120, 0, ylk.sizes.header + ylk.sizes.directTable + ylk.sizes.lexicon, "#008a63", "word list", 0.45));
+    svg.push(band(120, ylk.sizes.header + ylk.sizes.directTable, ylk.sizes.header + ylk.sizes.directTable + ylkResult.cost.lexicon, "#008a63", "word-list walk", 0.95));
+    svg.push(band(120, streamStart - ylk.sizes.anchors, streamStart, "#e8b923", "anchor table", 0.9));
+    svg.push(band(120, streamStart, ylk.sizes.total, "#2a5aa8", "stream", 0.35));
+    for (const span of ylkResult.cost.spans) {
+      const from = streamStart + Math.floor(ylk.bitAt[span.from] / 8);
+      const to = streamStart + Math.ceil(ylk.bitAt[span.to] / 8);
+      svg.push(band(120, from, to, "#5b9dff", "scanned to place a hit in a verse", 0.85));
+    }
+    for (const position of positionsSample) {
+      const byte = streamStart + Math.floor(ylk.bitAt[position] / 8);
+      svg.push(`<rect x="${x(byte)}" y="116" width="1" height="34" fill="#ff6b9a" opacity="0.85"/>`);
+    }
+
+    svg.push(`<text x="0" y="180" fill="#8b96b3" font-size="11" font-family="monospace">0</text>`);
+    svg.push(`<text x="${W}" y="180" fill="#8b96b3" font-size="11" font-family="monospace" text-anchor="end">${fmt(scale)}</text>`);
+    $("map").innerHTML = svg.join("");
+
+    $("map-legend").innerHTML = [
+      ["#008a63", "word list"],
+      ["#3d7fd9", "rule table"],
+      ["#e8b923", "anchor table"],
+      ["#5b9dff", "scanned to name a verse"],
+      ["#ff6b9a", "read for this query"],
+    ].map(([c, l]) => `<span><i style="background:${c}"></i>${l}</span>`).join("");
+
+    $("map-note").innerHTML =
+      `The top row is solid because it has to be. The bottom row is the same query answered by touching
+       ${fmt(positionsSample.length)} places in the stream${positionsSample.length < ylkResult.positions ? ` (a sample of ${fmt(ylkResult.positions)})` : ""} —
+       every tick is one occurrence of one of the expanded words, found by following the previous occurrence's
+       delta rather than by looking anything up.`;
+  }
+
+  function renderHits(sets, rprHits, ylkResult) {
+    const ylkHits = ylkResult.hits;
+    const matchWords = new Set();
+    for (const set of sets) for (const w of set.words) matchWords.add(w.word);
+
+    const rprSet = new Set(rprHits);
+    const agree = ylkHits.length === rprHits.length && ylkHits.every((v) => rprSet.has(v));
+    $("hit-count").textContent = fmt(rprHits.length);
+    $("hit-label").textContent = rprHits.length === 1 ? "verse" : "verses";
+    $("agree").textContent = ylkResult.blocked.length > 0
+      ? `found by RPR1's scan — YLK1 cannot answer this one`
+      : agree
+        ? "both codecs returned the same verses"
+        : `disagreement: RPR1 ${fmt(rprHits.length)}, YLK1 ${fmt(ylkHits.length)}`;
+    $("agree").classList.toggle("bad", ylkResult.blocked.length === 0 && !agree);
+
+    const shown = rprHits.slice(0, 40);
+    $("hits").innerHTML = shown.length === 0
+      ? `<p class="note">No verse contains a word from every set.</p>`
+      : shown.map((index) => {
+          const verse = state.structure.verses[index];
+          const words = state.tokens.slice(verse.start, verse.end);
+          const text = RePair.detokenize(words.map((w) => (matchWords.has(w) ? "" + w + "" : w)));
+          return `<div class="hit">
+            <div class="ref">${escapeHtml(referenceOf(verse))}</div>
+            <div class="text">${escapeHtml(text).replace(//g, "<mark>").replace(//g, "</mark>")}</div>
+          </div>`;
+        }).join("") + (rprHits.length > shown.length
+          ? `<p class="note">${fmt(rprHits.length - shown.length)} more not shown.</p>`
+          : "");
+  }
+
+  // -------------------------------------------------------------------------
+  // Run
+  // -------------------------------------------------------------------------
+
+  function run() {
+    const terms = parseQuery($("q").value);
+    if (terms.length === 0) {
+      $("status").textContent = "type a word, optionally with a trailing ?";
+      return;
+    }
+    const started = performance.now();
+    const sets = expand(terms);
+    if (sets.some((set) => set.ids.length === 0)) {
+      $("app").hidden = false;
+      renderExpansion(sets);
+      $("status").textContent = "nothing in the lexicon matches one of those terms";
+      $("hits").innerHTML = "";
+      $("hit-count").textContent = "0";
+      $("agree").textContent = "";
+      return;
+    }
+
+    const boundaries = MARKERS.map((m) => state.rpr.container.lexicon.indexOf(m)).filter((i) => i >= 0);
+    const rprResult = RePair.searchStream(state.rpr.container, sets.map((s) => s.ids), boundaries);
+    const rprHits = rprResult.hits
+      .map((hit) => state.structure.verseOf[hit.end - 1])
+      .filter((v) => v >= 0);
+
+    const ylkResult = ylkSearch(sets);
+    const rprLexBytes = sets.reduce((n, set) => n + set.rprWalk, 0);
+    state.rpr.lexWalk = Math.max(...sets.map((set) => set.rprWalk));
+
+    renderExpansion(sets);
+    renderCost(sets, rprResult, ylkResult, rprLexBytes);
+
+    const sample = [];
+    const stride = Math.max(1, Math.ceil(ylkResult.positions / 4000));
+    let n = 0;
+    for (const word of ylkResult.perWord) {
+      for (const position of word.positions) if (n++ % stride === 0) sample.push(position);
+    }
+    renderMap(rprResult, ylkResult, sample);
+    renderHits(sets, rprHits, ylkResult);
+
+    $("status").textContent =
+      `${fmt(rprHits.length)} verses · RPR1 read ${kb(state.totals.rpr)} · ` +
+      (ylkResult.blocked.length > 0 ? "YLK1 cannot search a direct term" : `YLK1 read ${kb(state.totals.ylk)}`) +
+      ` · ${(performance.now() - started).toFixed(0)} ms`;
+    $("app").hidden = false;
+  }
+
+  async function boot() {
+    try {
+      $("examples").innerHTML = EXAMPLES.map((q) => `<button data-q="${escapeHtml(q)}">${escapeHtml(q)}</button>`).join("");
+      for (const button of $("examples").querySelectorAll("button")) {
+        button.addEventListener("click", () => {
+          $("q").value = button.dataset.q;
+          run();
+        });
+      }
+
+      $("status").textContent = "loading corpus…";
+      if (!window.KJV_TEXT) await load("kjv-data.js");
+      if (!window.KJV_PREENCODED) await load("kjv-preencoded.js");
+      if (!window.KJV_SUFFIXES) await load("kjv-suffixes.js");
+
+      $("status").textContent = "tokenizing…";
+      await new Promise((r) => setTimeout(r, 0));
+      state.tokens = RePair.tokenize(window.KJV_TEXT);
+      state.structure = buildStructure(state.tokens, window.KJV_BOOKS);
+
+      $("status").textContent = "opening the RPR1 container…";
+      await new Promise((r) => setTimeout(r, 0));
+      const bytes = base64ToBytes(window.KJV_PREENCODED.bytes);
+      const container = RePair.deserialize(bytes);
+      const sizes = RePair.measure(container);
+      const streamStart = bytes.length - container.stream.length;
+      state.rpr = {
+        bytes,
+        container,
+        sizes,
+        sequenceLength: window.KJV_PREENCODED.stats.sequenceLength,
+        offsets: {
+          lexicon: sizes.header + sizes.suffixTable,
+          escapeTable: streamStart - sizes.anchors - sizes.rules - sizes.escapeTable,
+          rules: streamStart - sizes.anchors - sizes.rules,
+          anchors: streamStart - sizes.anchors,
+          stream: streamStart,
+          total: bytes.length,
+        },
+        lexPrefix: lexiconPrefix(container.lexicon, container.suffixes),
+      };
+
+      $("status").textContent = "encoding YLK1…";
+      await new Promise((r) => setTimeout(r, 0));
+      const anchors = [];
+      state.tokens.forEach((token, i) => {
+        if (token === "%") anchors.push(i);
+      });
+      const encoded = Ylk1.encode(window.KJV_TEXT, {
+        directTermCount: 254,
+        split: false,
+        shortcutInterval: 0,
+        coder: "huffman",
+        contextDirectTerms: 128,
+        suffixes: window.KJV_SUFFIXES,
+        anchors,
+      });
+      const linkContainer = Ylk1.open(encoded.bytes);
+      const cost = Ylk1.measureStream(linkContainer);
+      const bitAt = new Float64Array(linkContainer.termCount + 1);
+      for (let i = 0; i < linkContainer.termCount; i++) bitAt[i + 1] = bitAt[i] + cost.bits[i];
+      state.ylk = {
+        bytes: encoded.bytes,
+        sizes: encoded.sizes,
+        container: linkContainer,
+        cost,
+        bitAt,
+        rowBits: bitWidth(Math.max(linkContainer.lexicon.length - 1, 1)),
+        lexPrefix: lexiconPrefix(linkContainer.lexicon, window.KJV_SUFFIXES),
+      };
+
+      // A finer anchor table, priced but not stored: one entry per chapter.
+      const chapterAnchors = [];
+      let lastChapter = -1;
+      state.structure.verses.forEach((verse) => {
+        const key = verse.book * 1000 + verse.chapter;
+        if (key === lastChapter) return;
+        lastChapter = key;
+        chapterAnchors.push(verse.start);
+      });
+      state.chapterAnchors = chapterAnchors;
+      state.chapterAnchorBytes = chapterAnchors.reduce((total, term, i) => {
+        const previous = i === 0 ? 0 : chapterAnchors[i - 1];
+        const varint = (v) => (v < 0x80 ? 1 : v < 0x4000 ? 2 : v < 0x200000 ? 3 : 4);
+        return total + varint(term - previous) + varint(Math.round(bitAt[term] - (i === 0 ? 0 : bitAt[previous]))) + 1;
+      }, 0);
+
+      $("run").addEventListener("click", run);
+      $("q").addEventListener("keydown", (e) => {
+        if (e.key === "Enter") run();
+      });
+      run();
+    } catch (e) {
+      $("status").textContent = "failed: " + String(e && e.message || e);
+      throw e;
+    }
+  }
+
+  boot();
+})();
+</script>
+</body>
+</html>

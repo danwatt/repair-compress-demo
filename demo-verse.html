@@ -313,6 +313,7 @@ footer a { color: var(--hot); }
 
 <footer>
   <a href="demo.html">RPR1 demo</a> · <a href="demo-ylk1.html">YLK1 demo</a> ·
+  <a href="demo-search.html">What a search costs</a> ·
   YLK1 after <a href="https://patents.google.com/patent/US5153831A/en">US 5,153,831</a> ·
   RPR1 after the 1993 Game Boy KJV
 </footer>
@@ -446,7 +447,7 @@ footer a { color: var(--hot); }
     const stream = rpr.container.stream;
     const threshold = rpr.container.threshold;
     let offset = anchor.offset;
-    let term = window.KJV_PREENCODED.anchors[bookIndex] - anchor.skip;
+    let term = rpr.container.anchors[bookIndex].term - anchor.skip;
 
     const tokens = [];
     const scanRuleIds = [];
@@ -634,7 +635,7 @@ footer a { color: var(--hot); }
 
   function renderSteps(rpr, ylk, walk, seek, bookIndex, chapter, verse, range) {
     const anchor = rpr.container.anchors[bookIndex];
-    const bookToken = window.KJV_PREENCODED.anchors[bookIndex];
+    const bookToken = rpr.container.anchors[bookIndex].term;
     const reference = `${state.books[bookIndex]} ${chapter}:${verse}`;
     const chaptersSkipped = chapter - 1;
     const versesSkipped = verse - 1;
@@ -989,7 +990,7 @@ footer a { color: var(--hot); }
     const linked = state.rows.filter((r) => r.chased.kind !== "direct").length;
     $("verdict").innerHTML =
       `Same verse, opposite bills. RPR1 pays on the way <i>in</i> — ${fmt(walk.scan.rules)} rule reads to notice
-       ${fmt(range.start - window.KJV_PREENCODED.anchors[state.bookIndex])} terms going past — and then names every word
+       ${fmt(range.start - state.rpr.container.anchors[state.bookIndex].term)} terms going past — and then names every word
        for nothing, because a token <b>is</b> the text. YLK1 walks in almost free, because the structure markers are
        direct terms it can count off the codes, and then pays ${fmt(seek.hops)} hops to answer the only question the
        stream deliberately does not: <b>which word is this?</b> ${fmt(linked)} of the ${fmt(range.end - range.start)}
@@ -1035,15 +1036,15 @@ footer a { color: var(--hot); }
       escapeHtml(RePair.detokenize(words));
 
     const walk = rprWalk(rpr, bookIndex, range);
-    const bookToken = window.KJV_PREENCODED.anchors[bookIndex];
+    const bookToken = rpr.container.anchors[bookIndex].term;
     const seek = Ylk1.readAnchored(ylk.bytes, bookIndex, range.end - range.start, range.start - bookToken);
 
     $("rpr-table-panel").innerHTML = rprTablePanel(rpr, bookIndex);
     $("ylk-table-panel").innerHTML = ylkTablePanel(ylk, bookIndex);
     $("table-note").innerHTML =
       `Without these tables neither reader can start anywhere but byte zero. With them, ${fmt(rpr.sizes.anchors)} bytes
-       in RPR1 and ${fmt(ylk.sizes.anchors)} in YLK1 — under 0.03% of either container — buy every book in the Bible
-       an entry point. The cartridge had the same table; this repository did not, until this page needed one.`;
+       in RPR1 and ${fmt(ylk.sizes.anchors)} in YLK1 — ${(100 * rpr.sizes.anchors / rpr.offsets.total).toFixed(2)}% of the
+       container — buy every book in the Bible an entry point. The cartridge had the same table; this repository did not, until this page needed one.`;
 
     renderSteps(rpr, ylk, walk, seek, bookIndex, chapter, verse, range);
     renderTrace(rpr, ylk, walk, range);

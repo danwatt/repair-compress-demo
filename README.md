@@ -28,6 +28,7 @@ Sources:
 | `demo.html`                                     | Interactive browser demo for inspecting encoded text byte by byte.  |
 | `demo-ylk1.html`                                | Interactive browser demo for YLK1: chain view, chase, and search.   |
 | `demo-verse.html`                               | Seeking one verse in both codecs, address by address.               |
+| `demo-search.html`                              | One query, both codecs, every byte each has to read.                |
 | `kjv.csv`                                       | Full King James Bible source data, one verse per row.               |
 | `kjv-data.js` / `kjv-preencoded.js`             | Generated browser data used by the demo.                            |
 | `build-kjv-data.js` / `build-kjv-preencoded.ts` | Scripts that regenerate the browser data.                           |
@@ -50,7 +51,7 @@ mise run clean            # remove generated build output
 Run `mise tasks` to list all available tasks. After starting the server, open
 <http://localhost:8080/demo.html>; browsers will not load the demo correctly over `file://`.
 
-`demo.html`, `demo-ylk1.html` and `demo-verse.html` are hand-edited. After changing `repair-codec.ts` or
+`demo.html`, `demo-ylk1.html`, `demo-verse.html` and `demo-search.html` are hand-edited. After changing `repair-codec.ts` or
 `link-codec.ts`, run `mise run build` to regenerate `repair-codec.js` and `link-codec.js`. The build
 and data tasks use mise source/output tracking and skip unchanged work.
 
@@ -62,8 +63,10 @@ nothing on the outside to say which, and YLK1's are Huffman codes with no byte b
 Both containers therefore carry an optional **anchor table**: a caller hands `encode` a list of
 ascending token positions and gets back one entry each, holding whatever a reader needs to resume
 there — a stream byte offset and a terminal skip count in RPR1, a bit offset and the preceding symbol
-in YLK1. The codecs know nothing about books; `demo-verse.html` and `build-kjv-preencoded.ts` anchor
-the 66 book starts, which costs 220 bytes in RPR1 and 248 in YLK1, under 0.03% of either container.
+in YLK1 — plus the token position itself, so the table also reads backwards: `anchorFor` turns a
+position into the region it fell in, which is what a search result needs to become a reference. The
+codecs know nothing about books; `demo-verse.html` and `build-kjv-preencoded.ts` anchor the 66 book
+starts, which costs 375 bytes in RPR1 and 403 in YLK1, under 0.05% of either container.
 
 `demo-verse.html` walks one verse — John 3:16 by default — from that table to the words on screen and
 counts every address touched, side by side. The two codecs turn out to pay in opposite places: RPR1
@@ -71,6 +74,32 @@ spends the seek (every token between the book and the verse has to be expanded, 
 the structure markers into rules) and then names each word for nothing, while YLK1 walks in almost
 free (its markers are direct terms, countable straight off the codes) and then pays 1,770 link hops
 to answer the one question its stream deliberately does not store — which word is this.
+
+## Searching
+
+`demo-search.html` runs the query the Franklin machines took — `God? love?`, where a trailing question
+mark expands a word against the words actually in the lexicon, matching regardless of case, and
+several terms are an AND over verses — against both containers, and counts what each one reads.
+
+RPR1 has no index, so `searchStream` does the only thing available: mark the rule table bottom up (a
+rule contains a wanted word if either half does), then scan the stream with a table lookup per token,
+expanding only what the marks flag. That is **897 KB every query**, the same for a word that occurs
+twice as for one that occurs four thousand times.
+
+YLK1 reads the chains, which *are* the posting lists: the 5,275 occurrences of `God?` and `love?`
+cost **6.4 KB**, because an occurrence is a delta of a few bits and there is no second structure to
+consult. What it then pays for is the one thing the format does not store — which verse a position is
+in. Against the 66 book anchors that costs 479 KB of scanning; against a chapter table (1,189 entries,
+about 5.8 KB) it would cost 57 KB. The link format is not what prices a reference; anchor granularity
+is.
+
+Both codecs also pay for the word list itself. A front-coded list has no index, so a lookup is a walk
+from the front of the section — which is what the cartridge's 2,625-byte skip index at `0x0C2A` was
+for, and neither container here has one.
+
+A query YLK1 cannot answer at all is `the light?`: `the` is one of its 254 direct terms, written into
+the stream literally and never linked, so it is not in the lexicon and has no chain. The patent says
+as much — function words "are not search words" — and that exclusion is what buys the stream its size.
 
 ## YLK1
 

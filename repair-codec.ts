@@ -632,12 +632,20 @@ export function expandToWords(token: number, container: Container): string[] {
 // from the first token, since a Re-Pair token expands to several words and a
 // boundary the caller cares about lands wherever it lands inside one.
 //
+// The entry carries the terminal position as well as the address, because a
+// reader needs the table in both directions: forwards to start at the 43rd book,
+// backwards to ask which book terminal 808,250 is in. Search needs the second
+// one — a hit is a position, and a position is not a reference until something
+// says which region it fell in.
+//
 // Which positions get an anchor is the caller's business — this codec knows
 // nothing about books. `demo-verse.html` anchors the 66 book starts.
 // ---------------------------------------------------------------------------
 
 /** A place in the stream a reader may start from without reading what precedes it. */
 export interface Anchor {
+  /** Terminal index this anchor names. */
+  term: number;
   /** Byte offset into the stream section, always at a token boundary. */
   offset: number;
   /** Terminals to discard from that token's expansion before the anchored one. */
@@ -680,7 +688,7 @@ export function planAnchors(
     if (next >= positions.length) break;
     const span = id < lexiconSize ? 1 : width[id - lexiconSize];
     while (next < positions.length && positions[next] < terminal + span) {
-      anchors.push({ offset, skip: positions[next] - terminal });
+      anchors.push({ term: positions[next], offset, skip: positions[next] - terminal });
       next++;
     }
     terminal += span;
@@ -692,15 +700,40 @@ export function planAnchors(
   return anchors;
 }
 
-/** What an anchor table costs on disk: ascending offsets stored as gaps. */
+/** What an anchor table costs on disk: both columns ascend, so both store gaps. */
 export function anchorTableBytes(anchors: readonly Anchor[]): number {
   let total = 0;
-  let previous = 0;
+  let previousTerm = 0;
+  let previousOffset = 0;
   for (const anchor of anchors) {
-    total += varintSize(anchor.offset - previous) + varintSize(anchor.skip);
-    previous = anchor.offset;
+    total += varintSize(anchor.term - previousTerm)
+      + varintSize(anchor.offset - previousOffset)
+      + varintSize(anchor.skip);
+    previousTerm = anchor.term;
+    previousOffset = anchor.offset;
   }
   return total;
+}
+
+/**
+ * The last anchor at or before a terminal position, or -1 before the first one.
+ * The table read the other way round: a search finds positions, and this is what
+ * turns a position into the region it fell in.
+ */
+export function anchorFor(anchors: readonly Anchor[], term: number): number {
+  let low = 0;
+  let high = anchors.length - 1;
+  let found = -1;
+  while (low <= high) {
+    const mid = (low + high) >> 1;
+    if (anchors[mid].term <= term) {
+      found = mid;
+      low = mid + 1;
+    } else {
+      high = mid - 1;
+    }
+  }
+  return found;
 }
 
 /**
@@ -732,6 +765,137 @@ export function readFrom(container: Container, anchor: Anchor, count: number): n
     }
   }
   return out;
+}
+
+// ---------------------------------------------------------------------------
+// Search — what it costs a format with no index at all
+//
+// RPR1 stores text and nothing else, so every query is a full scan. The naive
+// version expands every token and compares words, which is the whole file plus
+// the whole grammar walked once per token. The competent version uses the one
+// thing the container does give you: a rule is a fixed pair, so whether a rule
+// contains a wanted terminal is decidable once, bottom up, in a single forward
+// pass over the rule table. After that the stream scan is a table lookup per
+// token and expands only the tokens that flagged.
+//
+// The cost is therefore the rule table plus the stream, every time, whatever the
+// query — which is the number worth putting beside YLK1's chains.
+// ---------------------------------------------------------------------------
+
+/** A region of the text, delimited by the boundary terminals a caller names. */
+export interface SearchHit {
+  /** First terminal of the region. */
+  start: number;
+  /** Terminal index of the boundary that closed it. */
+  end: number;
+}
+
+export interface SearchCost {
+  /** Rule table bytes read to mark which rules contain what. */
+  rules: number;
+  /** Stream bytes read. All of them: there is nowhere else to look. */
+  stream: number;
+  /** Tokens expanded — only those a mark says are worth expanding. */
+  expansions: number;
+  /** Terminals those expansions produced. */
+  expandedTerminals: number;
+}
+
+export interface SearchResult {
+  /** Regions where at least one terminal from every set appeared. */
+  hits: SearchHit[];
+  /** Occurrences of each set over the whole text. */
+  counts: number[];
+  /** Regions the scan crossed. */
+  regions: number;
+  cost: SearchCost;
+}
+
+const BOUNDARY_BIT = 0x80;
+
+/**
+ * Regions containing at least one terminal from every set — the AND a search
+ * screen asks for. `sets` holds up to seven terminal-id sets; `boundaries` are
+ * the terminal ids that end a region.
+ */
+export function searchStream(
+  container: Container,
+  sets: readonly (readonly number[])[],
+  boundaries: readonly number[],
+): SearchResult {
+  if (sets.length > 7) throw new CodecError("searchStream takes at most seven sets");
+  const lexiconSize = container.lexicon.length;
+  const rules = container.rules;
+  const all = (1 << sets.length) - 1;
+
+  // Terminal marks, then rule marks bottom up. A rule is its two halves.
+  const terminalMark = new Uint8Array(lexiconSize);
+  sets.forEach((ids, i) => {
+    for (const id of ids) terminalMark[id] |= 1 << i;
+  });
+  for (const id of boundaries) terminalMark[id] |= BOUNDARY_BIT;
+
+  const ruleMark = new Uint8Array(rules.length);
+  const markOf = (id: number): number => (id < lexiconSize ? terminalMark[id] : ruleMark[id - lexiconSize]);
+  for (let i = 0; i < rules.length; i++) ruleMark[i] = markOf(rules[i][0]) | markOf(rules[i][1]);
+
+  const width = expansionWidths(rules, lexiconSize);
+  const widthOf = (id: number): number => (id < lexiconSize ? 1 : width[id - lexiconSize]);
+
+  const hits: SearchHit[] = [];
+  const counts = new Array<number>(sets.length).fill(0);
+  const cost: SearchCost = { rules: rules.length * 4, stream: container.stream.length, expansions: 0, expandedTerminals: 0 };
+
+  const stream = container.stream;
+  const threshold = container.threshold;
+  let term = 0;
+  let regionStart = 0;
+  let regions = 0;
+  let seen = 0;
+
+  for (let i = 0; i < stream.length; ) {
+    const lead = stream[i++];
+    let id: number;
+    if (lead < threshold) {
+      id = container.escapeTable[lead];
+      if (id === undefined) throw new CodecError(`escape code ${lead} is not in the table`);
+    } else {
+      if (i >= stream.length) throw new CodecError("stream ends mid-token");
+      id = ((lead - threshold) << 8) | stream[i++];
+    }
+
+    const mark = markOf(id);
+    if (mark === 0) {
+      term += widthOf(id);
+      continue;
+    }
+
+    // Something in here matters, so this is one of the few tokens worth opening.
+    const { terminals } = expand([id], rules, lexiconSize);
+    cost.expansions++;
+    cost.expandedTerminals += terminals.length;
+    for (const terminal of terminals) {
+      const terminalBits = terminalMark[terminal];
+      if (terminalBits & BOUNDARY_BIT) {
+        regions++;
+        if (seen === all && all !== 0) hits.push({ start: regionStart, end: term });
+        regionStart = term + 1;
+        seen = 0;
+      } else if (terminalBits !== 0) {
+        seen |= terminalBits;
+        for (let setIndex = 0; setIndex < sets.length; setIndex++) {
+          if (terminalBits & (1 << setIndex)) counts[setIndex]++;
+        }
+      }
+      term++;
+    }
+  }
+  if (seen === all && all !== 0 && regionStart < term) {
+    regions++;
+    hits.push({ start: regionStart, end: term });
+  }
+
+  return { hits, counts, regions, cost };
 }
 
 // ---------------------------------------------------------------------------
@@ -873,24 +1037,56 @@ export function planLexiconHeaderCodebook(entries: readonly LexiconEntry[]): Lex
   return best.map(({ shared, tag }) => [shared, tag] as const);
 }
 
+/** One entry as stored: `entry.bytes` with the codebook's header substituted. */
+function storedEntryBytes(
+  entry: LexiconEntry,
+  index: ReadonlyMap<string, number>,
+  codebookLength: number,
+): number {
+  const tag = lexiconEntryTag(entry);
+  const code = index.get(lexiconHeaderKey(entry.shared, tag));
+  const oldHeaderBytes = varintSize(entry.shared) + varintSize(tag);
+  const newHeaderBytes = code === undefined
+    ? varintSize(entry.shared + codebookLength) + varintSize(tag)
+    : varintSize(code);
+  return entry.bytes - oldHeaderBytes + newHeaderBytes;
+}
+
+const headerIndexOf = (codebook: readonly LexiconHeader[]): Map<string, number> => {
+  const index = new Map<string, number>();
+  codebook.forEach(([shared, tag], i) => index.set(lexiconHeaderKey(shared, tag), i));
+  return index;
+};
+
 function measureLexiconStorage(
   entries: readonly LexiconEntry[],
   codebook: readonly LexiconHeader[],
 ): number {
-  const index = new Map<string, number>();
-  codebook.forEach(([shared, tag], i) => index.set(lexiconHeaderKey(shared, tag), i));
+  const index = headerIndexOf(codebook);
   let bytes = 0;
   for (const [shared, tag] of codebook) bytes += varintSize(shared) + varintSize(tag);
-  for (const entry of entries) {
-    const tag = lexiconEntryTag(entry);
-    const code = index.get(lexiconHeaderKey(entry.shared, tag));
-    const oldHeaderBytes = varintSize(entry.shared) + varintSize(tag);
-    const newHeaderBytes = code === undefined
-      ? varintSize(entry.shared + codebook.length) + varintSize(tag)
-      : varintSize(code);
-    bytes += entry.bytes - oldHeaderBytes + newHeaderBytes;
-  }
+  for (const entry of entries) bytes += storedEntryBytes(entry, index, codebook.length);
   return bytes;
+}
+
+/**
+ * Bytes each lexicon entry occupies as stored, in list order. Front coding makes
+ * the word list a sequential walk — there is no index into it — so this is what
+ * says how far into the section a reader has to read to reach row N. Both codecs
+ * pack their word list this way, so it prices either one.
+ */
+export function lexiconEntrySizes(
+  lexicon: readonly string[],
+  suffixes: readonly string[],
+): Int32Array {
+  const entries = planLexiconEntries(lexicon, suffixes);
+  const codebook = planLexiconHeaderCodebook(entries);
+  const index = headerIndexOf(codebook);
+  const sizes = new Int32Array(entries.length);
+  entries.forEach((entry, i) => {
+    sizes[i] = storedEntryBytes(entry, index, codebook.length);
+  });
+  return sizes;
 }
 
 function matchesAt(haystack: Uint8Array, offset: number, needle: Uint8Array): boolean {
@@ -1196,8 +1392,11 @@ export function planLexiconSuffixes(
 // ---------------------------------------------------------------------------
 
 const MAGIC = [0x52, 0x50, 0x52, 0x31]; // "RPR1"
-/** 5 codes lexicon headers; 4 chains suffix codes; 3 added the suffix table. */
-const FORMAT_VERSION = 6;
+/**
+ * 3 added the suffix table; 4 chains suffix codes; 5 codes lexicon headers;
+ * 6 added the anchor table; 7 gave each anchor its terminal position.
+ */
+const FORMAT_VERSION = 7;
 const HEADER_BYTES = 18;
 
 class ByteWriter {
@@ -1343,11 +1542,14 @@ export function serialize(container: Container): Uint8Array {
     w.u16(left);
     w.u16(right);
   }
-  // Ascending offsets, so only the gaps are stored.
+  // Both columns ascend, so only the gaps are stored.
+  let previousTerm = 0;
   let previousOffset = 0;
   for (const anchor of container.anchors) {
+    w.varint(anchor.term - previousTerm);
     w.varint(anchor.offset - previousOffset);
     w.varint(anchor.skip);
+    previousTerm = anchor.term;
     previousOffset = anchor.offset;
   }
   w.raw(container.stream);
@@ -1448,10 +1650,12 @@ export function deserialize(bytes: Uint8Array): Container {
   const rules: Rule[] = [];
   for (let i = 0; i < ruleCount; i++) rules.push([r.u16(), r.u16()]);
   const anchors: Anchor[] = [];
+  let anchorTerm = 0;
   let anchorOffset = 0;
   for (let i = 0; i < anchorCount; i++) {
+    anchorTerm += r.varint();
     anchorOffset += r.varint();
-    anchors.push({ offset: anchorOffset, skip: r.varint() });
+    anchors.push({ term: anchorTerm, offset: anchorOffset, skip: r.varint() });
   }
   return { threshold, suffixes, lexicon, escapeTable, rules, anchors, stream: r.raw(streamLength) };
 }
