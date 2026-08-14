@@ -34,6 +34,7 @@ var Ylk1 = (() => {
     open: () => open,
     planSuffixes: () => planSuffixes,
     read: () => read,
+    readAnchored: () => readAnchored,
     resolve: () => resolve,
     search: () => search,
     step: () => step
@@ -376,6 +377,9 @@ var Ylk1 = (() => {
     u8(v) {
       this.bytes.push(v & 255);
     }
+    u16(v) {
+      this.bytes.push(v >> 8 & 255, v & 255);
+    }
     u32(v) {
       this.bytes.push(v >>> 24 & 255, v >>> 16 & 255, v >>> 8 & 255, v & 255);
     }
@@ -402,8 +406,17 @@ var Ylk1 = (() => {
       __publicField(this, "data", data);
       __publicField(this, "offset", 0);
     }
+    get position() {
+      return this.offset;
+    }
+    seek(offset) {
+      this.offset = offset;
+    }
     u8() {
       return this.data[this.offset++];
+    }
+    u16() {
+      return this.u8() << 8 | this.u8();
     }
     u32() {
       return (this.u8() << 24 | this.u8() << 16 | this.u8() << 8 | this.u8()) >>> 0;
@@ -440,6 +453,10 @@ var Ylk1 = (() => {
         }
       }
     }
+    /** Bits written so far, counted from the start of the ByteWriter. */
+    get position() {
+      return this.out.length * 8 + this.bits;
+    }
     flush() {
       if (this.bits > 0) {
         this.out.u8(this.accumulator << 8 - this.bits);
@@ -453,6 +470,16 @@ var Ylk1 = (() => {
       __publicField(this, "input", input);
       __publicField(this, "bits", 0);
       __publicField(this, "accumulator", 0);
+      __publicField(this, "start");
+      this.start = input.position;
+    }
+    /** Bits consumed since construction — what a reader has actually paid. */
+    get position() {
+      return (this.input.position - this.start) * 8 - this.bits;
+    }
+    /** Drop `count` bits, for landing mid-byte on an anchor. */
+    skip(count) {
+      for (let i = 0; i < count; i++) this.bit();
     }
     bit() {
       if (this.bits === 0) {
@@ -752,9 +779,26 @@ var Ylk1 = (() => {
     const payload = Math.max(0, width - 1 - DELTA_SUBBUCKET_BITS);
     return payload > 0 ? floor | bits.read(payload) : floor;
   }
+  function writeAnchors(out, anchors) {
+    let previousBit = 0;
+    for (const anchor of anchors) {
+      out.varint(anchor.bit - previousBit);
+      out.varint(anchor.previous + 1);
+      previousBit = anchor.bit;
+    }
+  }
+  function readAnchors(input, count) {
+    const anchors = [];
+    let bit = 0;
+    for (let i = 0; i < count; i++) {
+      bit += input.varint();
+      anchors.push({ bit, previous: input.varint() - 1 });
+    }
+    return anchors;
+  }
   var MAGIC = [89, 76, 75, 49];
-  var FORMAT_VERSION = 3;
-  var HEADER_BYTES = 16;
+  var FORMAT_VERSION = 4;
+  var HEADER_BYTES = 18;
   var hasLetter = (term) => /\p{L}/u.test(term);
   function chooseDirectTerms(frequency, firstSeen, budget) {
     if (budget <= 0) return [];
@@ -818,6 +862,15 @@ var Ylk1 = (() => {
     out.u8(0);
     out.u32(terms.length);
     out.u32(linkedTerm.length);
+    const anchorPositions = config.anchors ?? [];
+    if (anchorPositions.length > 0 && config.split) {
+      throw new LinkCodecError("anchors need the unsplit stream: a term sits in two subfiles at once");
+    }
+    for (let i = 1; i < anchorPositions.length; i++) {
+      if (anchorPositions[i] <= anchorPositions[i - 1]) throw new LinkCodecError("anchor positions must ascend");
+    }
+    if (anchorPositions.length > 65535) throw new LinkCodecError("the anchor table holds at most 65535 entries");
+    out.u16(anchorPositions.length);
     if (out.length !== HEADER_BYTES) throw new LinkCodecError(`header is ${out.length} bytes, expected ${HEADER_BYTES}`);
     const afterHeader = out.length;
     writeWordList(out, directTerms);
@@ -885,14 +938,22 @@ var Ylk1 = (() => {
       }
     }
     const afterMaster = out.length;
+    const streamOut = new ByteWriter();
+    const anchors = [];
+    let nextAnchor = 0;
     if (config.coder === "huffman") {
-      const bits = new BitWriter(out);
+      const bits = new BitWriter(streamOut);
       let cursor = 0;
       let at = 0;
       let previous = -1;
-      for (const term of terms) {
+      for (let i = 0; i < terms.length; i++) {
+        const term = terms[i];
         const direct = directIndex.get(term);
         if (direct !== void 0 && config.split) continue;
+        while (nextAnchor < anchorPositions.length && anchorPositions[nextAnchor] === i) {
+          anchors.push({ bit: bits.position, previous });
+          nextAnchor++;
+        }
         const symbol = symbols[at++];
         const table = streamCodes[contextTerms > 0 ? contextOf(previous, contextTerms, directTerms.length) : 0];
         writeCode(bits, table, symbol);
@@ -913,28 +974,40 @@ var Ylk1 = (() => {
     } else {
       const base = config.split ? 0 : directTerms.length;
       let cursor = 0;
-      for (const term of terms) {
+      for (let i = 0; i < terms.length; i++) {
+        const term = terms[i];
+        while (nextAnchor < anchorPositions.length && anchorPositions[nextAnchor] === i) {
+          anchors.push({ bit: streamOut.length * 8, previous: -1 });
+          nextAnchor++;
+        }
         const direct = directIndex.get(term);
         if (direct !== void 0) {
-          if (!config.split) out.varint(direct);
+          if (!config.split) streamOut.varint(direct);
           continue;
         }
         const entry = entries[cursor++];
         if (entry.kind === 1 /* Terminal */) {
-          out.varint(base);
-          out.varint(entry.value);
+          streamOut.varint(base);
+          streamOut.varint(entry.value);
         } else if (entry.shortcutRow >= 0) {
-          out.varint(base + 1);
-          out.varint(entry.shortcutRow);
-          out.varint(entry.value);
+          streamOut.varint(base + 1);
+          streamOut.varint(entry.shortcutRow);
+          streamOut.varint(entry.value);
         } else {
-          out.varint(base + 1 + entry.value);
+          streamOut.varint(base + 1 + entry.value);
         }
       }
     }
+    if (nextAnchor < anchorPositions.length) {
+      throw new LinkCodecError(`anchor position ${anchorPositions[nextAnchor]} is past the ${terms.length} terms`);
+    }
+    writeAnchors(out, anchors);
+    const afterAnchors = out.length;
+    out.raw(streamOut.finish());
     const bytes = out.finish();
     return {
       bytes,
+      anchors,
       sizes: {
         header: afterHeader,
         directTable: afterDirect - afterHeader,
@@ -942,7 +1015,8 @@ var Ylk1 = (() => {
         firstOccurrence: afterFirst - afterLexicon,
         codeLengths: afterCodeLengths - afterFirst,
         master: afterMaster - afterCodeLengths,
-        stream: bytes.length - afterMaster,
+        anchors: afterAnchors - afterMaster,
+        stream: bytes.length - afterAnchors,
         total: bytes.length
       },
       directTerms,
@@ -952,8 +1026,7 @@ var Ylk1 = (() => {
       shortcutCount
     };
   }
-  function open(bytes) {
-    const input = new ByteReader(bytes);
+  function readPrologue(input) {
     for (const b of MAGIC) {
       if (input.u8() !== b) throw new LinkCodecError("not a YLK1 container");
     }
@@ -967,6 +1040,7 @@ var Ylk1 = (() => {
     input.u8();
     const termCount = input.u32();
     const linkedCount = input.u32();
+    const anchorCount = input.u16();
     const directTerms = readWordList(input);
     const lexicon = readLexiconBlock(input);
     const firstOccurrence = [];
@@ -976,9 +1050,6 @@ var Ylk1 = (() => {
       for (let i = 0; i < lexicon.length; i++) firstOccurrence.push(bits.read(positionBits));
       bits.align();
     }
-    const rowBits = Math.max(1, bitWidth(Math.max(lexicon.length - 1, 1)));
-    const TERMINAL = directTerms.length;
-    const SHORTCUT = directTerms.length + 1;
     const contextCount = contextCountFor(contextDirectTerms);
     let masterCode = null;
     const streamCodes = [];
@@ -986,7 +1057,44 @@ var Ylk1 = (() => {
       if (split) masterCode = canonical(readCodeLengths(input), false);
       for (let i = 0; i < contextCount; i++) streamCodes.push(canonical(readCodeLengths(input), false));
     }
-    const tableFor = (previous) => streamCodes[contextDirectTerms > 0 ? contextOf(previous, contextDirectTerms, directTerms.length) : 0];
+    return {
+      split,
+      coder,
+      contextDirectTerms,
+      termCount,
+      linkedCount,
+      anchorCount,
+      directTerms,
+      lexicon,
+      firstOccurrence,
+      rowBits: Math.max(1, bitWidth(Math.max(lexicon.length - 1, 1))),
+      masterCode,
+      streamCodes
+    };
+  }
+  function tableSelector(prologue) {
+    const { streamCodes, contextDirectTerms, directTerms } = prologue;
+    return (previous) => streamCodes[contextDirectTerms > 0 ? contextOf(previous, contextDirectTerms, directTerms.length) : 0];
+  }
+  function open(bytes) {
+    const input = new ByteReader(bytes);
+    const prologue = readPrologue(input);
+    const {
+      split,
+      coder,
+      contextDirectTerms,
+      termCount,
+      anchorCount,
+      directTerms,
+      lexicon,
+      firstOccurrence,
+      rowBits,
+      masterCode,
+      streamCodes
+    } = prologue;
+    const TERMINAL = directTerms.length;
+    const SHORTCUT = directTerms.length + 1;
+    const tableFor = tableSelector(prologue);
     const directCodes = new Int32Array(termCount).fill(-1);
     const termIndex = [];
     const entries = [];
@@ -1007,6 +1115,8 @@ var Ylk1 = (() => {
         }
       }
     }
+    const anchors = readAnchors(input, anchorCount);
+    const streamStart = input.position;
     if (coder === "huffman") {
       const bits = new BitReader(input);
       let previous = -1;
@@ -1053,6 +1163,8 @@ var Ylk1 = (() => {
       directCodes,
       entries,
       termIndexOf: Int32Array.from(termIndex),
+      anchors,
+      streamStart,
       contextDirectTerms,
       streamLengths: streamCodes.length > 0 ? streamCodes.map((code) => code.lengths) : null,
       masterLengths: masterCode ? masterCode.lengths : null
@@ -1310,6 +1422,85 @@ var Ylk1 = (() => {
       hops += resolved.hops;
     }
     return { terms, hops };
+  }
+  function readAnchored(bytes, anchorIndex, count, skip = 0) {
+    const input = new ByteReader(bytes);
+    const prologue = readPrologue(input);
+    if (prologue.split) throw new LinkCodecError("anchors need the unsplit stream");
+    const anchors = readAnchors(input, prologue.anchorCount);
+    const anchor = anchors[anchorIndex];
+    if (anchor === void 0) throw new LinkCodecError(`no anchor ${anchorIndex}`);
+    const streamStart = input.position;
+    const { directTerms, lexicon, rowBits, coder } = prologue;
+    const D = directTerms.length;
+    const TERMINAL = D;
+    const SHORTCUT = D + 1;
+    const huffman = coder === "huffman";
+    const tableFor = tableSelector(prologue);
+    input.seek(streamStart + (anchor.bit >> 3));
+    const bits = new BitReader(input);
+    bits.skip(anchor.bit & 7);
+    const from = input.position;
+    let previous = anchor.previous;
+    let decoded = 0;
+    const nextTerm = () => {
+      if (decoded++ >= prologue.termCount) throw new LinkCodecError("the chain ran off the end of the stream");
+      if (huffman) {
+        const symbol = readCode(bits, tableFor(previous));
+        previous = symbol;
+        if (symbol < D) return { direct: symbol, entry: null };
+        return { direct: -1, entry: continueHuffmanEntry(bits, symbol, TERMINAL, SHORTCUT, rowBits) };
+      }
+      const value = input.varint();
+      if (value < D) return { direct: value, entry: null };
+      return { direct: -1, entry: continueVarintEntry(input, D, value) };
+    };
+    for (let i = 0; i < skip; i++) nextTerm();
+    const scanBits = huffman ? bits.position : (input.position - from) * 8;
+    const terms = [];
+    const chainAt = [];
+    const chain = [];
+    while (terms.length < count) {
+      const { direct, entry } = nextTerm();
+      if (entry === null) {
+        terms.push(directTerms[direct]);
+        chainAt.push(-1);
+      } else {
+        terms.push(null);
+        chainAt.push(chain.length);
+        chain.push(entry);
+      }
+    }
+    let hops = 0;
+    for (let i = 0; i < terms.length; i++) {
+      if (terms[i] !== null) continue;
+      let at = chainAt[i];
+      for (; ; ) {
+        while (at >= chain.length) {
+          const { entry: entry2 } = nextTerm();
+          if (entry2 !== null) chain.push(entry2);
+        }
+        const entry = chain[at];
+        if (entry.kind === 1 /* Terminal */) {
+          terms[i] = lexicon[entry.value];
+          break;
+        }
+        if (entry.shortcutRow >= 0) {
+          terms[i] = lexicon[entry.shortcutRow];
+          break;
+        }
+        at += entry.value;
+        hops++;
+      }
+    }
+    const spent = huffman ? bits.position : (input.position - from) * 8;
+    return {
+      terms,
+      scanBits,
+      readBits: spent - scanBits,
+      entriesDecoded: chain.length,
+      hops
+    };
   }
   function decode(bytes) {
     const container = open(bytes);

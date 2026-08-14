@@ -27,6 +27,7 @@ Sources:
 | `link-codec.bench.ts`                           | YLK1 round-trip and search checks, and the RPR1 head-to-head.       |
 | `demo.html`                                     | Interactive browser demo for inspecting encoded text byte by byte.  |
 | `demo-ylk1.html`                                | Interactive browser demo for YLK1: chain view, chase, and search.   |
+| `demo-verse.html`                               | Seeking one verse in both codecs, address by address.               |
 | `kjv.csv`                                       | Full King James Bible source data, one verse per row.               |
 | `kjv-data.js` / `kjv-preencoded.js`             | Generated browser data used by the demo.                            |
 | `build-kjv-data.js` / `build-kjv-preencoded.ts` | Scripts that regenerate the browser data.                           |
@@ -49,9 +50,27 @@ mise run clean            # remove generated build output
 Run `mise tasks` to list all available tasks. After starting the server, open
 <http://localhost:8080/demo.html>; browsers will not load the demo correctly over `file://`.
 
-`demo.html` and `demo-ylk1.html` are hand-edited. After changing `repair-codec.ts` or
+`demo.html`, `demo-ylk1.html` and `demo-verse.html` are hand-edited. After changing `repair-codec.ts` or
 `link-codec.ts`, run `mise run build` to regenerate `repair-codec.js` and `link-codec.js`. The build
 and data tasks use mise source/output tracking and skip unchanged work.
+
+## Anchors, and finding a verse
+
+Neither stream can be entered anywhere but the beginning. RPR1's tokens are one or two bytes with
+nothing on the outside to say which, and YLK1's are Huffman codes with no byte boundaries at all, so
+"start reading at the Gospel of John" is not a question either format can answer from its own bytes.
+Both containers therefore carry an optional **anchor table**: a caller hands `encode` a list of
+ascending token positions and gets back one entry each, holding whatever a reader needs to resume
+there — a stream byte offset and a terminal skip count in RPR1, a bit offset and the preceding symbol
+in YLK1. The codecs know nothing about books; `demo-verse.html` and `build-kjv-preencoded.ts` anchor
+the 66 book starts, which costs 220 bytes in RPR1 and 248 in YLK1, under 0.03% of either container.
+
+`demo-verse.html` walks one verse — John 3:16 by default — from that table to the words on screen and
+counts every address touched, side by side. The two codecs turn out to pay in opposite places: RPR1
+spends the seek (every token between the book and the verse has to be expanded, because Re-Pair folded
+the structure markers into rules) and then names each word for nothing, while YLK1 walks in almost
+free (its markers are direct terms, countable straight off the codes) and then pays 1,770 link hops
+to answer the one question its stream deliberately does not store — which word is this.
 
 ## YLK1
 
@@ -61,7 +80,7 @@ Franklin Electronic Publishers. A searchable word is never written into the stre
 stores only the distance forward to the next occurrence of the same word, and the last one stores
 the lexicon row. The stream is therefore both the text and its inverted index.
 
-On the full KJV it reaches 969,284 bytes with search included, against 958,460 for RPR1 with no
+On the full KJV it reaches 969,286 bytes with search included, against 958,462 for RPR1 with no
 search at all; adding a conventional inverted index to RPR1 costs 501,951 bytes, which puts YLK1
 33.6% below the pair. `mise run bench-link` reproduces those numbers and verifies the round trip and
 every lexicon word's search results. `demo-ylk1.html` visualizes the chains.

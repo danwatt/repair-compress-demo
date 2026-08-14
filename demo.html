@@ -512,7 +512,9 @@ footer a { color: var(--hot); }
   <footer>
     Algorithm reverse engineered by Dan Watt —
     <a href="https://www.danwatt.org/2024/10/decoding-text-compression-on-a-gameboy/">Decoding text compression on a Game Boy</a>.
-    Everything runs locally; nothing is uploaded.
+    Everything runs locally; nothing is uploaded. See also the
+    <a href="demo-ylk1.html">YLK1 link-codec lab</a> and
+    <a href="demo-verse.html">how a verse is found</a>.
   </footer>
 </div>
 
@@ -639,6 +641,7 @@ And God said, Let there be lights in the firmament of the heaven to divide the d
       { key: "rules", label: "Rules", color: "var(--dmg-3)", bytes: z.rules },
       { key: "escapeTable", label: "Escape table", color: "var(--dmg-2)", bytes: z.escapeTable },
       { key: "stream", label: "Stream", color: "var(--hot)", bytes: z.stream },
+      { key: "anchors", label: "Book table", color: "var(--dmg-1)", bytes: z.anchors },
       { key: "header", label: "Header", color: "var(--ink-soft)", bytes: z.header },
     ];
 
@@ -655,10 +658,10 @@ And God said, Let there be lights in the firmament of the heaven to divide the d
         </div>
       </div>
       <div class="bar">
-        ${parts.map((p) => `<div style="background:${p.color};flex:${p.bytes} 0 0" title="${p.label}: ${fmt(p.bytes)} bytes"></div>`).join("")}
+        ${parts.filter((p) => p.bytes > 0).map((p) => `<div style="background:${p.color};flex:${p.bytes} 0 0" title="${p.label}: ${fmt(p.bytes)} bytes"></div>`).join("")}
       </div>
       <div class="legend">
-        ${parts.map((p) => `<span><i style="background:${p.color}"></i><b>${p.label}</b> ${fmt(p.bytes)} B</span>`).join("")}
+        ${parts.filter((p) => p.bytes > 0).map((p) => `<span><i style="background:${p.color}"></i><b>${p.label}</b> ${fmt(p.bytes)} B</span>`).join("")}
       </div>
       <p class="chart-note">The lexicon is sorted and front-coded — each entry stores only what it does
         not share with the one before it, so a run like <b>beget</b> / <b>begets</b> / <b>begetting</b>

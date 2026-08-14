@@ -104,6 +104,15 @@ export interface LinkConfig {
    * best table for this configuration's lexicon.
    */
   suffixes?: readonly string[];
+  /**
+   * Term indices, ascending, that get an entry in the seek table. The stream is
+   * one long Huffman bit string with no addressable boundaries inside it, so
+   * this is the only way a reader starts anywhere but the beginning. Data
+   * rather than a knob: the codec does not know what a book is.
+   *
+   * Not available with `split`, where a term sits in two subfiles at once.
+   */
+  anchors?: readonly number[];
 }
 
 export const DEFAULT_LINK_CONFIG: LinkConfig = {
@@ -144,6 +153,7 @@ export interface LinkSectionSizes {
   lexicon: number;
   firstOccurrence: number;
   codeLengths: number;
+  anchors: number;
   master: number;
   stream: number;
   total: number;
@@ -152,6 +162,8 @@ export interface LinkSectionSizes {
 export interface LinkEncodeResult {
   bytes: Uint8Array;
   sizes: LinkSectionSizes;
+  /** The seek table, in the order the requested positions were given. */
+  anchors: LinkAnchor[];
   /** Terms encoded directly, in stream-code order. */
   directTerms: string[];
   /** Search words, in lexicon-row order (UTF-8 byte order). */
@@ -174,6 +186,9 @@ class ByteWriter {
   private bytes: number[] = [];
   u8(v: number): void {
     this.bytes.push(v & 0xff);
+  }
+  u16(v: number): void {
+    this.bytes.push((v >> 8) & 0xff, v & 0xff);
   }
   u32(v: number): void {
     this.bytes.push((v >>> 24) & 0xff, (v >>> 16) & 0xff, (v >>> 8) & 0xff, v & 0xff);
@@ -200,8 +215,17 @@ class ByteWriter {
 class ByteReader {
   private offset = 0;
   constructor(private data: Uint8Array) {}
+  get position(): number {
+    return this.offset;
+  }
+  seek(offset: number): void {
+    this.offset = offset;
+  }
   u8(): number {
     return this.data[this.offset++];
+  }
+  u16(): number {
+    return (this.u8() << 8) | this.u8();
   }
   u32(): number {
     return ((this.u8() << 24) | (this.u8() << 16) | (this.u8() << 8) | this.u8()) >>> 0;
@@ -238,6 +262,10 @@ class BitWriter {
       }
     }
   }
+  /** Bits written so far, counted from the start of the ByteWriter. */
+  get position(): number {
+    return this.out.length * 8 + this.bits;
+  }
   flush(): void {
     if (this.bits > 0) {
       this.out.u8(this.accumulator << (8 - this.bits));
@@ -250,7 +278,18 @@ class BitWriter {
 class BitReader {
   private bits = 0;
   private accumulator = 0;
-  constructor(private input: ByteReader) {}
+  private start: number;
+  constructor(private input: ByteReader) {
+    this.start = input.position;
+  }
+  /** Bits consumed since construction — what a reader has actually paid. */
+  get position(): number {
+    return (this.input.position - this.start) * 8 - this.bits;
+  }
+  /** Drop `count` bits, for landing mid-byte on an anchor. */
+  skip(count: number): void {
+    for (let i = 0; i < count; i++) this.bit();
+  }
   bit(): number {
     if (this.bits === 0) {
       this.accumulator = this.input.u8();
@@ -705,13 +744,43 @@ function readDelta(bits: BitReader, bucket: number): number {
 // Encode
 // ---------------------------------------------------------------------------
 
+/**
+ * A place a reader may start from. `bit` counts from the first bit of the
+ * stream section; `previous` is the stream symbol before it, or -1 at the start
+ * of the stream, which is what selects the order-1 table for the first code.
+ */
+export interface LinkAnchor {
+  bit: number;
+  previous: number;
+}
+
+/** Ascending bit offsets, so only the gaps are stored. */
+function writeAnchors(out: ByteWriter, anchors: readonly LinkAnchor[]): void {
+  let previousBit = 0;
+  for (const anchor of anchors) {
+    out.varint(anchor.bit - previousBit);
+    out.varint(anchor.previous + 1);
+    previousBit = anchor.bit;
+  }
+}
+
+function readAnchors(input: ByteReader, count: number): LinkAnchor[] {
+  const anchors: LinkAnchor[] = [];
+  let bit = 0;
+  for (let i = 0; i < count; i++) {
+    bit += input.varint();
+    anchors.push({ bit, previous: input.varint() - 1 });
+  }
+  return anchors;
+}
+
 const MAGIC = [0x59, 0x4c, 0x4b, 0x31]; // "YLK1"
 /**
  * 2 packed the lexicon with a suffix table and bit-packed the first-occurrence
- * array; 3 added order-1 context tables.
+ * array; 3 added order-1 context tables; 4 added the anchor table.
  */
-const FORMAT_VERSION = 3;
-const HEADER_BYTES = 16;
+const FORMAT_VERSION = 4;
+const HEADER_BYTES = 18;
 
 const hasLetter = (term: string): boolean => /\p{L}/u.test(term);
 
@@ -805,6 +874,15 @@ export function encode(text: string, config: LinkConfig = DEFAULT_LINK_CONFIG): 
   out.u8(0);
   out.u32(terms.length);
   out.u32(linkedTerm.length);
+  const anchorPositions = config.anchors ?? [];
+  if (anchorPositions.length > 0 && config.split) {
+    throw new LinkCodecError("anchors need the unsplit stream: a term sits in two subfiles at once");
+  }
+  for (let i = 1; i < anchorPositions.length; i++) {
+    if (anchorPositions[i] <= anchorPositions[i - 1]) throw new LinkCodecError("anchor positions must ascend");
+  }
+  if (anchorPositions.length > 0xffff) throw new LinkCodecError("the anchor table holds at most 65535 entries");
+  out.u16(anchorPositions.length);
   if (out.length !== HEADER_BYTES) throw new LinkCodecError(`header is ${out.length} bytes, expected ${HEADER_BYTES}`);
 
   const afterHeader = out.length;
@@ -894,14 +972,29 @@ export function encode(text: string, config: LinkConfig = DEFAULT_LINK_CONFIG): 
   }
   const afterMaster = out.length;
 
+  // The stream goes into its own writer so the seek table, which the stream
+  // writer is what produces, can still be stored ahead of it. An anchor is a
+  // bit offset from the start of this writer, plus the symbol that preceded it:
+  // with order-1 tables a reader cannot decode the first code without knowing
+  // which table it came from, and that is the one thing the bits do not say.
+  const streamOut = new ByteWriter();
+  const anchors: LinkAnchor[] = [];
+  let nextAnchor = 0;
+
   if (config.coder === "huffman") {
-    const bits = new BitWriter(out);
+    const bits = new BitWriter(streamOut);
     let cursor = 0;
     let at = 0;
     let previous = -1;
-    for (const term of terms) {
+    for (let i = 0; i < terms.length; i++) {
+      const term = terms[i];
       const direct = directIndex.get(term);
       if (direct !== undefined && config.split) continue;
+
+      while (nextAnchor < anchorPositions.length && anchorPositions[nextAnchor] === i) {
+        anchors.push({ bit: bits.position, previous });
+        nextAnchor++;
+      }
 
       const symbol = symbols[at++];
       const table = streamCodes[contextTerms > 0 ? contextOf(previous, contextTerms, directTerms.length) : 0];
@@ -924,29 +1017,42 @@ export function encode(text: string, config: LinkConfig = DEFAULT_LINK_CONFIG): 
   } else {
     const base = config.split ? 0 : directTerms.length;
     let cursor = 0;
-    for (const term of terms) {
+    for (let i = 0; i < terms.length; i++) {
+      const term = terms[i];
+      while (nextAnchor < anchorPositions.length && anchorPositions[nextAnchor] === i) {
+        anchors.push({ bit: streamOut.length * 8, previous: -1 });
+        nextAnchor++;
+      }
       const direct = directIndex.get(term);
       if (direct !== undefined) {
-        if (!config.split) out.varint(direct);
+        if (!config.split) streamOut.varint(direct);
         continue;
       }
       const entry = entries[cursor++];
       if (entry.kind === EntryKind.Terminal) {
-        out.varint(base);
-        out.varint(entry.value);
+        streamOut.varint(base);
+        streamOut.varint(entry.value);
       } else if (entry.shortcutRow >= 0) {
-        out.varint(base + 1);
-        out.varint(entry.shortcutRow);
-        out.varint(entry.value);
+        streamOut.varint(base + 1);
+        streamOut.varint(entry.shortcutRow);
+        streamOut.varint(entry.value);
       } else {
-        out.varint(base + 1 + entry.value);
+        streamOut.varint(base + 1 + entry.value);
       }
     }
   }
+  if (nextAnchor < anchorPositions.length) {
+    throw new LinkCodecError(`anchor position ${anchorPositions[nextAnchor]} is past the ${terms.length} terms`);
+  }
+
+  writeAnchors(out, anchors);
+  const afterAnchors = out.length;
+  out.raw(streamOut.finish());
 
   const bytes = out.finish();
   return {
     bytes,
+    anchors,
     sizes: {
       header: afterHeader,
       directTable: afterDirect - afterHeader,
@@ -954,7 +1060,8 @@ export function encode(text: string, config: LinkConfig = DEFAULT_LINK_CONFIG): 
       firstOccurrence: afterFirst - afterLexicon,
       codeLengths: afterCodeLengths - afterFirst,
       master: afterMaster - afterCodeLengths,
-      stream: bytes.length - afterMaster,
+      anchors: afterAnchors - afterMaster,
+      stream: bytes.length - afterAnchors,
       total: bytes.length,
     },
     directTerms,
@@ -988,6 +1095,10 @@ export interface LinkContainer {
   termIndexOf: Int32Array;
   /** Term index to chain position, built on demand by read(). */
   chainOf?: Int32Array;
+  /** Stream positions a reader may start from; empty when nothing was indexed. */
+  anchors: LinkAnchor[];
+  /** Byte offset of the stream section, for a reader that seeks into it. */
+  streamStart: number;
   /** How many hot direct terms carry their own code table; 0 is order-0. */
   contextDirectTerms: number;
   /** Stream code lengths by context then symbol; null for the varint coder. */
@@ -998,8 +1109,28 @@ export interface LinkContainer {
   cost?: StreamCost;
 }
 
-export function open(bytes: Uint8Array): LinkContainer {
-  const input = new ByteReader(bytes);
+/**
+ * Everything before the stream: the tables a reader needs in hand whether it
+ * means to decode the whole file or seek into the middle of it. Split out so
+ * that `readAnchored` can have them without decoding a single stream symbol —
+ * a seek that started by reading the stream would not be a seek.
+ */
+interface Prologue {
+  split: boolean;
+  coder: Coder;
+  contextDirectTerms: number;
+  termCount: number;
+  linkedCount: number;
+  anchorCount: number;
+  directTerms: string[];
+  lexicon: string[];
+  firstOccurrence: number[];
+  rowBits: number;
+  masterCode: HuffmanCode | null;
+  streamCodes: HuffmanCode[];
+}
+
+function readPrologue(input: ByteReader): Prologue {
   for (const b of MAGIC) {
     if (input.u8() !== b) throw new LinkCodecError("not a YLK1 container");
   }
@@ -1013,6 +1144,7 @@ export function open(bytes: Uint8Array): LinkContainer {
   input.u8();
   const termCount = input.u32();
   const linkedCount = input.u32();
+  const anchorCount = input.u16();
 
   const directTerms = readWordList(input);
   const lexicon = readLexiconBlock(input);
@@ -1024,10 +1156,6 @@ export function open(bytes: Uint8Array): LinkContainer {
     bits.align();
   }
 
-  const rowBits = Math.max(1, bitWidth(Math.max(lexicon.length - 1, 1)));
-  const TERMINAL = directTerms.length;
-  const SHORTCUT = directTerms.length + 1;
-
   const contextCount = contextCountFor(contextDirectTerms);
   let masterCode: HuffmanCode | null = null;
   const streamCodes: HuffmanCode[] = [];
@@ -1035,8 +1163,32 @@ export function open(bytes: Uint8Array): LinkContainer {
     if (split) masterCode = canonical(readCodeLengths(input), false);
     for (let i = 0; i < contextCount; i++) streamCodes.push(canonical(readCodeLengths(input), false));
   }
-  const tableFor = (previous: number): HuffmanCode =>
+
+  return {
+    split, coder, contextDirectTerms, termCount, linkedCount, anchorCount,
+    directTerms, lexicon, firstOccurrence,
+    rowBits: Math.max(1, bitWidth(Math.max(lexicon.length - 1, 1))),
+    masterCode, streamCodes,
+  };
+}
+
+/** Which order-1 table a symbol is read from, given the symbol before it. */
+function tableSelector(prologue: Prologue): (previous: number) => HuffmanCode {
+  const { streamCodes, contextDirectTerms, directTerms } = prologue;
+  return (previous: number): HuffmanCode =>
     streamCodes[contextDirectTerms > 0 ? contextOf(previous, contextDirectTerms, directTerms.length) : 0];
+}
+
+export function open(bytes: Uint8Array): LinkContainer {
+  const input = new ByteReader(bytes);
+  const prologue = readPrologue(input);
+  const {
+    split, coder, contextDirectTerms, termCount, anchorCount,
+    directTerms, lexicon, firstOccurrence, rowBits, masterCode, streamCodes,
+  } = prologue;
+  const TERMINAL = directTerms.length;
+  const SHORTCUT = directTerms.length + 1;
+  const tableFor = tableSelector(prologue);
 
   const directCodes = new Int32Array(termCount).fill(-1);
   const termIndex: number[] = [];
@@ -1059,6 +1211,9 @@ export function open(bytes: Uint8Array): LinkContainer {
       }
     }
   }
+
+  const anchors = readAnchors(input, anchorCount);
+  const streamStart = input.position;
 
   if (coder === "huffman") {
     const bits = new BitReader(input);
@@ -1107,6 +1262,8 @@ export function open(bytes: Uint8Array): LinkContainer {
     directCodes,
     entries,
     termIndexOf: Int32Array.from(termIndex),
+    anchors,
+    streamStart,
     contextDirectTerms,
     streamLengths: streamCodes.length > 0 ? streamCodes.map((code) => code.lengths) : null,
     masterLengths: masterCode ? masterCode.lengths : null,
@@ -1525,6 +1682,128 @@ export function read(container: LinkContainer, start: number, count: number): Re
     hops += resolved.hops;
   }
   return { terms, hops };
+}
+
+/** What one seek-and-read actually cost. */
+export interface AnchoredRead {
+  terms: string[];
+  /**
+   * Bits spent crossing the skipped terms. A scan is cheap in this format: the
+   * structure markers are direct terms, so a reader looking for the sixteenth
+   * verse can count them off the codes themselves and never chase a chain.
+   */
+  scanBits: number;
+  /** Bits spent naming the terms it stopped for, chases included. */
+  readBits: number;
+  /** Chain entries decoded — the ones asked for, plus the ones chased through. */
+  entriesDecoded: number;
+  /** Link hops taken to name those terms. */
+  hops: number;
+}
+
+/**
+ * Read `count` terms from an anchor, touching no stream bit before it. This is
+ * FIG. 5's forward chase with a seek in front of it, and the cost it reports is
+ * the honest one: a linked term is not named until the chase reaches a lexicon
+ * pointer, and every entry passed on the way had to be decoded to get there.
+ * A verse of common words therefore reads far past its own end.
+ */
+export function readAnchored(
+  bytes: Uint8Array,
+  anchorIndex: number,
+  count: number,
+  skip = 0,
+): AnchoredRead {
+  const input = new ByteReader(bytes);
+  const prologue = readPrologue(input);
+  if (prologue.split) throw new LinkCodecError("anchors need the unsplit stream");
+  const anchors = readAnchors(input, prologue.anchorCount);
+  const anchor = anchors[anchorIndex];
+  if (anchor === undefined) throw new LinkCodecError(`no anchor ${anchorIndex}`);
+  const streamStart = input.position;
+
+  const { directTerms, lexicon, rowBits, coder } = prologue;
+  const D = directTerms.length;
+  const TERMINAL = D;
+  const SHORTCUT = D + 1;
+  const huffman = coder === "huffman";
+  const tableFor = tableSelector(prologue);
+
+  input.seek(streamStart + (anchor.bit >> 3));
+  const bits = new BitReader(input);
+  bits.skip(anchor.bit & 7);
+  const from = input.position;
+  let previous = anchor.previous;
+  let decoded = 0;
+
+  const nextTerm = (): { direct: number; entry: Entry | null } => {
+    if (decoded++ >= prologue.termCount) throw new LinkCodecError("the chain ran off the end of the stream");
+    if (huffman) {
+      const symbol = readCode(bits, tableFor(previous));
+      previous = symbol;
+      if (symbol < D) return { direct: symbol, entry: null };
+      return { direct: -1, entry: continueHuffmanEntry(bits, symbol, TERMINAL, SHORTCUT, rowBits) };
+    }
+    const value = input.varint();
+    if (value < D) return { direct: value, entry: null };
+    return { direct: -1, entry: continueVarintEntry(input, D, value) };
+  };
+
+  // Whatever sits between the anchor and the terms wanted: decoded, because the
+  // stream has no other way past it, but never resolved.
+  for (let i = 0; i < skip; i++) nextTerm();
+  const scanBits = huffman ? bits.position : (input.position - from) * 8;
+
+  // Pass one: the terms the caller asked for. A linked term is a hole here —
+  // the stream says where its next occurrence is, not what it says.
+  const terms: (string | null)[] = [];
+  const chainAt: number[] = [];
+  const chain: Entry[] = [];
+  while (terms.length < count) {
+    const { direct, entry } = nextTerm();
+    if (entry === null) {
+      terms.push(directTerms[direct]);
+      chainAt.push(-1);
+    } else {
+      terms.push(null);
+      chainAt.push(chain.length);
+      chain.push(entry);
+    }
+  }
+
+  // Pass two: fill the holes. Decoding runs on from where pass one stopped, so
+  // two words whose chases overlap pay for the shared stretch once.
+  let hops = 0;
+  for (let i = 0; i < terms.length; i++) {
+    if (terms[i] !== null) continue;
+    let at = chainAt[i];
+    for (;;) {
+      while (at >= chain.length) {
+        const { entry } = nextTerm();
+        if (entry !== null) chain.push(entry);
+      }
+      const entry = chain[at];
+      if (entry.kind === EntryKind.Terminal) {
+        terms[i] = lexicon[entry.value];
+        break;
+      }
+      if (entry.shortcutRow >= 0) {
+        terms[i] = lexicon[entry.shortcutRow];
+        break;
+      }
+      at += entry.value;
+      hops++;
+    }
+  }
+
+  const spent = huffman ? bits.position : (input.position - from) * 8;
+  return {
+    terms: terms as string[],
+    scanBits,
+    readBits: spent - scanBits,
+    entriesDecoded: chain.length,
+    hops,
+  };
 }
 
 // ---------------------------------------------------------------------------

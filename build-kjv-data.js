@@ -36,6 +36,7 @@ for (let i = 1; i < lines.length; i++) {
   if (m) {
     if (current) records.push(current);
     current = {
+      bookName: m[1],
       bookNumber: m[2],
       chapterNumber: m[3],
       verseText: unquote(m[5]),
@@ -49,12 +50,16 @@ if (current) records.push(current);
 
 let out = "";
 let prevBook = null;
+const books = [];
 
 for (let i = 0; i < records.length; i++) {
   const r = records[i];
   const next = records[i + 1];
 
-  if (r.bookNumber !== prevBook) out += "%";
+  if (r.bookNumber !== prevBook) {
+    out += "%";
+    books.push(r.bookName);
+  }
   out += r.verseText.replace(/\s+/g, " ").trim();
 
   if (!next || r.bookNumber !== next.bookNumber) out += "$";
@@ -64,6 +69,13 @@ for (let i = 0; i < records.length; i++) {
   prevBook = r.bookNumber;
 }
 
-const jsOut = "window.KJV_TEXT = " + JSON.stringify(out) + ";\n";
+// The names go with the text: every % in the stream is one book start, in this
+// order, which is what the demos anchor on.
+const jsOut =
+  "window.KJV_TEXT = " + JSON.stringify(out) + ";\n" +
+  "window.KJV_BOOKS = " + JSON.stringify(books) + ";\n";
 fs.writeFileSync("kjv-data.js", jsOut);
-console.log(`${records.length} verses, ${Buffer.byteLength(out, "utf8")} bytes -> kjv-data.js`);
+console.log(
+  `${records.length} verses in ${books.length} books, ` +
+  `${Buffer.byteLength(out, "utf8")} bytes -> kjv-data.js`,
+);

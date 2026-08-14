@@ -28,6 +28,7 @@ var RePair = (() => {
     LEXICON_MODE: () => LEXICON_MODE,
     MAX_LEXICON_HEADER_CODES: () => MAX_LEXICON_HEADER_CODES,
     SUFFIX_CODE_COUNT: () => SUFFIX_CODE_COUNT,
+    anchorTableBytes: () => anchorTableBytes,
     assignSingleBytes: () => assignSingleBytes,
     buildLexicon: () => buildLexicon,
     decode: () => decode,
@@ -44,9 +45,11 @@ var RePair = (() => {
     maxTokenIdFor: () => maxTokenIdFor,
     measure: () => measure,
     plainLexiconBytes: () => plainLexiconBytes,
+    planAnchors: () => planAnchors,
     planLexiconEntries: () => planLexiconEntries,
     planLexiconHeaderCodebook: () => planLexiconHeaderCodebook,
     planLexiconSuffixes: () => planLexiconSuffixes,
+    readFrom: () => readFrom,
     readStream: () => readStream,
     repair: () => repair,
     serialize: () => serialize,
@@ -59,7 +62,8 @@ var RePair = (() => {
     singleByteCount: 85,
     minPairCount: 3,
     maxPairs: 65535,
-    maxSuffixLength: 4
+    maxSuffixLength: 4,
+    anchors: []
   };
   var CodecError = class extends Error {
   };
@@ -347,6 +351,74 @@ var RePair = (() => {
     const { terminals } = expand([token], container.rules, container.lexicon.length);
     return terminals.map((t) => container.lexicon[t]);
   }
+  function expansionWidths(rules, lexiconSize) {
+    const width = new Int32Array(rules.length);
+    const widthOf = (id) => id < lexiconSize ? 1 : width[id - lexiconSize];
+    for (let i = 0; i < rules.length; i++) {
+      const rule = rules[i];
+      width[i] = widthOf(rule[0]) + widthOf(rule[1]);
+    }
+    return width;
+  }
+  function planAnchors(sequence, rules, lexiconSize, escapeTable, threshold, positions) {
+    for (let i = 1; i < positions.length; i++) {
+      if (positions[i] <= positions[i - 1]) throw new CodecError("anchor positions must ascend");
+    }
+    const width = expansionWidths(rules, lexiconSize);
+    const escape = new Set(escapeTable);
+    const anchors = [];
+    let offset = 0;
+    let terminal = 0;
+    let next = 0;
+    for (const id of sequence) {
+      if (next >= positions.length) break;
+      const span = id < lexiconSize ? 1 : width[id - lexiconSize];
+      while (next < positions.length && positions[next] < terminal + span) {
+        anchors.push({ offset, skip: positions[next] - terminal });
+        next++;
+      }
+      terminal += span;
+      offset += escape.has(id) ? 1 : 2;
+    }
+    if (next < positions.length) {
+      throw new CodecError(`anchor position ${positions[next]} is past the ${terminal} terminals in the stream`);
+    }
+    return anchors;
+  }
+  function anchorTableBytes(anchors) {
+    let total = 0;
+    let previous = 0;
+    for (const anchor of anchors) {
+      total += varintSize(anchor.offset - previous) + varintSize(anchor.skip);
+      previous = anchor.offset;
+    }
+    return total;
+  }
+  function readFrom(container, anchor, count) {
+    const { stream, escapeTable, threshold, rules, lexicon } = container;
+    const out = [];
+    let skip = anchor.skip;
+    let i = anchor.offset;
+    while (i < stream.length && out.length < count) {
+      const lead = stream[i++];
+      let id;
+      if (lead < threshold) {
+        id = escapeTable[lead];
+        if (id === void 0) throw new CodecError(`escape code ${lead} is not in the table`);
+      } else {
+        if (i >= stream.length) throw new CodecError("stream ends mid-token");
+        id = lead - threshold << 8 | stream[i++];
+      }
+      for (const terminal of expand([id], rules, lexicon.length).terminals) {
+        if (skip > 0) {
+          skip--;
+          continue;
+        }
+        if (out.length < count) out.push(terminal);
+      }
+    }
+    return out;
+  }
   var MODE_LITERAL = 0;
   var MODE_SUFFIX = 1;
   var MODE_BOTH = 2;
@@ -604,8 +676,8 @@ var RePair = (() => {
     return chosen;
   }
   var MAGIC = [82, 80, 82, 49];
-  var FORMAT_VERSION = 5;
-  var HEADER_BYTES = 16;
+  var FORMAT_VERSION = 6;
+  var HEADER_BYTES = 18;
   var ByteWriter = class {
     constructor() {
       __publicField(this, "bytes", []);
@@ -684,6 +756,7 @@ var RePair = (() => {
     const escapeTable = container.escapeTable.length * 2;
     const rules = container.rules.length * 4;
     const stream = container.stream.length;
+    const anchors = anchorTableBytes(container.anchors);
     return {
       header: HEADER_BYTES,
       suffixTable,
@@ -691,7 +764,8 @@ var RePair = (() => {
       escapeTable,
       rules,
       stream,
-      total: HEADER_BYTES + suffixTable + lexicon + escapeTable + rules + stream
+      anchors,
+      total: HEADER_BYTES + suffixTable + lexicon + escapeTable + rules + stream + anchors
     };
   }
   function serialize(container) {
@@ -709,6 +783,8 @@ var RePair = (() => {
     if (container.suffixes.length > 255) throw new CodecError("the suffix table holds at most 255 codes");
     w.u8(container.suffixes.length);
     w.u8(headerCodebook.length);
+    if (container.anchors.length > 65535) throw new CodecError("the anchor table holds at most 65535 entries");
+    w.u16(container.anchors.length);
     for (const suffix of container.suffixes) {
       const bytes = ENCODER.encode(suffix);
       w.varint(bytes.length);
@@ -741,6 +817,12 @@ var RePair = (() => {
       w.u16(left);
       w.u16(right);
     }
+    let previousOffset = 0;
+    for (const anchor of container.anchors) {
+      w.varint(anchor.offset - previousOffset);
+      w.varint(anchor.skip);
+      previousOffset = anchor.offset;
+    }
     w.raw(container.stream);
     return w.finish();
   }
@@ -762,6 +844,7 @@ var RePair = (() => {
     const decoder = new TextDecoder();
     const suffixCount = r.u8();
     const headerCodeCount = r.u8();
+    const anchorCount = r.u16();
     if (headerCodeCount > MAX_LEXICON_HEADER_CODES) {
       throw new CodecError(`lexicon header table has ${headerCodeCount} codes; maximum is ${MAX_LEXICON_HEADER_CODES}`);
     }
@@ -829,7 +912,13 @@ var RePair = (() => {
     for (let i = 0; i < threshold; i++) escapeTable.push(r.u16());
     const rules = [];
     for (let i = 0; i < ruleCount; i++) rules.push([r.u16(), r.u16()]);
-    return { threshold, suffixes, lexicon, escapeTable, rules, stream: r.raw(streamLength) };
+    const anchors = [];
+    let anchorOffset = 0;
+    for (let i = 0; i < anchorCount; i++) {
+      anchorOffset += r.varint();
+      anchors.push({ offset: anchorOffset, skip: r.varint() });
+    }
+    return { threshold, suffixes, lexicon, escapeTable, rules, anchors, stream: r.raw(streamLength) };
   }
   function maxTokenIdFor(threshold) {
     return (256 - threshold) * 256 - 1;
@@ -860,7 +949,8 @@ var RePair = (() => {
     const threshold = escapeTable.length;
     const { stream, singleByteTokens, twoByteTokens } = emitStream(sequence, escapeTable, threshold);
     const suffixes = planLexiconSuffixes(lexicon, { maxSuffixLength: cfg.maxSuffixLength });
-    const container = { threshold, suffixes, lexicon, escapeTable, rules, stream };
+    const anchors = planAnchors(sequence, rules, lexicon.length, escapeTable, threshold, cfg.anchors);
+    const container = { threshold, suffixes, lexicon, escapeTable, rules, anchors, stream };
     const lexiconEntries = planLexiconEntries(lexicon, suffixes);
     const lexiconHeaderCodebook = planLexiconHeaderCodebook(lexiconEntries);
     const bytes = serialize(container);
@@ -952,6 +1042,7 @@ var RePair = (() => {
       lexicon,
       escapeTable: [],
       rules,
+      anchors: [],
       stream: new Uint8Array(0)
     }).total;
     const highestId = lexicon.length + rules.length - 1;

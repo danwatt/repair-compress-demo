@@ -15,6 +15,8 @@ import {
   serialize,
   deserialize,
   measure,
+  readFrom,
+  anchorTableBytes,
   plainLexiconBytes,
   CodecError,
 } from "./repair-codec";
@@ -304,6 +306,44 @@ try {
 }
 check("rejects an oversized lexicon header table", badHeaderTable.includes("maximum is 127"), badHeaderTable);
 check("plainLexiconBytes measures the old format", plainLexiconBytes(["ab", "cd"]) === 6);
+
+// Anchors: a reader handed one must produce the same terminals as a reader that
+// walked the whole stream, and must do it without looking behind the offset.
+{
+  const anchorText = samples.genesis;
+  const anchorTokens = tokenize(anchorText);
+  const positions = [0, 3, 17, 40, anchorTokens.length - 1].filter((p) => p < anchorTokens.length);
+  const anchored = encode(anchorText, { anchors: positions });
+  const container = deserialize(anchored.bytes);
+  check("anchors survive the round trip", container.anchors.length === positions.length);
+  check(
+    "anchors read the terminals they name",
+    positions.every((position, i) => {
+      const want = anchorTokens.slice(position, position + 6);
+      const got = readFrom(container, container.anchors[i], want.length).map((id) => container.lexicon[id]);
+      return got.length === want.length && got.every((word, j) => word === want[j]);
+    }),
+  );
+  check(
+    "anchors never point past a token boundary",
+    container.anchors.every((a) => a.offset >= 0 && a.offset < container.stream.length),
+  );
+  const unanchored = encode(anchorText);
+  check(
+    "the anchor table is the only difference in size",
+    anchored.stats.sizes.total - unanchored.stats.sizes.total === anchorTableBytes(container.anchors),
+    `${unanchored.stats.sizes.total} -> ${anchored.stats.sizes.total}`,
+  );
+  check("anchor round trip", decode(anchored.bytes) === anchorText);
+
+  let descending = "";
+  try {
+    encode(anchorText, { anchors: [5, 2] });
+  } catch (e) {
+    descending = e instanceof CodecError ? e.message : "wrong error type";
+  }
+  check("rejects unsorted anchors", descending.includes("ascend"), descending);
+}
 
 // A big synthetic corpus: repeated structure, the case Re-Pair is built for.
 const words = ["and", "the", "of", "God", "said", "unto", "him", "shall", "be", "a", "man"];

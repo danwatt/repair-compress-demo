@@ -1,22 +1,33 @@
 // Pre-encode kjv-data.js with the demo defaults so the browser can decode the
 // corpus at startup instead of spending several seconds rebuilding its grammar.
 import fs from "node:fs";
-import { decode, encode } from "./repair-codec";
+import { decode, encode, tokenize } from "./repair-codec";
 import { planSuffixes } from "./link-codec";
 
-const source = fs.readFileSync("kjv-data.js", "utf8").trim();
+const source = fs.readFileSync("kjv-data.js", "utf8");
+const [textLine] = source.split("\n");
 const prefix = "window.KJV_TEXT = ";
-if (!source.startsWith(prefix) || !source.endsWith(";")) {
-  throw new Error("kjv-data.js does not have the expected window.KJV_TEXT assignment");
+if (!textLine.startsWith(prefix) || !textLine.endsWith(";")) {
+  throw new Error("kjv-data.js does not start with the expected window.KJV_TEXT assignment");
 }
 
-const text = JSON.parse(source.slice(prefix.length, -1)) as string;
-const config = { singleByteCount: 0x55, minPairCount: 3, maxPairs: 65535 };
+const text = JSON.parse(textLine.slice(prefix.length, -1)) as string;
+
+// One anchor per book start, so demo-verse.html can seek the way the cartridge
+// would have: read the table, jump, and decode forward from there.
+const anchors: number[] = [];
+tokenize(text).forEach((token, i) => {
+  if (token === "%") anchors.push(i);
+});
+
+const knobs = { singleByteCount: 0x55, minPairCount: 3, maxPairs: 65535 };
 const started = performance.now();
-const result = encode(text, config);
+const result = encode(text, { ...knobs, anchors });
 if (decode(result.bytes) !== text) throw new Error("pre-encoded KJV failed its round trip");
 const artifact = {
-  config,
+  config: knobs,
+  /** Token index of each book's leading % marker, in canonical order. */
+  anchors,
   bytes: Buffer.from(result.bytes).toString("base64"),
   stats: result.stats,
 };
@@ -35,6 +46,9 @@ const suffixes = planSuffixes(text);
 fs.writeFileSync("kjv-suffixes.js", `window.KJV_SUFFIXES = ${JSON.stringify(suffixes)};\n`);
 console.log(
   `${suffixes.length} lexicon endings in ${Math.round(performance.now() - suffixStarted)} ms -> kjv-suffixes.js`,
+);
+console.log(
+  `${anchors.length} book anchors cost ${result.stats.sizes.anchors} bytes`,
 );
 console.log(
   `${result.stats.originalBytes} input bytes -> ${result.bytes.length} RPR1 bytes ` +

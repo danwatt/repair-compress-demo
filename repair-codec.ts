@@ -69,6 +69,12 @@ export interface CodecConfig {
   maxPairs: number;
   /** Longest suffix, in characters, the lexicon writer will consider. */
   maxSuffixLength: number;
+  /**
+   * Terminal indices — positions in `tokenize(text)`, ascending — that get a
+   * seek entry in the container. Data, not a knob: the codec has no idea what a
+   * book is, so the caller says where it wants to be able to start reading.
+   */
+  anchors: readonly number[];
 }
 
 export const DEFAULT_CONFIG: CodecConfig = {
@@ -76,6 +82,7 @@ export const DEFAULT_CONFIG: CodecConfig = {
   minPairCount: 3,
   maxPairs: 65535,
   maxSuffixLength: 4,
+  anchors: [],
 };
 
 /** left/right token ids of one grammar rule (a "4 byte block" in the ROM). */
@@ -89,6 +96,8 @@ export interface Container {
   escapeTable: number[];
   rules: Rule[];
   stream: Uint8Array;
+  /** Stream positions a reader may start from; empty when nothing was indexed. */
+  anchors: Anchor[];
 }
 
 export interface SectionSizes {
@@ -103,6 +112,8 @@ export interface SectionSizes {
   rules: number;
   /** Section C in the ROM: the compressed token stream. */
   stream: number;
+  /** The seek table, if the caller asked for one. */
+  anchors: number;
   total: number;
 }
 
@@ -610,6 +621,120 @@ export function expandToWords(token: number, container: Container): string[] {
 }
 
 // ---------------------------------------------------------------------------
+// Anchors — the one thing a reader cannot compute for itself
+//
+// The stream is a self-synchronizing byte code: given a token boundary you can
+// read forward from it forever, and given the file's start you can find every
+// boundary there is. What you cannot do is find the boundary belonging to
+// terminal number 700,000 without walking all 700,000, which is what the ROM's
+// book table was for. An anchor is that walk, done once at encode time and
+// written down: a byte offset into the stream plus the terminals to discard
+// from the first token, since a Re-Pair token expands to several words and a
+// boundary the caller cares about lands wherever it lands inside one.
+//
+// Which positions get an anchor is the caller's business — this codec knows
+// nothing about books. `demo-verse.html` anchors the 66 book starts.
+// ---------------------------------------------------------------------------
+
+/** A place in the stream a reader may start from without reading what precedes it. */
+export interface Anchor {
+  /** Byte offset into the stream section, always at a token boundary. */
+  offset: number;
+  /** Terminals to discard from that token's expansion before the anchored one. */
+  skip: number;
+}
+
+/** Terminals each grammar rule expands to, bottom up. */
+function expansionWidths(rules: readonly Rule[], lexiconSize: number): Int32Array {
+  const width = new Int32Array(rules.length);
+  const widthOf = (id: number): number => (id < lexiconSize ? 1 : width[id - lexiconSize]);
+  for (let i = 0; i < rules.length; i++) {
+    const rule = rules[i];
+    width[i] = widthOf(rule[0]) + widthOf(rule[1]);
+  }
+  return width;
+}
+
+/**
+ * Locate `positions` — terminal indices, ascending — in the emitted stream. One
+ * pass, because the offsets are ascending too.
+ */
+export function planAnchors(
+  sequence: readonly number[],
+  rules: readonly Rule[],
+  lexiconSize: number,
+  escapeTable: readonly number[],
+  threshold: number,
+  positions: readonly number[],
+): Anchor[] {
+  for (let i = 1; i < positions.length; i++) {
+    if (positions[i] <= positions[i - 1]) throw new CodecError("anchor positions must ascend");
+  }
+  const width = expansionWidths(rules, lexiconSize);
+  const escape = new Set(escapeTable);
+  const anchors: Anchor[] = [];
+  let offset = 0;
+  let terminal = 0;
+  let next = 0;
+  for (const id of sequence) {
+    if (next >= positions.length) break;
+    const span = id < lexiconSize ? 1 : width[id - lexiconSize];
+    while (next < positions.length && positions[next] < terminal + span) {
+      anchors.push({ offset, skip: positions[next] - terminal });
+      next++;
+    }
+    terminal += span;
+    offset += escape.has(id) ? 1 : 2;
+  }
+  if (next < positions.length) {
+    throw new CodecError(`anchor position ${positions[next]} is past the ${terminal} terminals in the stream`);
+  }
+  return anchors;
+}
+
+/** What an anchor table costs on disk: ascending offsets stored as gaps. */
+export function anchorTableBytes(anchors: readonly Anchor[]): number {
+  let total = 0;
+  let previous = 0;
+  for (const anchor of anchors) {
+    total += varintSize(anchor.offset - previous) + varintSize(anchor.skip);
+    previous = anchor.offset;
+  }
+  return total;
+}
+
+/**
+ * Terminal ids from an anchor, without touching a byte before it. This is the
+ * whole point of the section: `stream[anchor.offset]` is a lead byte because the
+ * encoder said so, and everything after it reads normally.
+ */
+export function readFrom(container: Container, anchor: Anchor, count: number): number[] {
+  const { stream, escapeTable, threshold, rules, lexicon } = container;
+  const out: number[] = [];
+  let skip = anchor.skip;
+  let i = anchor.offset;
+  while (i < stream.length && out.length < count) {
+    const lead = stream[i++];
+    let id: number;
+    if (lead < threshold) {
+      id = escapeTable[lead];
+      if (id === undefined) throw new CodecError(`escape code ${lead} is not in the table`);
+    } else {
+      if (i >= stream.length) throw new CodecError("stream ends mid-token");
+      id = ((lead - threshold) << 8) | stream[i++];
+    }
+    for (const terminal of expand([id], rules, lexicon.length).terminals) {
+      if (skip > 0) {
+        skip--;
+        continue;
+      }
+      if (out.length < count) out.push(terminal);
+    }
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------------
 // Stage 6 — lexicon storage: front coding plus suffix codes
 // ---------------------------------------------------------------------------
 
@@ -1072,8 +1197,8 @@ export function planLexiconSuffixes(
 
 const MAGIC = [0x52, 0x50, 0x52, 0x31]; // "RPR1"
 /** 5 codes lexicon headers; 4 chains suffix codes; 3 added the suffix table. */
-const FORMAT_VERSION = 5;
-const HEADER_BYTES = 16;
+const FORMAT_VERSION = 6;
+const HEADER_BYTES = 18;
 
 class ByteWriter {
   private bytes: number[] = [];
@@ -1153,6 +1278,7 @@ export function measure(container: Container, entries?: readonly LexiconEntry[])
   const escapeTable = container.escapeTable.length * 2;
   const rules = container.rules.length * 4;
   const stream = container.stream.length;
+  const anchors = anchorTableBytes(container.anchors);
   return {
     header: HEADER_BYTES,
     suffixTable,
@@ -1160,7 +1286,8 @@ export function measure(container: Container, entries?: readonly LexiconEntry[])
     escapeTable,
     rules,
     stream,
-    total: HEADER_BYTES + suffixTable + lexicon + escapeTable + rules + stream,
+    anchors,
+    total: HEADER_BYTES + suffixTable + lexicon + escapeTable + rules + stream + anchors,
   };
 }
 
@@ -1180,6 +1307,8 @@ export function serialize(container: Container): Uint8Array {
   if (container.suffixes.length > 255) throw new CodecError("the suffix table holds at most 255 codes");
   w.u8(container.suffixes.length);
   w.u8(headerCodebook.length);
+  if (container.anchors.length > 0xffff) throw new CodecError("the anchor table holds at most 65535 entries");
+  w.u16(container.anchors.length);
   for (const suffix of container.suffixes) {
     const bytes = ENCODER.encode(suffix);
     w.varint(bytes.length);
@@ -1214,6 +1343,13 @@ export function serialize(container: Container): Uint8Array {
     w.u16(left);
     w.u16(right);
   }
+  // Ascending offsets, so only the gaps are stored.
+  let previousOffset = 0;
+  for (const anchor of container.anchors) {
+    w.varint(anchor.offset - previousOffset);
+    w.varint(anchor.skip);
+    previousOffset = anchor.offset;
+  }
   w.raw(container.stream);
   return w.finish();
 }
@@ -1239,6 +1375,7 @@ export function deserialize(bytes: Uint8Array): Container {
   const decoder = new TextDecoder();
   const suffixCount = r.u8();
   const headerCodeCount = r.u8();
+  const anchorCount = r.u16();
   if (headerCodeCount > MAX_LEXICON_HEADER_CODES) {
     throw new CodecError(`lexicon header table has ${headerCodeCount} codes; maximum is ${MAX_LEXICON_HEADER_CODES}`);
   }
@@ -1310,7 +1447,13 @@ export function deserialize(bytes: Uint8Array): Container {
   for (let i = 0; i < threshold; i++) escapeTable.push(r.u16());
   const rules: Rule[] = [];
   for (let i = 0; i < ruleCount; i++) rules.push([r.u16(), r.u16()]);
-  return { threshold, suffixes, lexicon, escapeTable, rules, stream: r.raw(streamLength) };
+  const anchors: Anchor[] = [];
+  let anchorOffset = 0;
+  for (let i = 0; i < anchorCount; i++) {
+    anchorOffset += r.varint();
+    anchors.push({ offset: anchorOffset, skip: r.varint() });
+  }
+  return { threshold, suffixes, lexicon, escapeTable, rules, anchors, stream: r.raw(streamLength) };
 }
 
 // ---------------------------------------------------------------------------
@@ -1355,7 +1498,8 @@ export function encode(text: string, config: Partial<CodecConfig> = {}): EncodeR
   const { stream, singleByteTokens, twoByteTokens } = emitStream(sequence, escapeTable, threshold);
 
   const suffixes = planLexiconSuffixes(lexicon, { maxSuffixLength: cfg.maxSuffixLength });
-  const container: Container = { threshold, suffixes, lexicon, escapeTable, rules, stream };
+  const anchors = planAnchors(sequence, rules, lexicon.length, escapeTable, threshold, cfg.anchors);
+  const container: Container = { threshold, suffixes, lexicon, escapeTable, rules, anchors, stream };
   const lexiconEntries = planLexiconEntries(lexicon, suffixes);
   const lexiconHeaderCodebook = planLexiconHeaderCodebook(lexiconEntries);
   const bytes = serialize(container);
@@ -1495,6 +1639,7 @@ export function sweepFromGrammar(
     lexicon,
     escapeTable: [],
     rules,
+    anchors: [],
     stream: new Uint8Array(0),
   }).total;
   const highestId = lexicon.length + rules.length - 1;

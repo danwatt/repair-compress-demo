@@ -1,0 +1,1137 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Finding John 3:16 — RPR1 and YLK1 side by side</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Silkscreen:wght@400;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root {
+  --ground: #0a0e1a;
+  --panel: #121a2e;
+  --ink: #f2f4fa;
+  --ink-soft: #8b96b3;
+  --rule: #253253;
+  --dmg-4: #5b9dff;
+  --dmg-3: #3d7fd9;
+  --dmg-2: #2a5aa8;
+  --dmg-1: #163262;
+  --hot: #e8b923;
+  --hot-soft: #f6d878;
+  --warn: #ffb454;
+  --good: #008a63;
+  --pink: #ff6b9a;
+  --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --pixel: "Silkscreen", "IBM Plex Mono", monospace;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--ground);
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+.wrap { max-width: 1120px; margin: 0 auto; padding: 32px 20px 80px; }
+
+.eyebrow {
+  font-family: var(--pixel);
+  font-size: 10px;
+  letter-spacing: .12em;
+  color: var(--dmg-3);
+  text-transform: uppercase;
+  margin: 0 0 14px;
+}
+
+h1 {
+  font-family: var(--pixel);
+  font-weight: 400;
+  font-size: clamp(20px, 4.4vw, 34px);
+  line-height: 1.25;
+  margin: 0 0 12px;
+  color: var(--dmg-4);
+}
+
+.thesis { max-width: 66ch; margin: 0 0 10px; color: var(--ink-soft); }
+.thesis a { color: var(--hot); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+.thesis b { color: var(--ink); font-weight: 500; }
+.thesis code { color: var(--hot); }
+
+.hr { height: 1px; background: var(--rule); border: 0; margin: 28px 0; }
+section { margin-top: 34px; }
+
+.stage-label {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  font-family: var(--pixel);
+  font-size: 10px;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: var(--dmg-3);
+  margin-bottom: 12px;
+}
+.stage-label .num { color: var(--hot); }
+.stage-label .hint {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--ink-soft);
+  margin-left: auto;
+}
+
+.panel { background: var(--panel); border: 1px solid var(--rule); border-radius: 2px; padding: 14px; }
+.two { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; align-items: start; }
+@media (max-width: 860px) { .two { grid-template-columns: 1fr; } }
+
+.codec-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 10px; }
+.codec-head h3 { margin: 0; font-family: var(--pixel); font-size: 12px; font-weight: 400; color: var(--dmg-4); }
+.codec-head .sub { font-size: 11px; color: var(--ink-soft); }
+.codec-head.ylk h3 { color: var(--hot); }
+
+.picker { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px 14px; }
+.picker label { display: flex; flex-direction: column; gap: 5px; font-size: 11px; color: var(--ink-soft); }
+.picker select {
+  padding: 6px 8px; border: 1px solid var(--rule); background: var(--ground);
+  color: var(--ink); font-family: var(--mono); font-size: 13px; border-radius: 2px; min-width: 96px;
+}
+.picker select.book { min-width: 190px; }
+.picker .status { font-size: 11px; color: var(--ink-soft); margin-left: auto; }
+select:focus-visible, button:focus-visible { outline: 2px solid var(--hot); outline-offset: 2px; }
+
+button {
+  font-family: var(--mono); font-size: 12px; font-weight: 500;
+  padding: 7px 12px; border-radius: 2px; cursor: pointer;
+  border: 1px solid var(--dmg-4); background: var(--ground); color: var(--dmg-4);
+}
+button:hover { background: var(--dmg-1); }
+button[disabled] { opacity: .5; cursor: default; }
+button.on { background: var(--hot); border-color: var(--hot); color: var(--ground); }
+
+.verse-text {
+  margin-top: 14px; padding: 12px 14px; border-left: 2px solid var(--hot);
+  background: var(--panel); color: var(--ink); font-size: 15px; line-height: 1.7;
+}
+.verse-text .ref { display: block; font-size: 11px; color: var(--ink-soft); margin-bottom: 4px; }
+
+/* Steps ------------------------------------------------------------------- */
+
+.step { border-top: 1px solid var(--rule); padding: 10px 0; }
+.step:first-of-type { border-top: 0; }
+.step .head { display: flex; align-items: baseline; gap: 8px; }
+.step .n {
+  font-family: var(--pixel); font-size: 9px; color: var(--ground);
+  background: var(--dmg-3); border-radius: 2px; padding: 2px 5px; flex: 0 0 auto;
+}
+.ylk .step .n { background: var(--hot); }
+.step .title { font-size: 12px; color: var(--ink); font-weight: 500; }
+.step .body { font-size: 12px; color: var(--ink-soft); margin-top: 5px; }
+.step .body b { color: var(--ink); font-weight: 500; }
+.addr { color: var(--hot); font-variant-numeric: tabular-nums; }
+.cost { display: flex; flex-wrap: wrap; gap: 4px 8px; margin-top: 7px; }
+.cost span {
+  font-size: 10px; padding: 2px 6px; border-radius: 2px;
+  border: 1px solid var(--rule); background: var(--ground); color: var(--ink-soft);
+  font-variant-numeric: tabular-nums;
+}
+.cost span b { color: var(--dmg-4); font-weight: 600; }
+.cost span.warn b { color: var(--warn); }
+
+/* Trace table ------------------------------------------------------------- */
+
+table { width: 100%; border-collapse: collapse; font-size: 12px; }
+th, td { text-align: left; padding: 5px 10px; border-bottom: 1px solid var(--rule); white-space: nowrap; }
+th { font-weight: 500; color: var(--ink-soft); }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+.table-wrap { max-height: 420px; overflow: auto; border: 1px solid var(--rule); background: var(--panel); border-radius: 2px; }
+.table-wrap thead th { position: sticky; top: 0; background: var(--panel); box-shadow: inset 0 -1px 0 var(--rule); z-index: 1; }
+.table-wrap tr:last-child td { border-bottom: 0; }
+tbody tr { cursor: pointer; }
+tbody tr:hover { background: var(--dmg-1); }
+tbody tr.sel { background: var(--dmg-1); box-shadow: inset 2px 0 0 var(--hot); }
+td.word { color: var(--dmg-4); }
+td.marker { color: var(--pink); }
+td.shared { color: var(--ink-soft); }
+.kind-direct { color: var(--ink-soft); }
+.kind-link { color: var(--hot); }
+.kind-terminal { color: var(--good); }
+
+.readout {
+  margin-top: 10px; padding: 10px 12px; background: var(--panel);
+  border: 1px solid var(--rule); border-radius: 2px; font-size: 12px; color: var(--ink-soft);
+  min-height: 96px; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.7;
+}
+.readout b { color: var(--dmg-4); font-weight: 500; }
+.readout .hot { color: var(--hot); }
+.readout .good { color: var(--good); }
+.readout .hd { color: var(--ink); font-weight: 500; }
+
+/* Memory map -------------------------------------------------------------- */
+
+.map { width: 100%; display: block; }
+.map-note { font-size: 11px; color: var(--ink-soft); margin-top: 8px; }
+.legend { display: flex; flex-wrap: wrap; gap: 4px 16px; margin-top: 10px; font-size: 11px; }
+.legend span { display: flex; align-items: center; gap: 6px; color: var(--ink-soft); }
+.legend i { width: 11px; height: 11px; display: inline-block; border-radius: 1px; }
+
+.stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 14px 20px; margin-top: 4px; }
+.stat .k { font-size: 10px; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-soft); }
+.stat .v { font-size: 19px; font-variant-numeric: tabular-nums; }
+.stat .v.hot { color: var(--hot); }
+.stat .n { font-size: 10px; color: var(--ink-soft); }
+
+.note { font-size: 11px; color: var(--ink-soft); margin-top: 10px; }
+.note b { color: var(--ink); font-weight: 500; }
+.loading { color: var(--ink-soft); font-size: 13px; }
+footer { margin-top: 44px; font-size: 11px; color: var(--ink-soft); }
+footer a { color: var(--hot); }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<p class="eyebrow">RPR1 · YLK1 · read path</p>
+<h1>Finding John 3:16</h1>
+<p class="thesis">
+  Both codecs store the King James Bible as one undelimited run of symbols. Nothing in either stream
+  says where a book, a chapter or a verse begins, and neither stream can be entered in the middle by
+  guesswork: RPR1's tokens are one or two bytes with no way to tell which from the outside, and YLK1's
+  are Huffman codes with no byte boundaries at all. So both containers carry the one thing a reader
+  cannot work out for itself — <b>a table of 66 entries, one per book</b>, which is what the Franklin
+  and cartridge formats of the era had to have and what this repository was missing until now.
+</p>
+<p class="thesis">
+  This page follows one verse from that table to the words on screen, and counts every address touched
+  on the way. The two codecs pay in opposite places.
+</p>
+
+<div class="panel" style="margin-top:20px">
+  <div class="picker">
+    <label>Book<select id="book" class="book"></select></label>
+    <label>Chapter<select id="chapter"></select></label>
+    <label>Verse<select id="verse"></select></label>
+    <label>&nbsp;<button id="reset">John 3:16</button></label>
+    <span class="status" id="status">loading…</span>
+  </div>
+  <div class="verse-text" id="verse-text"><span class="ref">…</span>loading the corpus and both containers…</div>
+</div>
+
+<section id="app" hidden>
+
+<!-- 01 ------------------------------------------------------------------- -->
+<div class="stage-label"><span class="num">01</span> The book table <span class="hint">the only random access either format has</span></div>
+<div class="two">
+  <div class="panel">
+    <div class="codec-head"><h3>RPR1</h3><span class="sub">Re-Pair over words, byte-framed</span></div>
+    <div id="rpr-table-panel"></div>
+  </div>
+  <div class="panel">
+    <div class="codec-head ylk"><h3>YLK1</h3><span class="sub">next-occurrence links, bit-packed</span></div>
+    <div id="ylk-table-panel"></div>
+  </div>
+</div>
+<p class="note" id="table-note"></p>
+
+<!-- 02 ------------------------------------------------------------------- -->
+<section>
+<div class="stage-label"><span class="num">02</span> The seek <span class="hint">table lookup, jump, scan, read</span></div>
+<div class="two">
+  <div class="panel" id="rpr-steps"></div>
+  <div class="panel ylk" id="ylk-steps"></div>
+</div>
+</section>
+
+<!-- 03 ------------------------------------------------------------------- -->
+<section>
+<div class="stage-label"><span class="num">03</span> Token by token <span class="hint">click a row for the addresses behind one word</span></div>
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        <th class="num">#</th>
+        <th>word</th>
+        <th>RPR1 stream</th>
+        <th class="num">rules</th>
+        <th>YLK1 stream</th>
+        <th>entry</th>
+        <th class="num">hops</th>
+        <th class="num">chain reaches</th>
+      </tr>
+    </thead>
+    <tbody id="trace"></tbody>
+  </table>
+</div>
+<div class="readout" id="readout">Select a word above.</div>
+</section>
+
+<!-- 04 ------------------------------------------------------------------- -->
+<section>
+<div class="stage-label"><span class="num">04</span> Where the reads land <span class="hint">the whole file, left to right</span></div>
+<div class="panel">
+  <svg class="map" id="map" viewBox="0 0 1000 260" preserveAspectRatio="none" role="img" aria-label="memory map of both containers"></svg>
+  <div class="legend" id="map-legend"></div>
+  <p class="map-note" id="map-note"></p>
+</div>
+</section>
+
+<!-- 05 ------------------------------------------------------------------- -->
+<section>
+<div class="stage-label"><span class="num">05</span> What the verse cost <span class="hint">from the book table to the last word</span></div>
+<div class="two">
+  <div class="panel">
+    <div class="codec-head"><h3>RPR1</h3><span class="sub">no search index</span></div>
+    <div class="stat-grid" id="rpr-stats"></div>
+  </div>
+  <div class="panel">
+    <div class="codec-head ylk"><h3>YLK1</h3><span class="sub">stream is also the index</span></div>
+    <div class="stat-grid" id="ylk-stats"></div>
+  </div>
+</div>
+<p class="note" id="verdict"></p>
+<div class="picker" style="margin-top:14px">
+  <label>Fourth linking signal
+    <select id="shortcut">
+      <option value="0">off — the chain runs to the last occurrence</option>
+      <option value="1000">every 1000th occurrence carries its row</option>
+      <option value="64">every 64th occurrence carries its row</option>
+    </select>
+  </label>
+  <span class="status" id="shortcut-status"></span>
+</div>
+<p class="note" id="shortcut-note"></p>
+</section>
+
+</section>
+
+<footer>
+  <a href="demo.html">RPR1 demo</a> · <a href="demo-ylk1.html">YLK1 demo</a> ·
+  YLK1 after <a href="https://patents.google.com/patent/US5153831A/en">US 5,153,831</a> ·
+  RPR1 after the 1993 Game Boy KJV
+</footer>
+</div>
+
+<script src="repair-codec.js"></script>
+<script src="link-codec.js"></script>
+<script>
+(() => {
+  "use strict";
+  const $ = (id) => document.getElementById(id);
+  const fmt = (n) => n.toLocaleString("en-US");
+  const hex = (n, width = 6) => "0x" + n.toString(16).toUpperCase().padStart(width, "0");
+  const escapeHtml = (s) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+  const bytesOf = (bits) => (bits / 8);
+  const kb = (bytes) => bytes >= 1024 ? (bytes / 1024).toFixed(1) + " KB" : fmt(Math.round(bytes)) + " B";
+
+  const MARKERS = { "%": "book start", "$": "book end", "#": "chapter end", "@": "verse end" };
+
+  function load(src) {
+    return new Promise((resolve, reject) => {
+      const s = document.createElement("script");
+      s.src = src;
+      s.onload = resolve;
+      s.onerror = () => reject(new Error("could not load " + src));
+      document.head.appendChild(s);
+    });
+  }
+
+  function base64ToBytes(b64) {
+    const binary = atob(b64);
+    const out = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) out[i] = binary.charCodeAt(i);
+    return out;
+  }
+
+  const state = {
+    tokens: null,
+    books: null,
+    structure: null,     // book -> chapter -> [{start, end}]
+    rpr: null,           // {container, bytes, sizes, offsets, widths, escapeSet}
+    ylk: null,           // {bytes, container, sizes, bitAt, chainOf}
+    shortcut: 0,
+    ylkCache: new Map(),
+    selection: null,
+    rows: [],
+  };
+
+  // -------------------------------------------------------------------------
+  // Corpus structure: every marker in the token stream, indexed
+  // -------------------------------------------------------------------------
+
+  function buildStructure(tokens) {
+    const structure = [];
+    let chapter = null;
+    let start = 0;
+    for (let i = 0; i < tokens.length; i++) {
+      const token = tokens[i];
+      if (token === "%") {
+        chapter = [];
+        structure.push([chapter]);
+        start = i + 1;
+        continue;
+      }
+      if (token !== "@" && token !== "#" && token !== "$") continue;
+      chapter.push({ start, end: i });
+      if (token === "#") {
+        chapter = [];
+        structure[structure.length - 1].push(chapter);
+      }
+      start = i + 1;
+    }
+    return structure;
+  }
+
+  // -------------------------------------------------------------------------
+  // RPR1 — byte framing, rule DAG, book table
+  // -------------------------------------------------------------------------
+
+  function prepareRpr() {
+    const bytes = base64ToBytes(window.KJV_PREENCODED.bytes);
+    const container = RePair.deserialize(bytes);
+    const sizes = RePair.measure(container);
+    const streamStart = bytes.length - container.stream.length;
+    const offsets = {
+      header: 0,
+      suffixTable: sizes.header,
+      lexicon: sizes.header + sizes.suffixTable,
+      escapeTable: streamStart - sizes.anchors - sizes.rules - sizes.escapeTable,
+      rules: streamStart - sizes.anchors - sizes.rules,
+      anchors: streamStart - sizes.anchors,
+      stream: streamStart,
+      total: bytes.length,
+    };
+
+    // Terminals per rule, so a scan can skip a token without expanding it.
+    const lexiconSize = container.lexicon.length;
+    const widths = new Int32Array(container.rules.length);
+    const widthOf = (id) => (id < lexiconSize ? 1 : widths[id - lexiconSize]);
+    for (let i = 0; i < container.rules.length; i++) {
+      widths[i] = widthOf(container.rules[i][0]) + widthOf(container.rules[i][1]);
+    }
+    return { bytes, container, sizes, offsets, widths, widthOf, lexiconSize, escapeSet: new Set(container.escapeTable) };
+  }
+
+  /** One token's terminals, plus every rule row the reader had to fetch. */
+  function expandRecording(rpr, id) {
+    const words = [];
+    const ruleIds = [];
+    const stack = [id];
+    while (stack.length > 0) {
+      const symbol = stack.pop();
+      if (symbol < rpr.lexiconSize) {
+        words.push(symbol);
+        continue;
+      }
+      ruleIds.push(symbol);
+      const rule = rpr.container.rules[symbol - rpr.lexiconSize];
+      stack.push(rule[1], rule[0]);
+    }
+    return { words, ruleIds };
+  }
+
+  /**
+   * Walk the stream from a book's anchor to the end of the verse, recording what
+   * each stream token cost. This is the reader's whole job: there is no way to
+   * know a marker went by without expanding the token that carried it.
+   */
+  function rprWalk(rpr, bookIndex, range) {
+    const anchor = rpr.container.anchors[bookIndex];
+    const stream = rpr.container.stream;
+    const threshold = rpr.container.threshold;
+    let offset = anchor.offset;
+    let term = window.KJV_PREENCODED.anchors[bookIndex] - anchor.skip;
+
+    const tokens = [];
+    const scanRuleIds = [];
+    let scan = { bytes: 0, rules: 0, tokens: 0 };
+    let read = { bytes: 0, rules: 0, tokens: 0 };
+    let firstVerseToken = -1;
+
+    while (term < range.end) {
+      const lead = stream[offset];
+      let id, size;
+      if (lead < threshold) {
+        id = rpr.container.escapeTable[lead];
+        size = 1;
+      } else {
+        id = ((lead - threshold) << 8) | stream[offset + 1];
+        size = 2;
+      }
+      const width = rpr.widthOf(id);
+      const touchesVerse = term + width > range.start;
+      const bucket = touchesVerse ? read : scan;
+      bucket.bytes += size;
+      bucket.rules += width - 1;
+      bucket.tokens += 1;
+      if (touchesVerse) {
+        if (firstVerseToken < 0) firstVerseToken = tokens.length;
+        const { words, ruleIds } = expandRecording(rpr, id);
+        tokens.push({ offset, size, id, firstTerm: term, words, ruleIds, single: size === 1, lead });
+      } else if (id >= rpr.lexiconSize) {
+        for (const ruleId of expandRecording(rpr, id).ruleIds) scanRuleIds.push(ruleId);
+      }
+      offset += size;
+      term += width;
+    }
+    return { anchor, tokens, scanRuleIds, scan, read, firstVerseToken, endOffset: offset };
+  }
+
+  // -------------------------------------------------------------------------
+  // YLK1 — encoded live, because the whole point is the chains
+  // -------------------------------------------------------------------------
+
+  function prepareYlk(shortcutInterval) {
+    const cached = state.ylkCache.get(shortcutInterval);
+    if (cached) return cached;
+    const anchors = [];
+    state.tokens.forEach((token, i) => {
+      if (token === "%") anchors.push(i);
+    });
+    const result = Ylk1.encode(window.KJV_TEXT, {
+      directTermCount: 254,
+      split: false,
+      shortcutInterval,
+      coder: "huffman",
+      contextDirectTerms: 128,
+      suffixes: window.KJV_SUFFIXES,
+      anchors,
+    });
+    const container = Ylk1.open(result.bytes);
+    const cost = Ylk1.measureStream(container);
+    const bitAt = new Float64Array(container.termCount + 1);
+    for (let i = 0; i < container.termCount; i++) bitAt[i + 1] = bitAt[i] + cost.bits[i];
+    const prepared = {
+      bytes: result.bytes,
+      sizes: result.sizes,
+      anchors: result.anchors,
+      container,
+      bitAt,
+      chainOf: Ylk1.buildChainIndex(container),
+    };
+    state.ylkCache.set(shortcutInterval, prepared);
+    return prepared;
+  }
+
+  /** Chase one term's chain to whatever names it, recording every landing. */
+  function chase(ylk, termIndex) {
+    const chainIndex = ylk.chainOf[termIndex];
+    if (chainIndex < 0) {
+      return { kind: "direct", hops: 0, landings: [], word: null, reach: termIndex };
+    }
+    const landings = [];
+    let at = chainIndex;
+    for (;;) {
+      const entry = ylk.container.entries[at];
+      const landedTerm = ylk.container.termIndexOf[at];
+      if (entry.kind === Ylk1.ENTRY_TERMINAL) {
+        return { kind: landings.length === 0 ? "terminal" : "link", hops: landings.length, landings, word: ylk.container.lexicon[entry.value], reach: landedTerm, row: entry.value };
+      }
+      if (entry.shortcutRow >= 0) {
+        return { kind: "shortcut", hops: landings.length, landings, word: ylk.container.lexicon[entry.shortcutRow], reach: landedTerm, row: entry.shortcutRow };
+      }
+      at += entry.value;
+      landings.push(ylk.container.termIndexOf[at]);
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // Rendering
+  // -------------------------------------------------------------------------
+
+  function varintSize(v) {
+    let n = 1;
+    let x = v;
+    while (x >= 0x80) { n++; x >>>= 7; }
+    return n;
+  }
+
+  /** Bytes read walking a delta-coded table to entry `bookIndex`. */
+  function tableWalk(anchors, bookIndex, first, second) {
+    let walked = 0;
+    let previous = 0;
+    for (let i = 0; i <= bookIndex; i++) {
+      walked += varintSize(first(anchors[i]) - previous) + varintSize(second(anchors[i]));
+      previous = first(anchors[i]);
+    }
+    return walked;
+  }
+
+  const rprTableWalk = (rpr, bookIndex) =>
+    tableWalk(rpr.container.anchors, bookIndex, (a) => a.offset, (a) => a.skip);
+  const ylkTableWalk = (ylk, bookIndex) =>
+    tableWalk(ylk.container.anchors, bookIndex, (a) => a.bit, (a) => a.previous + 1);
+
+  function rprTablePanel(rpr, bookIndex) {
+    const anchors = rpr.container.anchors;
+    const walked = rprTableWalk(rpr, bookIndex);
+    const anchor = anchors[bookIndex];
+    return `
+      <p class="thesis" style="margin:0 0 10px">
+        66 entries at <span class="addr">${hex(rpr.offsets.anchors)}</span>, ${fmt(rpr.sizes.anchors)} bytes.
+        Each one is a <b>stream byte offset</b> and a <b>skip count</b>: a Re-Pair token expands to
+        several words, so a book start lands inside one and the reader throws the first few away.
+      </p>
+      <table>
+        <tr><td>entry ${bookIndex} of 66</td><td class="num">${escapeHtml(state.books[bookIndex])}</td></tr>
+        <tr><td>stream offset</td><td class="num addr">${hex(anchor.offset)}</td></tr>
+        <tr><td>absolute address</td><td class="num addr">${hex(rpr.offsets.stream + anchor.offset)}</td></tr>
+        <tr><td>terminals to skip</td><td class="num">${anchor.skip}</td></tr>
+        <tr><td>bytes read to reach it</td><td class="num">${walked}</td></tr>
+      </table>
+      <p class="note">Offsets ascend, so the table stores gaps; reaching entry ${bookIndex} means
+      reading the ${bookIndex + 1} before it — ${walked} bytes, still one small sequential read.</p>`;
+  }
+
+  function ylkTablePanel(ylk, bookIndex) {
+    const anchors = ylk.container.anchors;
+    const walked = ylkTableWalk(ylk, bookIndex);
+    const anchor = anchors[bookIndex];
+    const symbol = anchor.previous;
+    const D = ylk.container.directTerms.length;
+    const previousLabel = symbol < 0 ? "start of stream"
+      : symbol < D ? JSON.stringify(ylk.container.directTerms[symbol])
+      : symbol === D ? "a terminal link"
+      : "a delta";
+    const absoluteBit = ylk.container.streamStart * 8 + anchor.bit;
+    return `
+      <p class="thesis" style="margin:0 0 10px">
+        66 entries, ${fmt(ylk.sizes.anchors)} bytes. Each one is a <b>bit offset</b> — there are no byte
+        boundaries to point at — and the <b>symbol before it</b>, because with order-1 tables the reader
+        cannot pick the right code table for the first code without knowing what preceded it.
+      </p>
+      <table>
+        <tr><td>entry ${bookIndex} of 66</td><td class="num">${escapeHtml(state.books[bookIndex])}</td></tr>
+        <tr><td>stream bit</td><td class="num addr">${fmt(anchor.bit)}</td></tr>
+        <tr><td>absolute address</td><td class="num addr">${hex(absoluteBit >> 3)} + ${absoluteBit & 7} bits</td></tr>
+        <tr><td>preceding symbol</td><td class="num">${escapeHtml(previousLabel)}</td></tr>
+        <tr><td>bytes read to reach it</td><td class="num">${walked}</td></tr>
+      </table>
+      <p class="note">The jump lands mid-byte ${anchor.bit % 8 === 0 ? "(this one happens to be byte-aligned)" : "— bit " + (absoluteBit & 7) + " of that byte"}, which is why the offset is counted in bits.</p>`;
+  }
+
+  /** Terms in a range that are on a chain rather than written directly. */
+  function linkedTerms(ylk, range) {
+    let count = 0;
+    for (let term = range.start; term < range.end; term++) if (ylk.chainOf[term] >= 0) count++;
+    return count;
+  }
+
+  function stepBlock(n, title, body, costs) {
+    const chips = costs.map((c) => `<span${c.warn ? ' class="warn"' : ""}>${c.label} <b>${c.value}</b></span>`).join("");
+    return `<div class="step">
+      <div class="head"><span class="n">${n}</span><span class="title">${title}</span></div>
+      <div class="body">${body}</div>
+      ${chips ? `<div class="cost">${chips}</div>` : ""}
+    </div>`;
+  }
+
+  function renderSteps(rpr, ylk, walk, seek, bookIndex, chapter, verse, range) {
+    const anchor = rpr.container.anchors[bookIndex];
+    const bookToken = window.KJV_PREENCODED.anchors[bookIndex];
+    const reference = `${state.books[bookIndex]} ${chapter}:${verse}`;
+    const chaptersSkipped = chapter - 1;
+    const versesSkipped = verse - 1;
+
+    $("rpr-steps").innerHTML =
+      `<div class="codec-head"><h3>RPR1</h3><span class="sub">byte-framed token stream</span></div>` +
+      stepBlock(1, "Read the book table",
+        `Entry ${bookIndex} gives stream offset <span class="addr">${hex(anchor.offset)}</span>, skip ${anchor.skip}.`,
+        [{ label: "bytes", value: fmt(rprTableWalk(rpr, bookIndex)) }]) +
+      stepBlock(2, "Jump",
+        `The reader seeks to <span class="addr">${hex(rpr.offsets.stream + anchor.offset)}</span>, which the encoder
+         promised is a lead byte, and discards ${anchor.skip} terminal${anchor.skip === 1 ? "" : "s"} from the first token.`,
+        [{ label: "seek", value: "1" }]) +
+      stepBlock(3, `Scan for ${chaptersSkipped} chapter end${chaptersSkipped === 1 ? "" : "s"} and ${versesSkipped} verse end${versesSkipped === 1 ? "" : "s"}`,
+        `Markers are ordinary terminals, and Re-Pair folded them into rules along with the words around
+         them, so <b>every token has to be expanded to find out whether a marker went by</b>. That is the
+         scan: ${fmt(walk.scan.tokens)} tokens, ${fmt(walk.scan.rules)} rule rows out of the table at
+         <span class="addr">${hex(rpr.offsets.rules)}</span>.`,
+        [
+          { label: "stream bytes", value: fmt(walk.scan.bytes) },
+          { label: "rule reads", value: fmt(walk.scan.rules), warn: true },
+        ]) +
+      stepBlock(4, "Read the verse",
+        `${fmt(walk.read.tokens)} stream token${walk.read.tokens === 1 ? "" : "s"} carry all
+         ${fmt(range.end - range.start)} words of ${escapeHtml(reference)}. Every word is named on the spot —
+         the token <i>is</i> the word, or a rule that expands to words.`,
+        [
+          { label: "stream bytes", value: fmt(walk.read.bytes) },
+          { label: "rule reads", value: fmt(walk.read.rules) },
+          { label: "lexicon rows", value: fmt(new Set(state.tokens.slice(range.start, range.end)).size) },
+        ]);
+
+    const scanBytes = bytesOf(seek.scanBits);
+    const readBytes = bytesOf(seek.readBits);
+    $("ylk-steps").innerHTML =
+      `<div class="codec-head ylk"><h3>YLK1</h3><span class="sub">next-occurrence link stream</span></div>` +
+      stepBlock(1, "Read the book table",
+        `Entry ${bookIndex} gives stream bit ${fmt(ylk.container.anchors[bookIndex].bit)} and the symbol before it.`,
+        [{ label: "bytes", value: fmt(ylkTableWalk(ylk, bookIndex)) }]) +
+      stepBlock(2, "Jump",
+        `Seek to <span class="addr">${hex(ylk.container.streamStart + (ylk.container.anchors[bookIndex].bit >> 3))}</span>,
+         skip ${ylk.container.anchors[bookIndex].bit & 7} bits, load the code table the entry names.`,
+        [{ label: "seek", value: "1" }]) +
+      stepBlock(3, `Scan for ${chaptersSkipped} chapter end${chaptersSkipped === 1 ? "" : "s"} and ${versesSkipped} verse end${versesSkipped === 1 ? "" : "s"}`,
+        `Cheap here, and for a reason worth noticing: <b>the markers are direct terms</b>, written into the
+         stream as themselves rather than linked, so the reader counts them off the codes without chasing
+         anything. ${fmt(range.start - bookToken)} terms go by in ${kb(scanBytes)}.`,
+        [
+          { label: "bits", value: fmt(seek.scanBits) },
+          { label: "chases", value: "0" },
+        ]) +
+      stepBlock(4, "Read the verse",
+        `Now the format's central trade comes due. A searchable word is never written down — each
+         occurrence only says how far ahead the next one is — so naming ${fmt(linkedTerms(ylk, range))}
+         of the ${fmt(range.end - range.start)} words means following their chains
+         <b>forward to the last time each word is used</b>, which for a verse of ordinary vocabulary is
+         somewhere in Revelation.`,
+        [
+          { label: "hops", value: fmt(seek.hops), warn: true },
+          { label: "entries decoded", value: fmt(seek.entriesDecoded), warn: true },
+          { label: "bits", value: fmt(seek.readBits), warn: true },
+        ]);
+  }
+
+  function renderTrace(rpr, ylk, walk, range) {
+    const rows = [];
+    // Which stream token names each word, and whether it was already paid for.
+    const owner = new Map();
+    for (let t = 0; t < walk.tokens.length; t++) {
+      const token = walk.tokens[t];
+      let term = token.firstTerm;
+      for (const word of token.words) {
+        owner.set(term, { token: t, first: term === token.firstTerm });
+        term++;
+      }
+    }
+
+    for (let term = range.start; term < range.end; term++) {
+      const word = state.tokens[term];
+      const info = owner.get(term);
+      const token = info ? walk.tokens[info.token] : null;
+      const chased = chase(ylk, term);
+      rows.push({ term, word, token, first: info ? info.first : false, chased });
+    }
+    state.rows = rows;
+
+    const seenToken = new Set();
+    $("trace").innerHTML = rows.map((row, i) => {
+      const t = row.token;
+      const tokenIndex = rows[i].token ? walk.tokens.indexOf(t) : -1;
+      const already = seenToken.has(tokenIndex);
+      seenToken.add(tokenIndex);
+      row.already = already;
+      const streamCell = already
+        ? `<span class="shared">same token</span>`
+        : `<span class="addr">${hex(rpr.offsets.stream + t.offset)}</span> ${t.single ? "1 byte" : "2 bytes"}` +
+          (row.first ? "" : ` <span class="shared">mid-token</span>`);
+      const bit = ylk.container.streamStart * 8 + ylk.bitAt[row.term];
+      const kindClass = row.chased.kind === "direct" ? "kind-direct"
+        : row.chased.kind === "terminal" ? "kind-terminal" : "kind-link";
+      const kindLabel = row.chased.kind === "direct" ? "direct"
+        : row.chased.kind === "terminal" ? "terminal"
+        : row.chased.kind === "shortcut" ? "shortcut" : "link";
+      const reach = row.chased.kind === "direct" ? "—"
+        : `+${fmt(row.chased.reach - row.term)}`;
+      const isMarker = MARKERS[row.word] !== undefined;
+      return `<tr data-i="${i}"${state.selection === i ? ' class="sel"' : ""}>
+        <td class="num">${fmt(row.term)}</td>
+        <td class="${isMarker ? "marker" : "word"}">${escapeHtml(isMarker ? row.word + " " + MARKERS[row.word] : row.word)}</td>
+        <td>${streamCell}</td>
+        <td class="num">${already ? "" : fmt(t.ruleIds.length)}</td>
+        <td><span class="addr">${hex(bit >> 3)}</span>+${bit & 7}</td>
+        <td class="${kindClass}">${kindLabel}</td>
+        <td class="num">${row.chased.kind === "direct" ? "—" : fmt(row.chased.hops)}</td>
+        <td class="num">${reach}</td>
+      </tr>`;
+    }).join("");
+
+    for (const tr of $("trace").querySelectorAll("tr")) {
+      tr.addEventListener("click", () => selectRow(Number(tr.dataset.i)));
+    }
+    selectRow(state.selection !== null && state.selection < rows.length ? state.selection : firstLinkedRow());
+  }
+
+  function firstLinkedRow() {
+    const i = state.rows.findIndex((r) => r.chased.kind === "link" || r.chased.kind === "shortcut");
+    return i >= 0 ? i : 0;
+  }
+
+  function selectRow(index) {
+    state.selection = index;
+    for (const tr of $("trace").querySelectorAll("tr")) {
+      tr.classList.toggle("sel", Number(tr.dataset.i) === index);
+    }
+    const row = state.rows[index];
+    if (!row) return;
+    const rpr = state.rpr;
+    const ylk = state.ylk;
+
+    const lines = [];
+    lines.push(`<span class="hd">${escapeHtml(row.word)}</span>  ·  term ${fmt(row.term)}\n`);
+
+    const token = row.token;
+    lines.push(`<b>RPR1</b>`);
+    if (!row.already) {
+      const address = rpr.offsets.stream + token.offset;
+      lines.push(`  read ${token.single ? "1 byte" : "2 bytes"} at <span class="hot">${hex(address)}</span>` +
+        (token.single
+          ? ` — escape code ${token.lead}, so one more read at <span class="hot">${hex(rpr.offsets.escapeTable + token.lead * 2)}</span> in the escape table`
+          : ` — token id ${fmt(token.id)}`));
+      if (!row.first) {
+        lines.push(`  the verse starts inside this token: the reader drops the ${fmt(row.term - token.firstTerm)} word${row.term - token.firstTerm === 1 ? "" : "s"} of it that belong to the verse before`);
+      }
+      if (token.ruleIds.length === 0) {
+        lines.push(`  the id is below the lexicon size, so it <span class="good">is</span> a word: row ${fmt(token.id)}`);
+      } else {
+        const shown = token.ruleIds.slice(0, 8)
+          .map((id) => `<span class="hot">${hex(rpr.offsets.rules + (id - rpr.lexiconSize) * 4)}</span>`)
+          .join(" ");
+        lines.push(`  ${token.ruleIds.length} rule row${token.ruleIds.length === 1 ? "" : "s"}, 4 bytes each: ${shown}` +
+          (token.ruleIds.length > 8 ? ` … +${token.ruleIds.length - 8} more` : ""));
+        lines.push(`  expands to ${token.words.length} word${token.words.length === 1 ? "" : "s"}: ` +
+          escapeHtml(token.words.map((w) => rpr.container.lexicon[w]).join(" ")));
+      }
+    } else {
+      lines.push(`  nothing — this word came out of the token at <span class="hot">${hex(rpr.offsets.stream + token.offset)}</span>, already read`);
+    }
+
+    lines.push(``);
+    lines.push(`<b>YLK1</b>`);
+    const bit = ylk.container.streamStart * 8 + ylk.bitAt[row.term];
+    if (row.chased.kind === "direct") {
+      const code = ylk.container.directCodes[row.term];
+      lines.push(`  code at <span class="hot">${hex(bit >> 3)}</span>+${bit & 7} bits is direct term ${code} — the word is in the table at the front of the file, no chase`);
+    } else {
+      lines.push(`  code at <span class="hot">${hex(bit >> 3)}</span>+${bit & 7} bits says only <i>how far ahead the next one is</i>`);
+      const hops = row.chased.landings;
+      const shown = hops.slice(0, 6).map((termIndex) => {
+        const b = ylk.container.streamStart * 8 + ylk.bitAt[termIndex];
+        return `<span class="hot">${hex(b >> 3)}</span> (term ${fmt(termIndex)})`;
+      }).join("\n    ");
+      if (hops.length > 0) {
+        lines.push(`  chase: ${fmt(hops.length)} hop${hops.length === 1 ? "" : "s"}`);
+        lines.push(`    ${shown}${hops.length > 6 ? `\n    … ${fmt(hops.length - 6)} more, ending at term ${fmt(row.chased.reach)}` : ""}`);
+      } else {
+        lines.push(`  this occurrence is the last one, so it carries the lexicon row itself`);
+      }
+      lines.push(`  lands at term ${fmt(row.chased.reach)}, <span class="hot">${fmt(row.chased.reach - row.term)} terms ahead</span>, which names lexicon row ${fmt(row.chased.row)}: <span class="good">${escapeHtml(row.chased.word)}</span>`);
+      const distanceBits = ylk.bitAt[row.chased.reach] - ylk.bitAt[row.term];
+      lines.push(`  the patent jumps straight there; this build counts deltas in entries, so it decodes the ${kb(bytesOf(distanceBits))} in between`);
+    }
+    $("readout").innerHTML = lines.join("\n");
+  }
+
+  // -------------------------------------------------------------------------
+  // Memory map
+  // -------------------------------------------------------------------------
+
+  function renderMap(rpr, ylk, walk, range, seek) {
+    const W = 1000;
+    const svg = [];
+    const rprTotal = rpr.offsets.total;
+    const ylkTotal = ylk.sizes.total;
+    const scale = Math.max(rprTotal, ylkTotal);
+    const x = (byte) => (byte / scale) * W;
+
+    const bands = [
+      { label: "header + tables", color: "#253253" },
+      { label: "lexicon", color: "#008a63" },
+      { label: "book table", color: "#e8b923" },
+      { label: "stream", color: "#2a5aa8" },
+    ];
+
+    function row(y, sections, marks, spans, title) {
+      const out = [`<text x="0" y="${y - 8}" fill="#8b96b3" font-size="11" font-family="monospace">${title}</text>`];
+      for (const s of sections) {
+        out.push(`<rect x="${x(s.from)}" y="${y}" width="${Math.max(0.6, x(s.to) - x(s.from))}" height="26" fill="${s.color}" opacity="0.55"><title>${s.label}: ${fmt(s.from)}–${fmt(s.to)}</title></rect>`);
+      }
+      for (const span of spans) {
+        out.push(`<rect x="${x(span.from)}" y="${y}" width="${Math.max(0.8, x(span.to) - x(span.from))}" height="26" fill="${span.color}" opacity="0.85"><title>${span.label}</title></rect>`);
+      }
+      for (const mark of marks) {
+        out.push(`<rect x="${x(mark)}" y="${y - 4}" width="1" height="34" fill="#ff6b9a" opacity="0.8"/>`);
+      }
+      return out.join("");
+    }
+
+    const rprSections = [
+      { from: 0, to: rpr.offsets.escapeTable, label: "header, suffix table, lexicon", color: "#008a63" },
+      { from: rpr.offsets.escapeTable, to: rpr.offsets.rules, label: "escape table", color: "#253253" },
+      { from: rpr.offsets.rules, to: rpr.offsets.anchors, label: "rules", color: "#3d7fd9" },
+      { from: rpr.offsets.anchors, to: rpr.offsets.stream, label: "book table", color: "#e8b923" },
+      { from: rpr.offsets.stream, to: rprTotal, label: "stream", color: "#2a5aa8" },
+    ];
+    const ruleMarks = [];
+    for (const id of walk.scanRuleIds) ruleMarks.push(rpr.offsets.rules + (id - rpr.lexiconSize) * 4);
+    for (const token of walk.tokens) {
+      for (const id of token.ruleIds) ruleMarks.push(rpr.offsets.rules + (id - rpr.lexiconSize) * 4);
+    }
+    const rprSpans = [
+      { from: rpr.offsets.anchors, to: rpr.offsets.anchors + 2 * 66, color: "#e8b923", label: "book table read" },
+      {
+        from: rpr.offsets.stream + walk.anchor.offset,
+        to: rpr.offsets.stream + walk.endOffset,
+        color: "#ff6b9a",
+        label: `stream read: ${fmt(walk.scan.bytes + walk.read.bytes)} bytes`,
+      },
+    ];
+
+    const ylkStreamStart = ylk.container.streamStart;
+    const anchorByte = ylkStreamStart + (ylk.container.anchors[state.bookIndex].bit >> 3);
+    const furthest = state.rows.reduce((max, r) => Math.max(max, r.chased.kind === "direct" ? 0 : r.chased.reach), 0);
+    const furthestByte = ylkStreamStart + Math.ceil(ylk.bitAt[furthest] / 8);
+    const ylkSections = [
+      { from: 0, to: ylk.sizes.header + ylk.sizes.directTable + ylk.sizes.lexicon, label: "header, direct terms, lexicon", color: "#008a63" },
+      { from: ylk.sizes.header + ylk.sizes.directTable + ylk.sizes.lexicon, to: ylkStreamStart - ylk.sizes.anchors, label: "first-occurrence pointers, code lengths", color: "#253253" },
+      { from: ylkStreamStart - ylk.sizes.anchors, to: ylkStreamStart, label: "book table", color: "#e8b923" },
+      { from: ylkStreamStart, to: ylkTotal, label: "stream", color: "#2a5aa8" },
+    ];
+    const ylkSpans = [
+      { from: ylkStreamStart - ylk.sizes.anchors, to: ylkStreamStart, color: "#e8b923", label: "book table read" },
+      {
+        from: anchorByte,
+        to: furthestByte,
+        color: "#ff6b9a",
+        label: `decoded to resolve the verse: ${kb(furthestByte - anchorByte)}`,
+      },
+    ];
+    const chaseMarks = state.rows
+      .filter((r) => r.chased.kind !== "direct")
+      .map((r) => ylkStreamStart + Math.ceil(ylk.bitAt[r.chased.reach] / 8));
+
+    svg.push(row(24, rprSections, ruleMarks, rprSpans, `RPR1 — ${fmt(rprTotal)} bytes`));
+    svg.push(row(120, ylkSections, chaseMarks, ylkSpans, `YLK1 — ${fmt(ylkTotal)} bytes`));
+    svg.push(`<text x="0" y="200" fill="#8b96b3" font-size="11" font-family="monospace">0</text>`);
+    svg.push(`<text x="${W}" y="200" fill="#8b96b3" font-size="11" font-family="monospace" text-anchor="end">${fmt(scale)}</text>`);
+    $("map").innerHTML = svg.join("");
+    $("map").setAttribute("viewBox", `0 0 ${W} 210`);
+
+    $("map-legend").innerHTML = [
+      ["#008a63", "word list"],
+      ["#3d7fd9", "rules"],
+      ["#e8b923", "book table"],
+      ["#2a5aa8", "stream"],
+      ["#ff6b9a", "read for this verse"],
+    ].map(([c, l]) => `<span><i style="background:${c}"></i>${l}</span>`).join("");
+
+    $("map-note").innerHTML =
+      `RPR1's reads are two clusters: a short run of stream at the book, and ${fmt(ruleMarks.length)} scattered
+       four-byte rows in the rule table — most of them spent on the scan, not the verse. YLK1's are one run that starts at the book and does not stop until
+       the last occurrence of the rarest word in the verse — term ${fmt(furthest)} of
+       ${fmt(ylk.container.termCount)}, ${kb(furthestByte - anchorByte)} downstream.`;
+  }
+
+  // -------------------------------------------------------------------------
+  // Totals
+  // -------------------------------------------------------------------------
+
+  function stat(k, v, note, hot) {
+    return `<div class="stat"><div class="k">${k}</div><div class="v${hot ? " hot" : ""}">${v}</div><div class="n">${note || ""}</div></div>`;
+  }
+
+  /** The fourth linking signal against the plain chain, on this verse. */
+  function renderShortcutNote(ylk, seek, range, bookToken) {
+    const note = $("shortcut-note");
+    if (state.shortcut === 0) {
+      note.innerHTML =
+        `The patent's fourth linking signal answers exactly the cost above: every Nth occurrence of a word
+         carries its lexicon row as well as its delta, so a chase cannot run further than N hops. Turn it on.`;
+      return;
+    }
+    const base = state.ylkCache.get(0);
+    const baseSeek = Ylk1.readAnchored(base.bytes, state.bookIndex, range.end - range.start, range.start - bookToken);
+    const extra = ylk.sizes.total - base.sizes.total;
+    note.innerHTML =
+      `Shortcuts every ${state.shortcut} occurrences cost ${fmt(extra)} bytes and cut the chase from
+       ${fmt(baseSeek.hops)} hops to ${fmt(seek.hops)} — but the bytes decoded barely move
+       (${kb(bytesOf(baseSeek.readBits))} to ${kb(bytesOf(seek.readBits))}), and that is the interesting part.
+       <b>A shortcut bounds hops, not distance.</b> The words that reach furthest here are the rare ones —
+       "begotten", "whosoever", "everlasting" — whose chains have too few occurrences for a shortcut to ever
+       fire on them. On the patent's own layout, where a delta is a byte offset and a hop is a single random
+       read, bounding hops is the whole cost; on this build, which counts deltas in entries and therefore has
+       to decode its way forward, it is not.`;
+  }
+
+  function renderStats(rpr, ylk, walk, seek, range) {
+    const rprBytes = walk.scan.bytes + walk.read.bytes + walk.scan.rules * 4 + walk.read.rules * 4;
+    let lowest = rpr.offsets.total;
+    let highest = 0;
+    const noteRule = (id) => {
+      const address = rpr.offsets.rules + (id - rpr.lexiconSize) * 4;
+      lowest = Math.min(lowest, address);
+      highest = Math.max(highest, address + 4);
+    };
+    walk.scanRuleIds.forEach(noteRule);
+    for (const token of walk.tokens) token.ruleIds.forEach(noteRule);
+    highest = Math.max(highest, rpr.offsets.stream + walk.endOffset);
+    lowest = Math.min(lowest, rpr.offsets.anchors);
+    $("rpr-stats").innerHTML =
+      stat("stream bytes", fmt(walk.scan.bytes + walk.read.bytes), `${fmt(walk.scan.bytes)} scanning, ${fmt(walk.read.bytes)} on the verse`) +
+      stat("rule rows", fmt(walk.scan.rules + walk.read.rules), "4 bytes each, random access") +
+      stat("bytes touched", kb(rprBytes), "stream and rules together") +
+      stat("read span", kb(highest - lowest), `${hex(lowest)} to ${hex(highest)}`);
+
+    const total = bytesOf(seek.scanBits + seek.readBits);
+    $("ylk-stats").innerHTML =
+      stat("stream bits", fmt(seek.scanBits + seek.readBits), `${fmt(seek.scanBits)} scanning, ${fmt(seek.readBits)} on the verse`) +
+      stat("link hops", fmt(seek.hops), "random accesses on the patent's own layout", true) +
+      stat("bytes touched", kb(total), "decoded sequentially from the book", true) +
+      stat("chain entries", fmt(seek.entriesDecoded), "decoded to name 29 words");
+
+    const linked = state.rows.filter((r) => r.chased.kind !== "direct").length;
+    $("verdict").innerHTML =
+      `Same verse, opposite bills. RPR1 pays on the way <i>in</i> — ${fmt(walk.scan.rules)} rule reads to notice
+       ${fmt(range.start - window.KJV_PREENCODED.anchors[state.bookIndex])} terms going past — and then names every word
+       for nothing, because a token <b>is</b> the text. YLK1 walks in almost free, because the structure markers are
+       direct terms it can count off the codes, and then pays ${fmt(seek.hops)} hops to answer the only question the
+       stream deliberately does not: <b>which word is this?</b> ${fmt(linked)} of the ${fmt(range.end - range.start)}
+       terms in this verse are searchable words, and each one is stored as a pointer to the next time it is used,
+       so the last link in each chain — the one that finally names it — is wherever that word occurs for the last
+       time in the Bible.`;
+  }
+
+  // -------------------------------------------------------------------------
+  // Wiring
+  // -------------------------------------------------------------------------
+
+  function populateBooks() {
+    $("book").innerHTML = state.books.map((b, i) => `<option value="${i}">${escapeHtml(b)}</option>`).join("");
+  }
+
+  function populateChapters(bookIndex) {
+    const chapters = state.structure[bookIndex].length;
+    $("chapter").innerHTML = Array.from({ length: chapters }, (_, i) => `<option value="${i + 1}">${i + 1}</option>`).join("");
+  }
+
+  function populateVerses(bookIndex, chapter) {
+    const verses = state.structure[bookIndex][chapter - 1].length;
+    $("verse").innerHTML = Array.from({ length: verses }, (_, i) => `<option value="${i + 1}">${i + 1}</option>`).join("");
+  }
+
+  function currentRange() {
+    const bookIndex = Number($("book").value);
+    const chapter = Number($("chapter").value);
+    const verse = Number($("verse").value);
+    return { bookIndex, chapter, verse, range: state.structure[bookIndex][chapter - 1][verse - 1] };
+  }
+
+  function render() {
+    const { bookIndex, chapter, verse, range } = currentRange();
+    state.bookIndex = bookIndex;
+    const rpr = state.rpr;
+    const ylk = state.ylk;
+
+    const words = state.tokens.slice(range.start, range.end);
+    $("verse-text").innerHTML =
+      `<span class="ref">${escapeHtml(state.books[bookIndex])} ${chapter}:${verse} · terms ${fmt(range.start)}–${fmt(range.end - 1)}</span>` +
+      escapeHtml(RePair.detokenize(words));
+
+    const walk = rprWalk(rpr, bookIndex, range);
+    const bookToken = window.KJV_PREENCODED.anchors[bookIndex];
+    const seek = Ylk1.readAnchored(ylk.bytes, bookIndex, range.end - range.start, range.start - bookToken);
+
+    $("rpr-table-panel").innerHTML = rprTablePanel(rpr, bookIndex);
+    $("ylk-table-panel").innerHTML = ylkTablePanel(ylk, bookIndex);
+    $("table-note").innerHTML =
+      `Without these tables neither reader can start anywhere but byte zero. With them, ${fmt(rpr.sizes.anchors)} bytes
+       in RPR1 and ${fmt(ylk.sizes.anchors)} in YLK1 — under 0.03% of either container — buy every book in the Bible
+       an entry point. The cartridge had the same table; this repository did not, until this page needed one.`;
+
+    renderSteps(rpr, ylk, walk, seek, bookIndex, chapter, verse, range);
+    renderTrace(rpr, ylk, walk, range);
+    renderMap(rpr, ylk, walk, range, seek);
+    renderStats(rpr, ylk, walk, seek, range);
+    renderShortcutNote(ylk, seek, range, bookToken);
+
+    $("status").textContent =
+      `RPR1 ${fmt(rpr.offsets.total)} B · YLK1 ${fmt(ylk.sizes.total)} B` +
+      (state.shortcut ? ` · shortcuts every ${state.shortcut}` : "");
+  }
+
+  function onBookChange() {
+    const bookIndex = Number($("book").value);
+    populateChapters(bookIndex);
+    populateVerses(bookIndex, 1);
+    render();
+  }
+
+  function onChapterChange() {
+    populateVerses(Number($("book").value), Number($("chapter").value));
+    render();
+  }
+
+  async function boot() {
+    try {
+      $("status").textContent = "loading corpus…";
+      if (!window.KJV_TEXT) await load("kjv-data.js");
+      if (!window.KJV_PREENCODED) await load("kjv-preencoded.js");
+      if (!window.KJV_SUFFIXES) await load("kjv-suffixes.js");
+
+      $("status").textContent = "tokenizing…";
+      await new Promise((r) => setTimeout(r, 0));
+      state.tokens = RePair.tokenize(window.KJV_TEXT);
+      state.books = window.KJV_BOOKS;
+      state.structure = buildStructure(state.tokens);
+
+      $("status").textContent = "opening the RPR1 container…";
+      await new Promise((r) => setTimeout(r, 0));
+      state.rpr = prepareRpr();
+
+      $("status").textContent = "encoding YLK1…";
+      await new Promise((r) => setTimeout(r, 0));
+      state.ylk = prepareYlk(0);
+
+      populateBooks();
+      const john = state.books.indexOf("John");
+      $("book").value = String(john >= 0 ? john : 0);
+      populateChapters(Number($("book").value));
+      $("chapter").value = "3";
+      populateVerses(Number($("book").value), 3);
+      $("verse").value = "16";
+
+      $("app").hidden = false;
+      render();
+
+      $("book").addEventListener("change", onBookChange);
+      $("chapter").addEventListener("change", onChapterChange);
+      $("verse").addEventListener("change", render);
+      $("reset").addEventListener("click", () => {
+        $("book").value = String(state.books.indexOf("John"));
+        populateChapters(Number($("book").value));
+        $("chapter").value = "3";
+        populateVerses(Number($("book").value), 3);
+        $("verse").value = "16";
+        render();
+      });
+      $("shortcut").addEventListener("change", async () => {
+        const interval = Number($("shortcut").value);
+        $("shortcut-status").textContent = "re-encoding…";
+        await new Promise((r) => setTimeout(r, 20));
+        state.shortcut = interval;
+        state.ylk = prepareYlk(interval);
+        const extra = state.ylk.sizes.total - state.ylkCache.get(0).sizes.total;
+        $("shortcut-status").textContent = interval === 0
+          ? "the patent's FIG. 2–3 stream"
+          : `+${fmt(extra)} bytes for a bounded chase`;
+        render();
+      });
+    } catch (e) {
+      $("status").textContent = "failed";
+      $("verse-text").innerHTML = `<span class="ref">error</span>${escapeHtml(String(e && e.message || e))}`;
+      throw e;
+    }
+  }
+
+  boot();
+})();
+</script>
+</body>
+</html>

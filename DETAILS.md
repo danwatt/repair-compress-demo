@@ -18,6 +18,7 @@ encode(text)
                                                    (re-plans entries every round)
   planLexiconEntries  lexicon   -> per-entry plan  shared prefix + literal + endings
   planLexiconHeaderCodebook     -> header table    repeated (shared, tag) pairs
+  planAnchors         positions -> anchor table    where a reader may start
   serialize           container -> Uint8Array      header + tables + lexicon + stream
 
 decode(bytes)
@@ -50,6 +51,32 @@ costs 2 bytes in the table while saving 1 byte per occurrence.
 re-encode 256 times — with symbol counts sorted descending, the stream is
 `2 * symbols - (occurrences the escape table covers)`, so a prefix sum gives all 256 answers at once.
 Points where the grammar would no longer fit the shrinking id space come back with `fits: false`.
+
+## Anchors
+
+The stream is self-synchronizing forwards and useless backwards: from a token boundary you can read
+on indefinitely, but the boundary belonging to terminal 700,000 cannot be found without walking all
+700,000 of them. That is what the cartridge's book table was for, and what this container had no way
+to express until `CodecConfig.anchors` was added.
+
+An anchor is two numbers: a **byte offset** into the stream, and a **skip count**. The second one is
+the part the format forces. A Re-Pair token expands to a whole phrase, so a position the caller cares
+about lands wherever it lands inside one — the book anchor for John sits four terminals into its
+token — and the reader has to drop those four before the anchored word comes out. Nothing else in the
+format moves: `stream[anchor.offset]` is a lead byte because the encoder said so, and `readFrom`
+reads normally from there.
+
+Offsets ascend, so the table stores gaps as varints; 66 book starts cost 220 bytes on the KJV, and
+reaching the 43rd of them means reading the 42 in front of it — 149 bytes, one small sequential read.
+Anchors are data, not a knob: the codec has no idea what a book is, and `planAnchors` will index any
+ascending list of token positions. `demo-verse.html` is the reason it exists.
+
+YLK1 carries the same table with the same two-varint shape, but its entries are a **bit** offset and
+the **symbol before it**. Bits because there are no byte boundaries in a Huffman stream to point at,
+and the preceding symbol because with order-1 tables the reader cannot pick the table for the first
+code without knowing what came before — the one piece of decoder state the bits themselves do not
+carry. `readAnchored` does the seek and reports what the read cost, which is how `demo-verse.html`
+prices a verse in both formats without either of them simulating the other.
 
 ## Suffixes
 
@@ -282,6 +309,8 @@ of input, and only 175 codes ever earn their place at all.
   here also chain, which the ROM's one-ending-per-word scheme had no way to express.
 - **No skip list.** Front coding makes lexicon lookup a sequential walk. The ROM answered that with
   a 2,625-byte index at `0x0C2A`; decoding here materializes the whole word list up front instead.
+  The *stream* index the ROM must also have had is now here, as the anchor table above — generic
+  positions rather than books, but the same job.
 - **Structure markers.** `%` `$` `#` `@` `{` `}` were reserved terminals for book/chapter/verse
   boundaries. Nothing here reserves them; they are ordinary tokens if they appear — which is how
   `kjv-data.js` uses `%` `$` `#` `@` to mark book/chapter/verse boundaries in place of newlines and
@@ -308,3 +337,8 @@ Full KJV, 4,137,743 bytes in, 85 single-byte codes, 29 suffix codes.
 | 5 | Chained suffix codes                                    |     969,528 |  50,546 |           94 | 118,840 |    170 | 799,863 |     15 |
 | 6 | Table and entry plans chosen together                   |     968,187 |  49,213 |           86 | 118,840 |    170 | 799,863 |     15 |
 | 7 | Lexicon-header codebook                                 | **958,460** |  39,485 |           86 | 118,840 |    170 | 799,863 |     15 |
+| 8 | Anchor table, header grown to hold its count            |     958,462 |  39,485 |           86 | 118,840 |    170 | 799,863 |     18 |
+
+Row 8 is the same container with an empty anchor table: two bytes for the entry count, which is all
+the addition costs a caller that does not want one. The 66 book anchors `build-kjv-preencoded.ts`
+writes bring `kjv-preencoded.js` to 958,682 bytes.

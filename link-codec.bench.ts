@@ -5,7 +5,10 @@
 //     --outfile=/tmp/link-bench.cjs && node /tmp/link-bench.cjs
 import fs from "node:fs";
 import { encode as repairEncode, tokenize } from "./repair-codec";
-import { decode, describeBits, encode, measureStream, open, read, search, type LinkConfig } from "./link-codec";
+import {
+  decode, describeBits, encode, measureStream, open, read, readAnchored, search,
+  type LinkConfig,
+} from "./link-codec";
 
 let failures = 0;
 function check(label: string, ok: boolean, detail = ""): void {
@@ -96,6 +99,37 @@ for (const sample of SAMPLES) {
         break;
       }
     }
+
+    // Anchors: the encoder's bit offsets have to agree with the cost model, and
+    // a reader starting at one has to see what a reader from the top sees.
+    if (!config.split) {
+      const positions = [...new Set([0, 1, terms.length >> 1, terms.length - 1])]
+        .filter((p) => p >= 0 && p < terms.length)
+        .sort((a, b) => a - b);
+      const anchored = encode(sample, { ...config, anchors: positions });
+      check(label, decode(anchored.bytes) === sample, "anchored decode mismatch");
+      const anchorCost = measureStream(open(anchored.bytes));
+      let offset = 0;
+      const offsetOf = new Map<number, number>();
+      for (let i = 0; i < anchorCost.bits.length; i++) {
+        offsetOf.set(i, offset);
+        offset += anchorCost.bits[i];
+      }
+      positions.forEach((position, i) => {
+        const anchor = anchored.anchors[i];
+        check(
+          label,
+          anchor.bit === offsetOf.get(position),
+          `anchor ${position} at bit ${anchor.bit}, cost model says ${offsetOf.get(position)}`,
+        );
+        const want = terms.slice(position, position + 8);
+        const got = readAnchored(anchored.bytes, i, want.length).terms;
+        const skipped = terms.slice(position + 1, position + 1 + Math.max(0, want.length - 1));
+        const afterSkip = readAnchored(anchored.bytes, i, skipped.length, 1).terms;
+        check(label, JSON.stringify(afterSkip) === JSON.stringify(skipped), `anchored skip at ${position}`);
+        check(label, JSON.stringify(got) === JSON.stringify(want), `anchored read at ${position}`);
+      });
+    }
   }
 }
 console.log(failures === 0 ? `  ${CONFIGS.length} configs x ${SAMPLES.length} samples, all correct` : `  ${failures} failures`);
@@ -104,9 +138,9 @@ console.log(failures === 0 ? `  ${CONFIGS.length} configs x ${SAMPLES.length} sa
 // Full KJV
 // ---------------------------------------------------------------------------
 
-const source = fs.readFileSync("kjv-data.js", "utf8").trim();
+const [textLine] = fs.readFileSync("kjv-data.js", "utf8").split("\n");
 const prefix = "window.KJV_TEXT = ";
-const text = JSON.parse(source.slice(prefix.length, -1)) as string;
+const text = JSON.parse(textLine.slice(prefix.length, -1)) as string;
 const inputBytes = Buffer.byteLength(text, "utf8");
 const terms = tokenize(text);
 
