@@ -342,146 +342,19 @@ input:focus-visible, button:focus-visible { outline: 2px solid var(--hot); outli
 </div>
 
 <script src="nav.js"></script>
+<script src="lcd-font.js"></script>
 <script>
 (() => {
   "use strict";
   const $ = (id) => document.getElementById(id);
 
-  // 5x8 bitmap font: 5 wide, 8 tall. Rows 0-6 are the 5x7 body; row 7 holds
-  // descenders. "1" = lit. Missing glyphs fall back to a blank cell.
-  const B0 = "00000";
-  const G = {
-    "A": ["01110","10001","10001","11111","10001","10001","10001",B0],
-    "B": ["11110","10001","10001","11110","10001","10001","11110",B0],
-    "C": ["01110","10001","10000","10000","10000","10001","01110",B0],
-    "D": ["11110","10001","10001","10001","10001","10001","11110",B0],
-    "E": ["11111","10000","10000","11110","10000","10000","11111",B0],
-    "F": ["11111","10000","10000","11110","10000","10000","10000",B0],
-    "G": ["01110","10001","10000","10111","10001","10001","01111",B0],
-    "H": ["10001","10001","10001","11111","10001","10001","10001",B0],
-    "I": ["01110","00100","00100","00100","00100","00100","01110",B0],
-    "J": ["00111","00010","00010","00010","10010","10010","01100",B0],
-    "K": ["10001","10010","10100","11000","10100","10010","10001",B0],
-    "L": ["10000","10000","10000","10000","10000","10000","11111",B0],
-    "M": ["10001","11011","10101","10101","10001","10001","10001",B0],
-    "N": ["10001","11001","10101","10101","10011","10001","10001",B0],
-    "O": ["01110","10001","10001","10001","10001","10001","01110",B0],
-    "P": ["11110","10001","10001","11110","10000","10000","10000",B0],
-    "Q": ["01110","10001","10001","10001","10101","10010","01101",B0],
-    "R": ["11110","10001","10001","11110","10100","10010","10001",B0],
-    "S": ["01111","10000","10000","01110","00001","00001","11110",B0],
-    "T": ["11111","00100","00100","00100","00100","00100","00100",B0],
-    "U": ["10001","10001","10001","10001","10001","10001","01110",B0],
-    "V": ["10001","10001","10001","10001","10001","01010","00100",B0],
-    "W": ["10001","10001","10001","10101","10101","11011","10001",B0],
-    "X": ["10001","10001","01010","00100","01010","10001","10001",B0],
-    "Y": ["10001","10001","01010","00100","00100","00100","00100",B0],
-    "Z": ["11111","00001","00010","00100","01000","10000","11111",B0],
-
-    "a": [B0,B0,"01110","00001","01111","10001","01111",B0],
-    "b": ["10000","10000","11110","10001","10001","10001","11110",B0],
-    "c": [B0,B0,"01110","10000","10000","10001","01110",B0],
-    "d": ["00001","00001","01111","10001","10001","10001","01111",B0],
-    "e": [B0,B0,"01110","10001","11111","10000","01110",B0],
-    "f": ["00110","01000","01000","11100","01000","01000","01000",B0],
-    "g": [B0,B0,"01111","10001","10001","01111","00001","01110"],
-    "h": ["10000","10000","11110","10001","10001","10001","10001",B0],
-    "i": ["00100","00000","01100","00100","00100","00100","01110",B0],
-    "j": ["00010","00000","00010","00010","00010","10010","01100",B0],
-    "k": ["10000","10000","10010","10100","11000","10100","10010",B0],
-    "l": ["01100","00100","00100","00100","00100","00100","00110",B0],
-    "m": [B0,B0,"11010","10101","10101","10001","10001",B0],
-    "n": [B0,B0,"11110","10001","10001","10001","10001",B0],
-    "o": [B0,B0,"01110","10001","10001","10001","01110",B0],
-    "p": [B0,B0,"11110","10001","10001","11110","10000","10000"],
-    "q": [B0,B0,"01111","10001","10001","01111","00001","00001"],
-    "r": [B0,B0,"10110","11001","10000","10000","10000",B0],
-    "s": [B0,B0,"01111","10000","01110","00001","11110",B0],
-    "t": ["01000","01000","11100","01000","01000","01001","00110",B0],
-    "u": [B0,B0,"10001","10001","10001","10011","01101",B0],
-    "v": [B0,B0,"10001","10001","10001","01010","00100",B0],
-    "w": [B0,B0,"10001","10001","10101","10101","01010",B0],
-    "x": [B0,B0,"10001","01010","00100","01010","10001",B0],
-    "y": [B0,B0,"10001","10001","01111","00001","00001","01110"],
-    "z": [B0,B0,"11111","00010","00100","01000","11111",B0],
-
-    "0": ["01110","10001","10011","10101","11001","10001","01110",B0],
-    "1": ["00100","01100","00100","00100","00100","00100","01110",B0],
-    "2": ["01110","10001","00001","00010","00100","01000","11111",B0],
-    "3": ["11111","00010","00100","00010","00001","10001","01110",B0],
-    "4": ["00010","00110","01010","10010","11111","00010","00010",B0],
-    "5": ["11111","10000","11110","00001","00001","10001","01110",B0],
-    "6": ["00110","01000","10000","11110","10001","10001","01110",B0],
-    "7": ["11111","00001","00010","00100","01000","01000","01000",B0],
-    "8": ["01110","10001","10001","01110","10001","10001","01110",B0],
-    "9": ["01110","10001","10001","01111","00001","00010","01100",B0],
-
-    " ": [B0,B0,B0,B0,B0,B0,B0,B0],
-    ".": [B0,B0,B0,B0,B0,"01100","01100",B0],
-    ",": [B0,B0,B0,B0,B0,"01100","00100","01000"],
-    ";": [B0,B0,"01100","01100","00000","01100","00100","01000"],
-    ":": [B0,B0,"01100","01100","00000","01100","01100",B0],
-    "!": ["00100","00100","00100","00100","00100","00000","00100",B0],
-    "?": ["01110","10001","00001","00010","00100","00000","00100",B0],
-    "'": ["00100","00100","01000","00000","00000","00000","00000",B0],
-    '"': ["01010","01010","01010","00000","00000","00000","00000",B0],
-    "(": ["00010","00100","01000","01000","01000","00100","00010",B0],
-    ")": ["01000","00100","00010","00010","00010","00100","01000",B0],
-    "-": [B0,B0,B0,"01110","00000","00000","00000",B0],
-  };
-  const glyph = (ch) => G[ch] || G[ch.toUpperCase()] || null;
+  // The curved 5x7-in-8x5 font and its canvas painter live in lcd-font.js, shared
+  // with demo-device.html. This page adds the corpus, the reader, and the magnifier.
+  const glyph = LcdFont.glyph;
 
   const COLS = 37, ROWS = 4;      // the manufactured template array
-  const GW = 5, GH = 8;           // cells per glyph
-  const CW = GW + 1, CH_ = GH + 2; // advance and line pitch, in cells
-
-  // --- curved-pixel painter -------------------------------------------------
-  // s(y): horizontal offset, in cell units, for row boundary y in 0..8.
-  function makeS(amp) {
-    return (y) => amp * Math.sin(Math.PI * y / 4);
-  }
-
-  function paintGlyph(ctx, rows, ox, oy, u, s, opts) {
-    const inset = u * 0.06;
-    ctx.fillStyle = opts.ink;
-    for (let r = 0; r < GH; r++) {
-      const line = rows[r] || B0;
-      const yT = oy + r * u, yB = yT + u;
-      const sT = s(r), sM = s(r + 0.5), sB = s(r + 1);
-      for (let c = 0; c < GW; c++) {
-        if (line[c] !== "1") continue;
-        const xL = ox + c * u + inset, xR = ox + (c + 1) * u - inset;
-        ctx.beginPath();
-        ctx.moveTo(xL + sT, yT + inset);
-        ctx.lineTo(xR + sT, yT + inset);
-        // right edge, curved
-        ctx.quadraticCurveTo(xR + sM * 1.7, yT + u / 2, xR + sB, yB - inset);
-        ctx.lineTo(xL + sB, yB - inset);
-        // left edge, curved
-        ctx.quadraticCurveTo(xL + sM * 1.7, yT + u / 2, xL + sT, yT + inset);
-        ctx.closePath();
-        ctx.fill();
-      }
-    }
-  }
-
-  function paintWells(ctx, ox, oy, u, s) {
-    ctx.fillStyle = "rgba(0,0,0,0.055)";
-    for (let r = 0; r < GH; r++) {
-      const yT = oy + r * u;
-      const sT = s(r), sB = s(r + 1);
-      for (let c = 0; c < GW; c++) {
-        const xL = ox + c * u, xR = xL + u;
-        ctx.beginPath();
-        ctx.moveTo(xL + sT + u * 0.14, yT + u * 0.14);
-        ctx.lineTo(xR + sT - u * 0.14, yT + u * 0.14);
-        ctx.lineTo(xR + sB - u * 0.14, yT + u - u * 0.14);
-        ctx.lineTo(xL + sB + u * 0.14, yT + u - u * 0.14);
-        ctx.closePath();
-        ctx.fill();
-      }
-    }
-  }
+  const GW = LcdFont.GW, GH = LcdFont.GH;
+  const CW = LcdFont.CW, CH_ = LcdFont.CH;
 
   // --- corpus -------------------------------------------------------------
   const state = {
@@ -616,7 +489,7 @@ input:focus-visible, button:focus-visible { outline: 2px solid var(--hot); outli
     const { u, w, h } = layout();
     cx.clearRect(0, 0, w, h);
 
-    const s = state.curve ? makeS(0.5) : (() => 0);
+    const s = LcdFont.makeS(state.curve ? LcdFont.AMP : 0);
     const padX = u * 0.5, padY = u * 1;
 
     for (let row = 0; row < ROWS; row++) {
@@ -625,10 +498,10 @@ input:focus-visible, button:focus-visible { outline: 2px solid var(--hot); outli
       for (let i = 0; i < COLS; i++) {
         const ox = padX + i * CW * u;
         const ch = text[i];
-        if (state.wells) paintWells(cx, ox, oy, u, s);
+        if (state.wells) LcdFont.paintWells(cx, ox, oy, u, s);
         if (!ch || ch === " ") continue;
         const rows = glyph(ch);
-        if (rows) paintGlyph(cx, rows, ox, oy, u, s, { ink: getCss("--lcd-ink") });
+        if (rows) LcdFont.paintGlyph(cx, rows, ox, oy, u, s, { ink: getCss("--lcd-ink") });
       }
     }
 
@@ -672,7 +545,7 @@ input:focus-visible, button:focus-visible { outline: 2px solid var(--hot); outli
   const mg = $("mag"), mgx = mg.getContext("2d");
   function renderMag() {
     const ch = ($("mag-char").value || "g")[0];
-    const rows = glyph(ch) || G["?"];
+    const rows = glyph(ch) || glyph("?");
     const curve = $("mag-curve").checked;
     const showTrace = $("mag-trace").checked;
     const showGrid = $("mag-grid").checked;
@@ -687,7 +560,7 @@ input:focus-visible, button:focus-visible { outline: 2px solid var(--hot); outli
     mgx.clearRect(0, 0, w, h);
 
     const ox = 20, oy = 20;
-    const s = curve ? makeS(0.5) : (() => 0);
+    const s = LcdFont.makeS(curve ? LcdFont.AMP : 0);
 
     if (showGrid) {
       mgx.strokeStyle = "rgba(0,0,0,0.18)";
@@ -696,8 +569,8 @@ input:focus-visible, button:focus-visible { outline: 2px solid var(--hot); outli
       for (let r = 0; r <= GH; r++) { mgx.beginPath(); mgx.moveTo(ox, oy + r * u); mgx.lineTo(ox + GW * u, oy + r * u); mgx.stroke(); }
     }
 
-    paintWells(mgx, ox, oy, u, s);
-    paintGlyph(mgx, rows, ox, oy, u, s, { ink: getCss("--lcd-ink") });
+    LcdFont.paintWells(mgx, ox, oy, u, s);
+    LcdFont.paintGlyph(mgx, rows, ox, oy, u, s, { ink: getCss("--lcd-ink") });
 
     if (showTrace) {
       mgx.strokeStyle = "#c0392b";

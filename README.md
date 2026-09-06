@@ -30,8 +30,10 @@ Sources:
 | `demo-verse.html`                               | Seeking one verse in both codecs, address by address.               |
 | `demo-search.html`                              | One query, both codecs, every byte each has to read.                |
 | `demo-reader.html`                              | A KJV reader in the curved LCD font of US 4,982,181.                |
+| `demo-device.html`                             | The two patents assembled into one Franklin-style KJV emulator.     |
 | `thesaurus.txt`                                 | Synonym groups, as words. Filtered against the lexicon at encode.   |
-| `nav.js`                                        | The tab bar the five demo pages share.                              |
+| `nav.js`                                        | The tab bar the six demo pages share.                               |
+| `lcd-font.js`                                   | The curved US 4,982,181 font and painter, shared by two demos.      |
 | `kjv.csv`                                       | Full King James Bible source data, one verse per row.               |
 | `kjv-data.js` / `kjv-preencoded.js`             | Generated browser data used by the demo.                            |
 | `build-kjv-data.js` / `build-kjv-preencoded.ts` | Scripts that regenerate the browser data.                           |
@@ -54,9 +56,10 @@ mise run clean            # remove generated build output
 Run `mise tasks` to list all available tasks. After starting the server, open
 <http://localhost:8080/demo.html>; browsers will not load the demo correctly over `file://`.
 
-`demo.html`, `demo-ylk1.html`, `demo-verse.html`, `demo-search.html` and `demo-reader.html` are
-hand-edited and otherwise self-contained; the one thing they share is `nav.js`, which injects the tab
-bar and its style so the five of them do not carry five copies of it. After changing `repair-codec.ts` or
+`demo.html`, `demo-ylk1.html`, `demo-verse.html`, `demo-search.html`, `demo-reader.html` and
+`demo-device.html` are hand-edited and otherwise self-contained. They share `nav.js`, which injects the
+tab bar and its style; `demo-reader.html` and `demo-device.html` also share `lcd-font.js`, the curved
+glyph table and canvas painter, rather than carry two copies of it. After changing `repair-codec.ts` or
 `link-codec.ts`, run `mise run build` to regenerate `repair-codec.js` and `link-codec.js`. The build
 and data tasks use mise source/output tracking and skip unchanged work.
 
@@ -176,4 +179,18 @@ glyph painted cell by cell with the patent's curve over the King James text. A r
 the way [US 5,153,831](https://patents.google.com/patent/US5153831A/en) describes the keyboard being
 used — `JOHN 3 16` — or the arrow keys scroll. The curve toggles off to a right-angled grid, and a
 magnifier traces one column's S against the square centre band (FIG. 5). Nothing here is compressed;
-the font is a 5×7 body inside the 8×5 cell, descenders in the eighth row.
+the font is a 5×7 body inside the 8×5 cell, descenders in the eighth row. The glyph table and painter
+live in `lcd-font.js`.
+
+## The whole machine
+
+`demo-device.html` assembles the pieces into one emulator of the hand-held unit from
+[US 5,153,831](https://patents.google.com/patent/US5153831A/en) FIG. 1 — the case, the dot-matrix
+display of [US 4,982,181](https://patents.google.com/patent/US4982181A/en), and the King James text
+the rest of the repo compresses. It is being built a screen at a time.
+
+**Step 1 — the home screen.** The top of the glass is the entry line: it takes letters, digits, space
+and a colon from the keyboard, upper-cased, with a blinking block cursor and word wrap. Underneath is
+the book index from the patent drawing — the 39 Old Testament names in four columns with the twelve
+minor prophets in their own block, an open book, then the 27 New Testament names — every indicator
+dark. Lighting them is a later step's job.

@@ -1,0 +1,414 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The whole machine — a Franklin KJV emulator</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Silkscreen:wght@400;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root {
+  --ground: #0a0e1a;
+  --panel: #121a2e;
+  --ink: #f2f4fa;
+  --ink-soft: #8b96b3;
+  --rule: #253253;
+  --dmg-4: #5b9dff;
+  --dmg-3: #3d7fd9;
+  --dmg-1: #163262;
+  --hot: #e8b923;
+  --hot-soft: #f6d878;
+  --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --pixel: "Silkscreen", "IBM Plex Mono", monospace;
+
+  --lcd: #b9c6a8;
+  --lcd-ink: #232a1c;
+  --lcd-dim: #7b8a68;          /* an unlit / printed label */
+  --case: #1c2331;
+  --case-edge: #2c3547;
+  --case-face: #222a3b;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--ground);
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+.wrap { max-width: 1120px; margin: 0 auto; padding: 32px 20px 80px; }
+
+.eyebrow {
+  font-family: var(--pixel);
+  font-size: 10px;
+  letter-spacing: .12em;
+  color: var(--dmg-3);
+  text-transform: uppercase;
+  margin: 0 0 14px;
+}
+
+h1 {
+  font-family: var(--pixel);
+  font-weight: 400;
+  font-size: clamp(20px, 4.4vw, 34px);
+  line-height: 1.25;
+  margin: 0 0 16px;
+  color: var(--dmg-4);
+}
+
+.thesis { max-width: 68ch; margin: 0 0 12px; color: var(--ink-soft); }
+.thesis a { color: var(--hot); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+.thesis b { color: var(--ink); font-weight: 500; }
+.thesis code { color: var(--hot); font-size: 12.5px; }
+
+.hr { height: 1px; background: var(--rule); border: 0; margin: 30px 0; }
+section { margin-top: 36px; }
+
+.stage-label {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  font-family: var(--pixel);
+  font-size: 10px;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: var(--dmg-3);
+  margin-bottom: 16px;
+}
+.stage-label .num { color: var(--hot); }
+.stage-label .hint {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--ink-soft);
+  margin-left: auto;
+}
+
+/* device --------------------------------------------------------------- */
+
+.device {
+  background: linear-gradient(180deg, var(--case-face), var(--case));
+  border: 1px solid var(--case-edge);
+  border-radius: 18px 18px 20px 20px;
+  padding: 18px 18px 12px;
+  box-shadow: 0 30px 60px -30px #000, inset 0 1px 0 #3b4560;
+  max-width: 900px;
+}
+
+.lcd-frame {
+  background: #0f1410;
+  border-radius: 8px;
+  padding: 12px;
+  box-shadow: inset 0 2px 10px #000;
+}
+.lcd {
+  position: relative;
+  background: var(--lcd);
+  border-radius: 3px;
+  overflow: hidden;
+  box-shadow: inset 0 0 0 1px #00000030, inset 0 0 26px #7d8a6a55;
+  outline: 2px solid transparent;
+  outline-offset: 2px;
+  cursor: text;
+}
+.lcd.on { outline-color: var(--hot); }
+.lcd .glow {
+  position: absolute; inset: 0; pointer-events: none;
+  background: radial-gradient(120% 70% at 50% 0%, #ffffff22, transparent 60%);
+}
+.lcd canvas { display: block; width: 100%; height: auto; }
+
+/* the hidden key sink */
+#kbd {
+  position: absolute; top: 0; left: 0; width: 1px; height: 1px;
+  opacity: 0; border: 0; padding: 0; margin: 0;
+  background: transparent; color: transparent; caret-color: transparent;
+}
+
+/* book index --------------------------------------------------------- */
+
+.books {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+  padding: 10px 14px 14px;
+  border-top: 1px solid #00000022;
+}
+.testament { display: flex; gap: 10px; }
+.testament.nt { margin-left: auto; }
+.col { display: flex; flex-direction: column; gap: 2px; }
+.minor { margin-top: 8px; display: flex; gap: 10px; }
+
+.bk {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-family: var(--pixel);
+  font-size: 7px;
+  letter-spacing: .04em;
+  line-height: 1;
+  color: var(--lcd-dim);
+  white-space: nowrap;
+}
+.bk i {
+  width: 6px; height: 6px; flex: 0 0 auto;
+  border: 1px solid #2b331c55;
+  background: transparent;
+  border-radius: 1px;
+}
+.bk.on { color: var(--lcd-ink); }
+.bk.on i { background: var(--lcd-ink); border-color: var(--lcd-ink); }
+
+.spine {
+  align-self: center;
+  color: #2b331c66;
+  flex: 0 0 auto;
+  padding: 0 2px;
+}
+.spine svg { display: block; width: 42px; height: 30px; }
+
+.markings {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  padding: 10px 6px 2px;
+  font-family: var(--pixel);
+  color: var(--ink-soft);
+}
+.markings .title { font-size: 12px; letter-spacing: .1em; }
+.markings .ver { font-size: 8px; letter-spacing: .12em; color: var(--dmg-3); }
+
+.underhint { margin: 12px 2px 0; font-size: 11px; color: var(--ink-soft); }
+.underhint kbd {
+  font-family: var(--mono); font-size: 10px;
+  border: 1px solid var(--rule); border-bottom-width: 2px; border-radius: 3px;
+  padding: 1px 5px; color: var(--ink); background: var(--panel);
+}
+
+@media (max-width: 720px) {
+  .books { flex-direction: column; }
+  .testament.nt { margin-left: 0; }
+  .spine { align-self: flex-start; }
+  .bk { font-size: 8px; }
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <p class="eyebrow">US 5,153,831 · US 4,982,181</p>
+  <h1>The whole machine</h1>
+
+  <p class="thesis">
+    The other pages take the Franklin electronic Bible apart one claim at a time &mdash; the
+    <a href="demo-ylk1.html">link stream</a>, the <a href="demo-search.html">chains as posting lists</a>,
+    the <a href="demo-reader.html">curved glass</a>. This one puts it back together: the hand-held unit
+    of <a href="https://patents.google.com/patent/US5153831A/en">US&nbsp;5,153,831</a> FIG.&nbsp;1, its
+    display drawn in the dot matrix of <a href="https://patents.google.com/patent/US4982181A/en">US&nbsp;4,982,181</a>,
+    driven by the same King James text.
+  </p>
+  <p class="thesis">
+    <b>Step 1 &mdash; the home screen.</b> The top of the glass is the entry line: click it and type a
+    word or a reference, upper&#8209;cased the way the keyboard fed it. Below is the book index from the
+    patent drawing &mdash; thirty&#8209;nine names down the left, twenty&#8209;seven down the right, an
+    open book between them. Every indicator is dark. A search is what lights them.
+  </p>
+
+  <hr class="hr">
+
+  <section>
+    <div class="stage-label">
+      <span class="num">01</span> Home screen
+      <span class="hint">click the screen · type · the index stays dark for now</span>
+    </div>
+
+    <div class="device">
+      <div class="lcd-frame">
+        <div class="lcd" id="lcd">
+          <input id="kbd" autocomplete="off" autocapitalize="characters" spellcheck="false" aria-label="entry line">
+          <canvas id="entry"></canvas>
+
+          <div class="books" id="books"><!-- built by script --></div>
+
+          <div class="glow"></div>
+        </div>
+      </div>
+
+      <div class="markings">
+        <span class="title">THE HOLY BIBLE</span>
+        <span class="ver">KING JAMES VERSION</span>
+      </div>
+    </div>
+
+    <p class="underhint">
+      <kbd>A</kbd>&ndash;<kbd>Z</kbd>, digits, space and <kbd>:</kbd> type onto the line ·
+      <kbd>Backspace</kbd> deletes · <kbd>Enter</kbd> does nothing yet
+    </p>
+  </section>
+
+</div>
+
+<script src="nav.js"></script>
+<script src="lcd-font.js"></script>
+<script>
+(() => {
+  "use strict";
+  const $ = (id) => document.getElementById(id);
+
+  // 66 book abbreviations, in canonical order — index i is window.KJV_BOOKS[i].
+  // Spellings follow the index card in US 5,153,831 FIG. 1.
+  const ABBR = [
+    "GEN","EXOD","LEV","NUM","DEUT","JOSH","JUDG","RUTH","1SAM","2SAM",
+    "1KNG","2KNG","1CHR","2CHR","EZRA","NEH","ESTH","JOB","PSLM","PROV",
+    "ECCL","SONG","ISAI","JER","LAM","EZEK","DAN","HOS","JOEL","AMOS",
+    "OBAD","JON","MIC","NAHM","HAB","ZEPH","HAG","ZECH","MAL",
+    "MATT","MARK","LUKE","JOHN","ACTS","ROM","1COR","2COR","GALA","EPH",
+    "PHP","COL","1THS","2THS","1TM","2TM","TITUS","PHLM","HEB","JAMES",
+    "1PET","2PET","1JHN","2JHN","3JHN","JUDE","REV",
+  ];
+
+  // Column layout of the patent's index card: the OT major books in four
+  // columns of 6/7/7/7, the twelve minor prophets in a 3x4 block, the NT in
+  // four columns of 6/7/7/7. Values are book indices.
+  const range = (a, b) => Array.from({ length: b - a + 1 }, (_, i) => a + i);
+  const OT_MAIN = [range(0, 5), range(6, 12), range(13, 19), range(20, 26)];
+  const MINOR   = [range(27, 30), range(31, 34), range(35, 38)];
+  const NT      = [range(39, 44), range(45, 51), range(52, 58), range(59, 65)];
+
+  const SPINE = `
+    <svg viewBox="0 0 40 30" aria-hidden="true">
+      <path d="M20 6 C15 2 6 2 2 5 L2 25 C6 22 15 22 20 26 C25 22 34 22 38 25 L38 5 C34 2 25 2 20 6 Z"
+            fill="none" stroke="currentColor" stroke-width="1.4"/>
+      <line x1="20" y1="6" x2="20" y2="26" stroke="currentColor" stroke-width="1.4"/>
+    </svg>`;
+
+  function bookCell(i) {
+    return `<span class="bk" data-i="${i}"><i></i>${ABBR[i]}</span>`;
+  }
+  function colBlock(indices) {
+    return `<div class="col">${indices.map(bookCell).join("")}</div>`;
+  }
+
+  function buildIndex() {
+    const ot = `<div class="testament ot">${OT_MAIN.map(colBlock).join("")}</div>`;
+    const minor = `<div class="minor">${MINOR.map(colBlock).join("")}</div>`;
+    const nt = `<div class="testament nt">${NT.map(colBlock).join("")}</div>`;
+    $("books").innerHTML =
+      `<div>${ot}${minor}</div>` +
+      `<div class="spine">${SPINE}</div>` +
+      nt;
+  }
+
+  // --- entry line ------------------------------------------------------
+  const ENTRY_COLS = 37, ENTRY_ROWS = 3;
+  const CW = LcdFont.CW, CH = LcdFont.CH, GW = LcdFont.GW, GH = LcdFont.GH;
+  const MAX = ENTRY_COLS * ENTRY_ROWS;
+
+  const cv = $("entry"), cx = cv.getContext("2d");
+  const state = { entry: "", cursorOn: true, focus: false };
+
+  function getCss(v) { return getComputedStyle(document.documentElement).getPropertyValue(v).trim(); }
+
+  function wrapEntry(str) {
+    const lines = [""];
+    for (const word of str.split(" ")) {
+      const last = lines.length - 1;
+      const cand = lines[last] ? lines[last] + " " + word : word;
+      if (cand.length <= ENTRY_COLS) { lines[last] = cand; continue; }
+      let rest = word;
+      while (rest.length > ENTRY_COLS) { lines.push(rest.slice(0, ENTRY_COLS)); rest = rest.slice(ENTRY_COLS); }
+      lines.push(rest);
+    }
+    // a trailing space belongs on the end of the last line for cursor placement
+    if (str.endsWith(" ") && lines[lines.length - 1].length < ENTRY_COLS) {
+      lines[lines.length - 1] += " ";
+    }
+    return lines.slice(0, ENTRY_ROWS);
+  }
+
+  function layout() {
+    const cssW = cv.parentElement.clientWidth;
+    const u = Math.max(2, Math.floor(cssW / (ENTRY_COLS * CW)));
+    const w = ENTRY_COLS * CW * u;
+    const h = ENTRY_ROWS * CH * u + Math.round(u * 2);
+    const dpr = window.devicePixelRatio || 1;
+    cv.width = w * dpr; cv.height = h * dpr;
+    cv.style.width = w + "px"; cv.style.height = h + "px";
+    cx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    return { u, w, h };
+  }
+
+  function render() {
+    const { u, w, h } = layout();
+    cx.clearRect(0, 0, w, h);
+    const s = LcdFont.makeS(LcdFont.AMP);
+    const ink = getCss("--lcd-ink");
+    const padX = u * 0.5, padY = u;
+
+    const lines = wrapEntry(state.entry);
+    lines.forEach((line, r) => {
+      LcdFont.drawText(cx, line, padX, padY + r * CH * u, u, { s, ink });
+    });
+
+    // block cursor after the last character
+    if (state.focus && state.cursorOn) {
+      let cr = lines.length - 1;
+      let cc = lines[cr].length;
+      if (cc >= ENTRY_COLS && cr < ENTRY_ROWS - 1) { cr++; cc = 0; }
+      cc = Math.min(cc, ENTRY_COLS - 1);
+      const ox = padX + cc * CW * u, oy = padY + cr * CH * u;
+      const off = s(GH / 2) * u;
+      cx.fillStyle = ink;
+      cx.globalAlpha = 0.85;
+      cx.fillRect(ox + off, oy + u * 0.4, GW * u, (GH - 1) * u);
+      cx.globalAlpha = 1;
+    }
+  }
+
+  // --- input ---------------------------------------------------------
+  const ACCEPT = /^[a-z0-9 :'\-]$/i;
+
+  function onKey(e) {
+    if (e.key === "Backspace") { state.entry = state.entry.slice(0, -1); }
+    else if (e.key === "Enter") { /* step 1: no lookup yet */ }
+    else if (e.key.length === 1 && ACCEPT.test(e.key)) {
+      if (state.entry.length < MAX) state.entry += e.key.toUpperCase();
+    } else { return; }
+    e.preventDefault();
+    state.cursorOn = true;
+    render();
+  }
+
+  function boot() {
+    buildIndex();
+
+    const kbd = $("kbd"), lcd = $("lcd");
+    lcd.addEventListener("mousedown", (e) => { e.preventDefault(); kbd.focus(); });
+    kbd.addEventListener("focus", () => { state.focus = true; lcd.classList.add("on"); render(); });
+    kbd.addEventListener("blur", () => { state.focus = false; lcd.classList.remove("on"); render(); });
+    kbd.addEventListener("keydown", onKey);
+    // keep the sink empty; we track the string ourselves
+    kbd.addEventListener("input", () => { kbd.value = ""; });
+
+    setInterval(() => {
+      if (!state.focus) return;
+      state.cursorOn = !state.cursorOn;
+      render();
+    }, 530);
+
+    window.addEventListener("resize", render);
+    render();
+  }
+
+  boot();
+})();
+</script>
+</body>
+</html>
