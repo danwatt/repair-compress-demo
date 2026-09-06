@@ -228,19 +228,20 @@ section { margin-top: 36px; }
     driven by the same King James text.
   </p>
   <p class="thesis">
-    <b>Step 1 &mdash; the home screen.</b> The top of the glass is the entry line: click it and type a
-    word or a reference, upper&#8209;cased the way the keyboard fed it. Below is the book index from the
-    patent drawing &mdash; the black <b>OLD</b> and <b>NEW</b> tabs, thirty&#8209;nine names in four
-    columns on the left, twenty&#8209;seven on the right, an open book between. Every indicator is dark.
-    A search is what lights them.
+    <b>Steps 1&ndash;2 &mdash; the home screen and a reference.</b> Click the glass and type onto the
+    entry line, upper&#8209;cased the way the keyboard fed it. Below is the book index from the patent
+    drawing &mdash; the black <b>OLD</b> and <b>NEW</b> tabs, thirty&#8209;nine names in four columns on
+    the left, twenty&#8209;seven on the right, an open book between. Type a reference like
+    <code>MATT 1:1</code> and press <kbd>Enter</kbd>: the passage opens on the screen and that book's
+    indicator lights. Everything else stays dark &mdash; lighting several at once is what a search will do.
   </p>
 
   <hr class="hr">
 
   <section>
     <div class="stage-label">
-      <span class="num">01</span> Home screen
-      <span class="hint">click the screen · type · the index stays dark for now</span>
+      <span class="num">02</span> A reference
+      <span class="hint">click the screen · type <code>MATT 1:1</code> · Enter</span>
     </div>
 
     <div class="device">
@@ -262,8 +263,8 @@ section { margin-top: 36px; }
     </div>
 
     <p class="underhint">
-      <kbd>A</kbd>&ndash;<kbd>Z</kbd>, digits, space and <kbd>:</kbd> type onto the line ·
-      <kbd>Backspace</kbd> deletes · <kbd>Enter</kbd> does nothing yet
+      <kbd>Enter</kbd> opens <code>BOOK C:V</code> (<code>MATT 1:1</code>, <code>1 JOHN 4 8</code>, <code>PSALM 23</code>) ·
+      <kbd>&uarr;</kbd><kbd>&darr;</kbd> scroll · <kbd>Esc</kbd> or a new keystroke returns to the line
     </p>
   </section>
 
@@ -322,38 +323,167 @@ section { margin-top: 36px; }
       `<div class="tblock">${grid(NT_COLS, "tgrid")}</div>`;
   }
 
-  // --- entry line ------------------------------------------------------
-  const ENTRY_COLS = 37, ENTRY_ROWS = 2;
+  // --- screen --------------------------------------------------------
+  const COLS = 37, ENTRY_ROWS = 2, READ_ROWS = 4;
   const CW = LcdFont.CW, CH = LcdFont.CH, GW = LcdFont.GW, GH = LcdFont.GH;
-  const MAX = ENTRY_COLS * ENTRY_ROWS;
+  const MAX = COLS * ENTRY_ROWS;
 
   const cv = $("entry"), cx = cv.getContext("2d");
-  const state = { entry: "", cursorOn: true, focus: false };
+  const state = {
+    mode: "entry",             // "entry" | "read"
+    entry: "",
+    cursorOn: true,
+    focus: false,
+    books: null,               // window.KJV_BOOKS
+    chapters: null,            // book -> [ [verseText, ...], ... ]
+    read: { bookIdx: 0, chapterIdx: 0, verse: 1, lines: [], lineVerse: [], top: 0 },
+  };
 
   function getCss(v) { return getComputedStyle(document.documentElement).getPropertyValue(v).trim(); }
 
+  function load(src) {
+    return new Promise((res, rej) => {
+      const s = document.createElement("script");
+      s.src = src; s.onload = res;
+      s.onerror = () => rej(new Error("could not load " + src));
+      document.head.appendChild(s);
+    });
+  }
+
+  // kjv-data.js markers: % book start, @ verse end, # chapter end, $ book end.
+  function parseCorpus(text, books) {
+    const chapters = books.map(() => []);
+    let bi = -1, cur = [], buf = "";
+    const pushVerse = () => { if (buf.length) { cur.push(buf); buf = ""; } };
+    for (const ch of text) {
+      if (ch === "%") { pushVerse(); bi++; cur = []; chapters[bi].push(cur); continue; }
+      if (ch === "@") { pushVerse(); continue; }
+      if (ch === "#") { pushVerse(); cur = []; chapters[bi].push(cur); continue; }
+      if (ch === "$") { pushVerse(); continue; }
+      buf += ch;
+    }
+    return chapters;
+  }
+
+  // Wrap a raw string (no verse numbers) for the entry line.
   function wrapEntry(str) {
     const lines = [""];
     for (const word of str.split(" ")) {
       const last = lines.length - 1;
       const cand = lines[last] ? lines[last] + " " + word : word;
-      if (cand.length <= ENTRY_COLS) { lines[last] = cand; continue; }
+      if (cand.length <= COLS) { lines[last] = cand; continue; }
       let rest = word;
-      while (rest.length > ENTRY_COLS) { lines.push(rest.slice(0, ENTRY_COLS)); rest = rest.slice(ENTRY_COLS); }
+      while (rest.length > COLS) { lines.push(rest.slice(0, COLS)); rest = rest.slice(COLS); }
       lines.push(rest);
     }
-    // a trailing space belongs on the end of the last line for cursor placement
-    if (str.endsWith(" ") && lines[lines.length - 1].length < ENTRY_COLS) {
+    if (str.endsWith(" ") && lines[lines.length - 1].length < COLS) {
       lines[lines.length - 1] += " ";
     }
     return lines.slice(0, ENTRY_ROWS);
   }
 
+  // Wrap a chapter's verses, each prefixed with its number, into display lines.
+  function wrapChapter(verses) {
+    const lines = [], lineVerse = [];
+    verses.forEach((vtext, i) => {
+      const vn = i + 1;
+      let line = "";
+      for (const w of (vn + "  " + vtext).split(" ")) {
+        if (!line.length) { line = w; continue; }
+        if ((line + " " + w).length <= COLS) { line += " " + w; continue; }
+        lines.push(line); lineVerse.push(vn);
+        let rest = w;
+        while (rest.length > COLS) { lines.push(rest.slice(0, COLS)); lineVerse.push(vn); rest = rest.slice(COLS); }
+        line = rest;
+      }
+      if (line.length) { lines.push(line); lineVerse.push(vn); }
+    });
+    return { lines, lineVerse };
+  }
+
+  // --- reference resolver -------------------------------------------
+  const ALIAS = {
+    gen: "Genesis", ex: "Exodus", exo: "Exodus", lev: "Leviticus", num: "Numbers",
+    deut: "Deuteronomy", deu: "Deuteronomy", josh: "Joshua", judg: "Judges",
+    ps: "Psalms", psa: "Psalms", psalm: "Psalms", pslm: "Psalms", prov: "Proverbs",
+    eccl: "Ecclesiastes", song: "Song of Solomon", sos: "Song of Solomon", isa: "Isaiah",
+    isai: "Isaiah", jer: "Jeremiah", lam: "Lamentations", ezek: "Ezekiel", eze: "Ezekiel",
+    dan: "Daniel", nah: "Nahum", nahm: "Nahum",
+    matt: "Matthew", mt: "Matthew", mk: "Mark", mrk: "Mark", lk: "Luke", luk: "Luke",
+    jn: "John", jhn: "John", rom: "Romans", gal: "Galatians", gala: "Galatians",
+    eph: "Ephesians", phil: "Philippians", php: "Philippians", col: "Colossians",
+    phlm: "Philemon", philem: "Philemon", heb: "Hebrews", jas: "James",
+    rev: "Revelation", rv: "Revelation",
+  };
+
+  function resolveRef(raw) {
+    if (!state.books) return null;
+    const parts = raw.trim().replace(/[:.]/g, " ").split(/\s+/).filter(Boolean);
+    if (!parts.length) return null;
+    const nums = [];
+    while (parts.length && /^\d+$/.test(parts[parts.length - 1])) nums.unshift(Number(parts.pop()));
+    let q = parts.join("").toLowerCase();
+    let prefixNum = "";
+    const pm = q.match(/^([1-3])(.*)$/);
+    if (pm) { prefixNum = pm[1] + " "; q = pm[2]; }
+    let bookIdx = -1;
+    const want = (prefixNum + q).replace(/\s/g, "");
+    state.books.forEach((name, i) => {
+      const norm = name.toLowerCase().replace(/\s/g, "");
+      if (bookIdx < 0 && norm.startsWith(want)) bookIdx = i;
+    });
+    if (bookIdx < 0 && ALIAS[q]) bookIdx = state.books.indexOf(ALIAS[q]);
+    if (bookIdx < 0) return null;
+    return { bookIdx, chapter: nums[0] || 1, verse: nums[1] || 1 };
+  }
+
+  // --- book index highlight ----------------------------------------
+  function highlightBook(idx) {
+    const box = $("books");
+    box.querySelectorAll(".bk.on").forEach((el) => el.classList.remove("on"));
+    if (idx == null) return;
+    const el = box.querySelector('.bk[data-i="' + idx + '"]');
+    if (el) el.classList.add("on");
+  }
+
+  // --- open a reference -------------------------------------------
+  function clampReadTop() {
+    const max = Math.max(0, state.read.lines.length - READ_ROWS);
+    state.read.top = Math.max(0, Math.min(max, state.read.top));
+  }
+
+  function openReference(r) {
+    const chs = state.chapters && state.chapters[r.bookIdx];
+    if (!chs || !chs.length) return false;
+    const ci = Math.max(0, Math.min(chs.length - 1, r.chapter - 1));
+    const w = wrapChapter(chs[ci]);
+    const idx = w.lineVerse.indexOf(r.verse);
+    state.read = {
+      bookIdx: r.bookIdx, chapterIdx: ci, verse: r.verse,
+      lines: w.lines, lineVerse: w.lineVerse,
+      top: idx >= 0 ? idx : 0,
+    };
+    clampReadTop();
+    state.mode = "read";
+    state.entry = "";
+    highlightBook(r.bookIdx);
+    render();
+    return true;
+  }
+
+  function toEntry(seed) {
+    state.mode = "entry";
+    state.entry = seed || "";
+  }
+
+  // --- layout + render ------------------------------------------
+  function rows() { return state.mode === "read" ? READ_ROWS : ENTRY_ROWS; }
+
   function layout() {
     const cssW = cv.parentElement.clientWidth;
-    const u = Math.max(2, Math.floor(cssW / (ENTRY_COLS * CW)));
-    const w = ENTRY_COLS * CW * u;
-    const h = ENTRY_ROWS * CH * u + Math.round(u * 2);
+    const u = Math.max(2, Math.floor(cssW / (COLS * CW)));
+    const w = COLS * CW * u;
+    const h = rows() * CH * u + Math.round(u * 2);
     const dpr = window.devicePixelRatio || 1;
     cv.width = w * dpr; cv.height = h * dpr;
     cv.style.width = w + "px"; cv.style.height = h + "px";
@@ -368,18 +498,26 @@ section { margin-top: 36px; }
     const ink = getCss("--lcd-ink");
     const padX = u * 0.5, padY = u;
 
+    if (state.mode === "read") {
+      const view = state.read.lines.slice(state.read.top, state.read.top + READ_ROWS);
+      view.forEach((line, r) => {
+        LcdFont.drawText(cx, line, padX, padY + r * CH * u, u, { s, ink });
+      });
+      return;
+    }
+
     const lines = wrapEntry(state.entry);
     lines.forEach((line, r) => {
       LcdFont.drawText(cx, line, padX, padY + r * CH * u, u, { s, ink });
     });
 
-    // block cursor after the last character — blinks on the home screen whether
-    // or not the key sink holds focus, brighter once it does
+    // block cursor after the last character — blinks whether or not the key
+    // sink holds focus, brighter once it does
     if (state.cursorOn) {
       let cr = lines.length - 1;
       let cc = lines[cr].length;
-      if (cc >= ENTRY_COLS && cr < ENTRY_ROWS - 1) { cr++; cc = 0; }
-      cc = Math.min(cc, ENTRY_COLS - 1);
+      if (cc >= COLS && cr < ENTRY_ROWS - 1) { cr++; cc = 0; }
+      cc = Math.min(cc, COLS - 1);
       const ox = padX + cc * CW * u, oy = padY + cr * CH * u;
       const off = s(GH / 2) * u;
       cx.fillStyle = ink;
@@ -393,17 +531,41 @@ section { margin-top: 36px; }
   const ACCEPT = /^[a-z0-9 :'\-]$/i;
 
   function onKey(e) {
-    if (e.key === "Backspace") { state.entry = state.entry.slice(0, -1); }
-    else if (e.key === "Enter") { /* step 1: no lookup yet */ }
-    else if (e.key.length === 1 && ACCEPT.test(e.key)) {
+    if (e.key === "Escape") {
+      if (state.mode === "read") toEntry(""); else state.entry = "";
+      e.preventDefault(); state.cursorOn = true; render();
+      return;
+    }
+
+    if (state.mode === "read") {
+      if (e.key === "ArrowDown" || e.key === "PageDown") { state.read.top += READ_ROWS; clampReadTop(); }
+      else if (e.key === "ArrowUp" || e.key === "PageUp") { state.read.top -= READ_ROWS; clampReadTop(); }
+      else if (e.key === "Enter" || e.key === "Backspace") { toEntry(""); }
+      else if (e.key.length === 1 && ACCEPT.test(e.key)) { toEntry(e.key.toUpperCase()); }
+      else return;
+      e.preventDefault();
+      state.cursorOn = true;
+      render();
+      return;
+    }
+
+    if (e.key === "Backspace") {
+      state.entry = state.entry.slice(0, -1);
+    } else if (e.key === "Enter") {
+      const r = state.entry.trim() ? resolveRef(state.entry) : null;
+      if (r && openReference(r)) { e.preventDefault(); return; }
+      // no match: leave the line as typed
+    } else if (e.key.length === 1 && ACCEPT.test(e.key)) {
       if (state.entry.length < MAX) state.entry += e.key.toUpperCase();
-    } else { return; }
+    } else {
+      return;
+    }
     e.preventDefault();
     state.cursorOn = true;
     render();
   }
 
-  function boot() {
+  async function boot() {
     buildIndex();
 
     const kbd = $("kbd"), lcd = $("lcd");
@@ -411,16 +573,24 @@ section { margin-top: 36px; }
     kbd.addEventListener("focus", () => { state.focus = true; lcd.classList.add("on"); render(); });
     kbd.addEventListener("blur", () => { state.focus = false; lcd.classList.remove("on"); render(); });
     kbd.addEventListener("keydown", onKey);
-    // keep the sink empty; we track the string ourselves
     kbd.addEventListener("input", () => { kbd.value = ""; });
 
     setInterval(() => {
+      if (state.mode !== "entry") return;
       state.cursorOn = !state.cursorOn;
       render();
     }, 530);
 
     window.addEventListener("resize", render);
     render();
+
+    try {
+      if (!window.KJV_TEXT) await load("kjv-data.js");
+      state.books = window.KJV_BOOKS;
+      state.chapters = parseCorpus(window.KJV_TEXT, state.books);
+    } catch (e) {
+      // corpus unavailable — the entry line still works, lookups just no-op
+    }
   }
 
   boot();

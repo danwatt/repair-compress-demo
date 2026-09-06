@@ -193,4 +193,10 @@ the rest of the repo compresses. It is being built a screen at a time.
 and a colon from the keyboard, upper-cased, with a blinking block cursor and word wrap. Underneath is
 the book index from the patent drawing — a black **OLD** / **NEW** testament tab at the head of each
 first column, then four aligned columns of names per testament (the twelve minor prophets in their own
-3×4 block), with an open book between. Every indicator is dark; lighting them is a later step's job.
+3×4 block), with an open book between. Every indicator starts dark.
+
+**Step 2 — a reference.** `Enter` on a `BOOK C:V` string (`MATT 1:1`, `1 JOHN 4 8`, `PSALM 23`;
+`:`, `.` or spaces between the numbers, book prefixes and the usual abbreviations accepted) parses it
+against `window.KJV_BOOKS`, opens that chapter in the reading view — four lines of the curved font,
+`↑`/`↓` to page, `Esc` or any keystroke back to the line — and lights that one book's indicator. A
+reference names exactly one book; several lit at once is what search will mean.
