@@ -191,6 +191,6 @@ the rest of the repo compresses. It is being built a screen at a time.
 
 **Step 1 — the home screen.** The top of the glass is the entry line: it takes letters, digits, space
 and a colon from the keyboard, upper-cased, with a blinking block cursor and word wrap. Underneath is
-the book index from the patent drawing — the 39 Old Testament names in four columns with the twelve
-minor prophets in their own block, an open book, then the 27 New Testament names — every indicator
-dark. Lighting them is a later step's job.
+the book index from the patent drawing — a black **OLD** / **NEW** testament tab at the head of each
+first column, then four aligned columns of names per testament (the twelve minor prophets in their own
+3×4 block), with an open book between. Every indicator is dark; lighting them is a later step's job.
