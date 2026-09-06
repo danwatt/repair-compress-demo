@@ -1,7 +1,7 @@
-// Shared tab bar for the four demo pages.
+// Shared tab bar for the five demo pages.
 //
 // The pages are hand-edited and self-contained, so the nav lives here rather
-// than four times over: it injects its own style and markup at the top of
+// than five times over: it injects its own style and markup at the top of
 // `.wrap` and marks the current page from the URL. It uses the palette custom
 // properties every page already declares, so it inherits each page's colours
 // without knowing anything about them.
@@ -13,6 +13,7 @@
     { href: "demo-ylk1.html", label: "YLK1", note: "link chase" },
     { href: "demo-verse.html", label: "Verse", note: "one verse, address by address" },
     { href: "demo-search.html", label: "Search", note: "one query, both codecs" },
+    { href: "demo-reader.html", label: "Reader", note: "the curved LCD font, US 4,982,181" },
   ];
 
   const CSS = `

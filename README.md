@@ -29,8 +29,9 @@ Sources:
 | `demo-ylk1.html`                                | Interactive browser demo for YLK1: chain view, chase, and search.   |
 | `demo-verse.html`                               | Seeking one verse in both codecs, address by address.               |
 | `demo-search.html`                              | One query, both codecs, every byte each has to read.                |
+| `demo-reader.html`                              | A KJV reader in the curved LCD font of US 4,982,181.                |
 | `thesaurus.txt`                                 | Synonym groups, as words. Filtered against the lexicon at encode.   |
-| `nav.js`                                        | The tab bar the four demo pages share.                              |
+| `nav.js`                                        | The tab bar the five demo pages share.                              |
 | `kjv.csv`                                       | Full King James Bible source data, one verse per row.               |
 | `kjv-data.js` / `kjv-preencoded.js`             | Generated browser data used by the demo.                            |
 | `build-kjv-data.js` / `build-kjv-preencoded.ts` | Scripts that regenerate the browser data.                           |
@@ -53,9 +54,9 @@ mise run clean            # remove generated build output
 Run `mise tasks` to list all available tasks. After starting the server, open
 <http://localhost:8080/demo.html>; browsers will not load the demo correctly over `file://`.
 
-`demo.html`, `demo-ylk1.html`, `demo-verse.html` and `demo-search.html` are hand-edited and otherwise
-self-contained; the one thing they share is `nav.js`, which injects the tab bar and its style so the
-four of them do not carry four copies of it. After changing `repair-codec.ts` or
+`demo.html`, `demo-ylk1.html`, `demo-verse.html`, `demo-search.html` and `demo-reader.html` are
+hand-edited and otherwise self-contained; the one thing they share is `nav.js`, which injects the tab
+bar and its style so the five of them do not carry five copies of it. After changing `repair-codec.ts` or
 `link-codec.ts`, run `mise run build` to regenerate `repair-codec.js` and `link-codec.js`. The build
 and data tasks use mise source/output tracking and skip unchanged work.
 
@@ -158,3 +159,21 @@ tables instead of one. Half the stream is punctuation and function words, and wh
 not what follows a comma. K = 128 is the optimum on the KJV at 969,284 bytes, 131,502 below order-0,
 for about 160 KB of decode tables. It defaults to 0 — the patent's hardware could not have afforded
 it, and the point of the rest of the codec is that it could.
+
+## The curved font
+
+`demo-reader.html` steps away from the bytes and draws the light. Franklin's electronic Bible put a
+second Yianilos patent in front of the YLK1 stream:
+[US 4,982,181](https://patents.google.com/patent/US4982181A/en), "Alphanumeric Display", an LCD whose
+pixels are not square — "the pixels along the center rows of said pixel matrix being substantially
+square … and the pixels along the upper and lower rows … have corners that define a parallelogram and
+vertical edges that are curved." Every column runs a shallow vertical S, so round letters read round
+and the type recalls "the print styles penned by scribes."
+
+The page is that display: the manufactured part drove a 32×202 grid as 148 character templates, four
+rows of thirty-seven, each an 8×5 matrix, and the reader renders exactly 37 columns by 4 lines, every
+glyph painted cell by cell with the patent's curve over the King James text. A reference is entered
+the way [US 5,153,831](https://patents.google.com/patent/US5153831A/en) describes the keyboard being
+used — `JOHN 3 16` — or the arrow keys scroll. The curve toggles off to a right-angled grid, and a
+magnifier traces one column's S against the square centre band (FIG. 5). Nothing here is compressed;
+the font is a 5×7 body inside the 8×5 cell, descenders in the eighth row.

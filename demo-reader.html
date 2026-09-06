@@ -1,0 +1,777 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The curved LCD font — US 4,982,181, reading the KJV</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Silkscreen:wght@400;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root {
+  --ground: #0a0e1a;
+  --panel: #121a2e;
+  --ink: #f2f4fa;
+  --ink-soft: #8b96b3;
+  --rule: #253253;
+  --dmg-4: #5b9dff;
+  --dmg-3: #3d7fd9;
+  --dmg-2: #2a5aa8;
+  --dmg-1: #163262;
+  --hot: #e8b923;
+  --hot-soft: #f6d878;
+  --pink: #ff6b9a;
+  --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --pixel: "Silkscreen", "IBM Plex Mono", monospace;
+
+  /* the glass */
+  --lcd: #b9c6a8;
+  --lcd-well: #aebc9c;
+  --lcd-ink: #232a1c;
+  --case: #1c2331;
+  --case-edge: #2c3547;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--ground);
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+.wrap { max-width: 1120px; margin: 0 auto; padding: 32px 20px 80px; }
+
+.eyebrow {
+  font-family: var(--pixel);
+  font-size: 10px;
+  letter-spacing: .12em;
+  color: var(--dmg-3);
+  text-transform: uppercase;
+  margin: 0 0 14px;
+}
+
+h1 {
+  font-family: var(--pixel);
+  font-weight: 400;
+  font-size: clamp(20px, 4.4vw, 34px);
+  line-height: 1.25;
+  margin: 0 0 16px;
+  color: var(--dmg-4);
+}
+
+.thesis { max-width: 68ch; margin: 0 0 12px; color: var(--ink-soft); }
+.thesis a { color: var(--hot); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+.thesis b { color: var(--ink); font-weight: 500; }
+.thesis code { color: var(--hot); font-size: 12.5px; }
+
+.hr { height: 1px; background: var(--rule); border: 0; margin: 30px 0; }
+section { margin-top: 36px; }
+
+.stage-label {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  font-family: var(--pixel);
+  font-size: 10px;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: var(--dmg-3);
+  margin-bottom: 16px;
+}
+.stage-label .num { color: var(--hot); }
+.stage-label .hint {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--ink-soft);
+  margin-left: auto;
+}
+
+/* device ----------------------------------------------------------------- */
+
+.device {
+  background: linear-gradient(180deg, #222a3b, var(--case));
+  border: 1px solid var(--case-edge);
+  border-radius: 18px;
+  padding: 20px;
+  box-shadow: 0 30px 60px -30px #000, inset 0 1px 0 #3b4560;
+  max-width: 860px;
+}
+.brand {
+  font-family: var(--pixel);
+  font-size: 9px;
+  letter-spacing: .16em;
+  color: var(--ink-soft);
+  text-transform: uppercase;
+  display: flex;
+  justify-content: space-between;
+  margin: 2px 4px 12px;
+}
+.brand span:last-child { color: var(--dmg-3); }
+
+.lcd-frame {
+  background: #0f1410;
+  border-radius: 8px;
+  padding: 10px;
+  box-shadow: inset 0 2px 8px #000;
+}
+.lcd {
+  position: relative;
+  background: var(--lcd);
+  border-radius: 3px;
+  overflow: hidden;
+  box-shadow: inset 0 0 0 1px #00000030, inset 0 0 24px #7d8a6a55;
+}
+.lcd canvas { display: block; width: 100%; height: auto; }
+.lcd .glow {
+  position: absolute; inset: 0; pointer-events: none;
+  background: radial-gradient(120% 80% at 50% 0%, #ffffff22, transparent 60%);
+}
+
+.readout {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px 14px;
+  margin: 12px 4px 14px;
+  font-size: 11px;
+  color: var(--ink-soft);
+}
+.readout b { color: var(--hot-soft); font-weight: 500; font-variant-numeric: tabular-nums; }
+
+.pad { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; }
+.refform { display: flex; gap: 8px; align-items: stretch; flex: 1 1 260px; }
+.refform input {
+  flex: 1;
+  padding: 9px 11px;
+  border: 1px solid var(--case-edge);
+  background: #0e131f;
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 13px;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  border-radius: 4px;
+}
+.refform input::placeholder { color: #4a556f; letter-spacing: .12em; }
+
+button {
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 500;
+  padding: 9px 12px;
+  border-radius: 4px;
+  cursor: pointer;
+  border: 1px solid var(--dmg-3);
+  background: #10192b;
+  color: var(--dmg-4);
+  min-width: 42px;
+}
+button:hover { background: var(--dmg-1); }
+button:active { transform: translateY(1px); }
+button.key { font-size: 14px; line-height: 1; padding: 9px 11px; }
+button.wide { letter-spacing: .08em; }
+button[disabled] { opacity: .4; cursor: default; }
+input:focus-visible, button:focus-visible { outline: 2px solid var(--hot); outline-offset: 2px; }
+
+.toggles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--case-edge);
+}
+.toggles label { display: flex; align-items: center; gap: 7px; font-size: 12px; color: var(--ink-soft); cursor: pointer; }
+.toggles input { accent-color: var(--hot); }
+
+/* magnifier ------------------------------------------------------------- */
+
+.mag-grid { display: grid; grid-template-columns: minmax(0, 340px) 1fr; gap: 24px; align-items: start; }
+@media (max-width: 760px) { .mag-grid { grid-template-columns: 1fr; } }
+
+.mag-panel { background: var(--panel); border: 1px solid var(--rule); border-radius: 4px; padding: 16px; max-width: 380px; }
+.mag-panel canvas { display: block; width: auto; max-width: 100%; height: auto; margin: 0 auto; background: var(--lcd); border-radius: 3px; }
+.mag-controls { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; margin-top: 14px; }
+.mag-controls input[type=text] {
+  width: 54px; text-align: center;
+  padding: 7px; border: 1px solid var(--rule); background: var(--ground);
+  color: var(--ink); font-family: var(--mono); font-size: 16px; border-radius: 3px;
+}
+.mag-controls label { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--ink-soft); }
+.mag-controls input[type=checkbox] { accent-color: var(--hot); }
+
+.prose { max-width: 68ch; color: var(--ink-soft); }
+.prose p { margin: 0 0 12px; }
+.prose b { color: var(--ink); font-weight: 500; }
+.prose code { color: var(--hot); font-size: 12.5px; }
+.prose a { color: var(--hot); }
+.quote {
+  border-left: 2px solid var(--dmg-3);
+  padding: 4px 0 4px 14px;
+  margin: 0 0 14px;
+  color: var(--ink);
+  font-size: 13px;
+}
+
+.loading { color: var(--ink-soft); font-size: 12px; padding: 20px 4px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <p class="eyebrow">US 4,982,181 · US 5,153,831</p>
+  <h1>The curved font, and a reader to show it</h1>
+
+  <p class="thesis">
+    Two Peter&nbsp;N.&nbsp;Yianilos patents sat behind the screen of Franklin's electronic Bible.
+    <a href="https://patents.google.com/patent/US5153831A/en">US&nbsp;5,153,831</a> is the one this repo
+    already implements &mdash; the next-occurrence link stream that <a href="demo-ylk1.html">YLK1</a>
+    rebuilds.
+    <a href="https://patents.google.com/patent/US4982181A/en">US&nbsp;4,982,181</a>, <b>&ldquo;Alphanumeric
+    Display,&rdquo;</b> is about the glass in front of it: a dot matrix whose pixels are not square.
+  </p>
+  <p class="thesis">
+    The claim is specific &mdash; <b>the pixels along the centre rows are &ldquo;substantially square,&rdquo;
+    while those on the upper and lower rows &ldquo;have corners that define a parallelogram and vertical
+    edges that are curved.&rdquo;</b> Every column runs a shallow vertical <b>S</b>, so round letters read
+    round and the type recalls, in the patent's words, &ldquo;the print styles penned by scribes.&rdquo;
+  </p>
+  <p class="thesis">
+    The manufactured part drove a 32&times;202 grid as <b>148 character templates &mdash; four rows of
+    thirty&#8209;seven, each an 8&times;5 matrix.</b> The panel below is that display: 37 columns, 4 lines,
+    every glyph drawn pixel by pixel with the patent's curve, reading the King&nbsp;James text the other
+    demos compress. Enter a reference the way the device took it &mdash; <code>JOHN 3 16</code> &mdash; or
+    scroll. Turn the curve off and the same bitmap snaps back to a right&#8209;angled grid.
+  </p>
+
+  <hr class="hr">
+
+  <section>
+    <div class="stage-label"><span class="num">01</span> The display <span class="hint">arrow keys scroll · type a reference and press enter</span></div>
+
+    <div id="loading" class="loading">loading the King James text&hellip;</div>
+
+    <div class="device" id="device" hidden>
+      <div class="brand"><span>Electronic King James Bible</span><span>FIG. 4</span></div>
+      <div class="lcd-frame">
+        <div class="lcd">
+          <canvas id="screen"></canvas>
+          <div class="glow"></div>
+        </div>
+      </div>
+
+      <div class="readout">
+        <span>at <b id="ro-ref">&mdash;</b></span>
+        <span>screen <b id="ro-screen">&mdash;</b></span>
+        <span><b id="ro-cells">37&times;4</b> cells lit per patent</span>
+      </div>
+
+      <div class="pad">
+        <form class="refform" id="refform">
+          <input id="ref" type="text" autocomplete="off" spellcheck="false"
+                 placeholder="JOHN 3 16" aria-label="Bible reference">
+          <button type="submit" class="wide">Enter</button>
+        </form>
+        <button class="key" id="k-chprev" title="previous chapter">&#9668;&#9668;</button>
+        <button class="key" id="k-up" title="scroll up">&#9650;</button>
+        <button class="key" id="k-down" title="scroll down">&#9660;</button>
+        <button class="key" id="k-chnext" title="next chapter">&#9658;&#9658;</button>
+      </div>
+
+      <div class="toggles">
+        <label><input type="checkbox" id="t-curve" checked> curved pixels (US 4,982,181)</label>
+        <label><input type="checkbox" id="t-wells"> unlit pixel wells</label>
+        <label><input type="checkbox" id="t-scan"> scan lines</label>
+      </div>
+    </div>
+  </section>
+
+  <hr class="hr">
+
+  <section>
+    <div class="stage-label"><span class="num">02</span> The pixel <span class="hint">FIG. 5 &mdash; one glyph, magnified</span></div>
+
+    <div class="mag-grid">
+      <div class="mag-panel">
+        <canvas id="mag"></canvas>
+        <div class="mag-controls">
+          <input id="mag-char" type="text" maxlength="1" value="g" aria-label="character to magnify">
+          <label><input type="checkbox" id="mag-curve" checked> curve</label>
+          <label><input type="checkbox" id="mag-trace" checked> column S&#8209;traces</label>
+          <label><input type="checkbox" id="mag-grid"> square grid</label>
+        </div>
+      </div>
+
+      <div class="prose">
+        <p class="quote">
+          &ldquo;&hellip;the pixels along the center rows of said pixel matrix being substantially square
+          &hellip; and the pixels along the upper and lower rows &hellip; have corners that define a
+          parallelogram and vertical edges that are curved.&rdquo;
+        </p>
+        <p>
+          Each column of the matrix is a stack of eight cells. The renderer offsets every cell horizontally
+          by <code>A&nbsp;&middot;&nbsp;sin(&pi;y/4)</code> for row&nbsp;<code>y</code> in <code>0&hellip;8</code>:
+          zero at the top, centre and bottom; a positive lobe through the upper rows and a negative one
+          through the lower. Neighbouring cells share the offset at their boundary, so a lit column tiles
+          into one continuous sinuous bar &mdash; square in the middle, leaning at the ends, with the
+          vertical edges drawn as curves rather than straight parallelogram sides.
+        </p>
+        <p>
+          The glyphs are a <b>5&times;7 body inside the 8&times;5 cell</b>, the eighth row carrying
+          descenders. Reference entry is upper&#8209;cased the way <a href="https://patents.google.com/patent/US5153831A/en">US&nbsp;5,153,831</a>
+          describes the keyboard being used &mdash; <code>JOHN 3 16</code> &mdash; but the scripture itself
+          is set mixed&#8209;case, because the curve is easiest to see on a round lowercase <code>o</code>
+          or the bowl of a <code>g</code>.
+        </p>
+        <p>
+          Nothing here is compressed. The point of the <a href="demo.html">other</a>
+          <a href="demo-ylk1.html">four</a> pages is the bytes on the wire; the point of this one is the
+          light the reader actually saw.
+        </p>
+      </div>
+    </div>
+  </section>
+
+</div>
+
+<script src="nav.js"></script>
+<script>
+(() => {
+  "use strict";
+  const $ = (id) => document.getElementById(id);
+
+  // 5x8 bitmap font: 5 wide, 8 tall. Rows 0-6 are the 5x7 body; row 7 holds
+  // descenders. "1" = lit. Missing glyphs fall back to a blank cell.
+  const B0 = "00000";
+  const G = {
+    "A": ["01110","10001","10001","11111","10001","10001","10001",B0],
+    "B": ["11110","10001","10001","11110","10001","10001","11110",B0],
+    "C": ["01110","10001","10000","10000","10000","10001","01110",B0],
+    "D": ["11110","10001","10001","10001","10001","10001","11110",B0],
+    "E": ["11111","10000","10000","11110","10000","10000","11111",B0],
+    "F": ["11111","10000","10000","11110","10000","10000","10000",B0],
+    "G": ["01110","10001","10000","10111","10001","10001","01111",B0],
+    "H": ["10001","10001","10001","11111","10001","10001","10001",B0],
+    "I": ["01110","00100","00100","00100","00100","00100","01110",B0],
+    "J": ["00111","00010","00010","00010","10010","10010","01100",B0],
+    "K": ["10001","10010","10100","11000","10100","10010","10001",B0],
+    "L": ["10000","10000","10000","10000","10000","10000","11111",B0],
+    "M": ["10001","11011","10101","10101","10001","10001","10001",B0],
+    "N": ["10001","11001","10101","10101","10011","10001","10001",B0],
+    "O": ["01110","10001","10001","10001","10001","10001","01110",B0],
+    "P": ["11110","10001","10001","11110","10000","10000","10000",B0],
+    "Q": ["01110","10001","10001","10001","10101","10010","01101",B0],
+    "R": ["11110","10001","10001","11110","10100","10010","10001",B0],
+    "S": ["01111","10000","10000","01110","00001","00001","11110",B0],
+    "T": ["11111","00100","00100","00100","00100","00100","00100",B0],
+    "U": ["10001","10001","10001","10001","10001","10001","01110",B0],
+    "V": ["10001","10001","10001","10001","10001","01010","00100",B0],
+    "W": ["10001","10001","10001","10101","10101","11011","10001",B0],
+    "X": ["10001","10001","01010","00100","01010","10001","10001",B0],
+    "Y": ["10001","10001","01010","00100","00100","00100","00100",B0],
+    "Z": ["11111","00001","00010","00100","01000","10000","11111",B0],
+
+    "a": [B0,B0,"01110","00001","01111","10001","01111",B0],
+    "b": ["10000","10000","11110","10001","10001","10001","11110",B0],
+    "c": [B0,B0,"01110","10000","10000","10001","01110",B0],
+    "d": ["00001","00001","01111","10001","10001","10001","01111",B0],
+    "e": [B0,B0,"01110","10001","11111","10000","01110",B0],
+    "f": ["00110","01000","01000","11100","01000","01000","01000",B0],
+    "g": [B0,B0,"01111","10001","10001","01111","00001","01110"],
+    "h": ["10000","10000","11110","10001","10001","10001","10001",B0],
+    "i": ["00100","00000","01100","00100","00100","00100","01110",B0],
+    "j": ["00010","00000","00010","00010","00010","10010","01100",B0],
+    "k": ["10000","10000","10010","10100","11000","10100","10010",B0],
+    "l": ["01100","00100","00100","00100","00100","00100","00110",B0],
+    "m": [B0,B0,"11010","10101","10101","10001","10001",B0],
+    "n": [B0,B0,"11110","10001","10001","10001","10001",B0],
+    "o": [B0,B0,"01110","10001","10001","10001","01110",B0],
+    "p": [B0,B0,"11110","10001","10001","11110","10000","10000"],
+    "q": [B0,B0,"01111","10001","10001","01111","00001","00001"],
+    "r": [B0,B0,"10110","11001","10000","10000","10000",B0],
+    "s": [B0,B0,"01111","10000","01110","00001","11110",B0],
+    "t": ["01000","01000","11100","01000","01000","01001","00110",B0],
+    "u": [B0,B0,"10001","10001","10001","10011","01101",B0],
+    "v": [B0,B0,"10001","10001","10001","01010","00100",B0],
+    "w": [B0,B0,"10001","10001","10101","10101","01010",B0],
+    "x": [B0,B0,"10001","01010","00100","01010","10001",B0],
+    "y": [B0,B0,"10001","10001","01111","00001","00001","01110"],
+    "z": [B0,B0,"11111","00010","00100","01000","11111",B0],
+
+    "0": ["01110","10001","10011","10101","11001","10001","01110",B0],
+    "1": ["00100","01100","00100","00100","00100","00100","01110",B0],
+    "2": ["01110","10001","00001","00010","00100","01000","11111",B0],
+    "3": ["11111","00010","00100","00010","00001","10001","01110",B0],
+    "4": ["00010","00110","01010","10010","11111","00010","00010",B0],
+    "5": ["11111","10000","11110","00001","00001","10001","01110",B0],
+    "6": ["00110","01000","10000","11110","10001","10001","01110",B0],
+    "7": ["11111","00001","00010","00100","01000","01000","01000",B0],
+    "8": ["01110","10001","10001","01110","10001","10001","01110",B0],
+    "9": ["01110","10001","10001","01111","00001","00010","01100",B0],
+
+    " ": [B0,B0,B0,B0,B0,B0,B0,B0],
+    ".": [B0,B0,B0,B0,B0,"01100","01100",B0],
+    ",": [B0,B0,B0,B0,B0,"01100","00100","01000"],
+    ";": [B0,B0,"01100","01100","00000","01100","00100","01000"],
+    ":": [B0,B0,"01100","01100","00000","01100","01100",B0],
+    "!": ["00100","00100","00100","00100","00100","00000","00100",B0],
+    "?": ["01110","10001","00001","00010","00100","00000","00100",B0],
+    "'": ["00100","00100","01000","00000","00000","00000","00000",B0],
+    '"': ["01010","01010","01010","00000","00000","00000","00000",B0],
+    "(": ["00010","00100","01000","01000","01000","00100","00010",B0],
+    ")": ["01000","00100","00010","00010","00010","00100","01000",B0],
+    "-": [B0,B0,B0,"01110","00000","00000","00000",B0],
+  };
+  const glyph = (ch) => G[ch] || G[ch.toUpperCase()] || null;
+
+  const COLS = 37, ROWS = 4;      // the manufactured template array
+  const GW = 5, GH = 8;           // cells per glyph
+  const CW = GW + 1, CH_ = GH + 2; // advance and line pitch, in cells
+
+  // --- curved-pixel painter -------------------------------------------------
+  // s(y): horizontal offset, in cell units, for row boundary y in 0..8.
+  function makeS(amp) {
+    return (y) => amp * Math.sin(Math.PI * y / 4);
+  }
+
+  function paintGlyph(ctx, rows, ox, oy, u, s, opts) {
+    const inset = u * 0.06;
+    ctx.fillStyle = opts.ink;
+    for (let r = 0; r < GH; r++) {
+      const line = rows[r] || B0;
+      const yT = oy + r * u, yB = yT + u;
+      const sT = s(r), sM = s(r + 0.5), sB = s(r + 1);
+      for (let c = 0; c < GW; c++) {
+        if (line[c] !== "1") continue;
+        const xL = ox + c * u + inset, xR = ox + (c + 1) * u - inset;
+        ctx.beginPath();
+        ctx.moveTo(xL + sT, yT + inset);
+        ctx.lineTo(xR + sT, yT + inset);
+        // right edge, curved
+        ctx.quadraticCurveTo(xR + sM * 1.7, yT + u / 2, xR + sB, yB - inset);
+        ctx.lineTo(xL + sB, yB - inset);
+        // left edge, curved
+        ctx.quadraticCurveTo(xL + sM * 1.7, yT + u / 2, xL + sT, yT + inset);
+        ctx.closePath();
+        ctx.fill();
+      }
+    }
+  }
+
+  function paintWells(ctx, ox, oy, u, s) {
+    ctx.fillStyle = "rgba(0,0,0,0.055)";
+    for (let r = 0; r < GH; r++) {
+      const yT = oy + r * u;
+      const sT = s(r), sB = s(r + 1);
+      for (let c = 0; c < GW; c++) {
+        const xL = ox + c * u, xR = xL + u;
+        ctx.beginPath();
+        ctx.moveTo(xL + sT + u * 0.14, yT + u * 0.14);
+        ctx.lineTo(xR + sT - u * 0.14, yT + u * 0.14);
+        ctx.lineTo(xR + sB - u * 0.14, yT + u - u * 0.14);
+        ctx.lineTo(xL + sB + u * 0.14, yT + u - u * 0.14);
+        ctx.closePath();
+        ctx.fill();
+      }
+    }
+  }
+
+  // --- corpus -------------------------------------------------------------
+  const state = {
+    books: null,          // ["Genesis", ...]
+    chapters: null,       // book -> [ [verseText, ...], ... ]  (0-based book, 0-based chapter)
+    bookIdx: 0,
+    chapterIdx: 0,        // 0-based
+    lines: [],            // wrapped display lines for the current chapter
+    lineVerse: [],        // 1-based verse number for each line
+    top: 0,
+    curve: true,
+    wells: false,
+    scan: false,
+  };
+
+  function load(src) {
+    return new Promise((res, rej) => {
+      const s = document.createElement("script");
+      s.src = src; s.onload = res;
+      s.onerror = () => rej(new Error("could not load " + src));
+      document.head.appendChild(s);
+    });
+  }
+
+  function parseCorpus(text, books) {
+    const chapters = books.map(() => []);
+    let bi = -1, cur = [];   // cur = current chapter's verse array
+    let buf = "";
+    const pushVerse = () => { if (buf.length) { cur.push(buf); buf = ""; } };
+    for (const ch of text) {
+      if (ch === "%") { pushVerse(); bi++; cur = []; chapters[bi].push(cur); continue; }
+      if (ch === "@") { pushVerse(); continue; }
+      if (ch === "#") { pushVerse(); cur = []; chapters[bi].push(cur); continue; }
+      if (ch === "$") { pushVerse(); continue; }
+      buf += ch;
+    }
+    return chapters;
+  }
+
+  function wrapChapter(verses) {
+    const lines = [], lineVerse = [];
+    verses.forEach((vtext, i) => {
+      const vn = i + 1;
+      const words = (vn + "  " + vtext).split(" ");
+      let line = "";
+      for (const w of words) {
+        if (!line.length) { line = w; continue; }
+        if ((line + " " + w).length <= COLS) { line += " " + w; }
+        else {
+          lines.push(line); lineVerse.push(vn);
+          // hard-break tokens longer than a row
+          let rest = w;
+          while (rest.length > COLS) { lines.push(rest.slice(0, COLS)); lineVerse.push(vn); rest = rest.slice(COLS); }
+          line = rest;
+        }
+      }
+      if (line.length) { lines.push(line); lineVerse.push(vn); }
+    });
+    return { lines, lineVerse };
+  }
+
+  function setChapter(bookIdx, chapterIdx, focusVerse) {
+    bookIdx = Math.max(0, Math.min(state.books.length - 1, bookIdx));
+    const chs = state.chapters[bookIdx];
+    chapterIdx = Math.max(0, Math.min(chs.length - 1, chapterIdx));
+    state.bookIdx = bookIdx;
+    state.chapterIdx = chapterIdx;
+    const w = wrapChapter(chs[chapterIdx]);
+    state.lines = w.lines;
+    state.lineVerse = w.lineVerse;
+    let top = 0;
+    if (focusVerse) {
+      const idx = state.lineVerse.indexOf(focusVerse);
+      if (idx >= 0) top = idx;
+    }
+    state.top = Math.max(0, Math.min(Math.max(0, state.lines.length - ROWS), top));
+    render();
+  }
+
+  // --- reference resolver ----------------------------------------------
+  const ALIAS = {
+    gen: "Genesis", ex: "Exodus", exo: "Exodus", lev: "Leviticus", num: "Numbers",
+    deut: "Deuteronomy", deu: "Deuteronomy", josh: "Joshua", judg: "Judges",
+    ps: "Psalms", psa: "Psalms", psalm: "Psalms", prov: "Proverbs", eccl: "Ecclesiastes",
+    song: "Song of Solomon", sos: "Song of Solomon", isa: "Isaiah", jer: "Jeremiah",
+    lam: "Lamentations", ezek: "Ezekiel", eze: "Ezekiel", dan: "Daniel",
+    matt: "Matthew", mt: "Matthew", mk: "Mark", mrk: "Mark", lk: "Luke", luk: "Luke",
+    jn: "John", jhn: "John", rom: "Romans", gal: "Galatians", eph: "Ephesians",
+    phil: "Philippians", php: "Philippians", col: "Colossians", phlm: "Philemon",
+    philem: "Philemon", heb: "Hebrews", jas: "James", rev: "Revelation", rv: "Revelation",
+  };
+
+  function resolveRef(raw) {
+    const parts = raw.trim().replace(/[:.]/g, " ").split(/\s+/).filter(Boolean);
+    if (!parts.length) return null;
+    const nums = [];
+    while (parts.length && /^\d+$/.test(parts[parts.length - 1])) nums.unshift(Number(parts.pop()));
+    let q = parts.join("").toLowerCase();
+    // leading book number: "1john", "2 kings"
+    let prefixNum = "";
+    const pm = q.match(/^([1-3])(.*)$/);
+    if (pm) { prefixNum = pm[1] + " "; q = pm[2]; }
+    let bookIdx = -1;
+    const want = (prefixNum + q).replace(/\s/g, "");
+    state.books.forEach((name, i) => {
+      const norm = name.toLowerCase().replace(/\s/g, "");
+      if (bookIdx < 0 && (norm.startsWith(want) || norm.replace(/[^a-z0-9]/g, "").startsWith(want))) bookIdx = i;
+    });
+    if (bookIdx < 0 && ALIAS[q]) bookIdx = state.books.indexOf(ALIAS[q]);
+    if (bookIdx < 0) return null;
+    const chapter = nums[0] || 1;
+    const verse = nums[1] || 1;
+    return { bookIdx, chapter, verse };
+  }
+
+  // --- rendering --------------------------------------------------------
+  const cv = $("screen"), cx = cv.getContext("2d");
+
+  function layout() {
+    const cssW = cv.parentElement.clientWidth;
+    const u = Math.max(2, Math.floor(cssW / (COLS * CW)));
+    const w = COLS * CW * u;
+    const h = ROWS * CH_ * u;
+    const dpr = window.devicePixelRatio || 1;
+    cv.width = w * dpr; cv.height = h * dpr;
+    cv.style.width = w + "px"; cv.style.height = h + "px";
+    cx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    return { u, w, h };
+  }
+
+  function render() {
+    const { u, w, h } = layout();
+    cx.clearRect(0, 0, w, h);
+
+    const s = state.curve ? makeS(0.5) : (() => 0);
+    const padX = u * 0.5, padY = u * 1;
+
+    for (let row = 0; row < ROWS; row++) {
+      const text = state.lines[state.top + row] || "";
+      const oy = padY + row * CH_ * u;
+      for (let i = 0; i < COLS; i++) {
+        const ox = padX + i * CW * u;
+        const ch = text[i];
+        if (state.wells) paintWells(cx, ox, oy, u, s);
+        if (!ch || ch === " ") continue;
+        const rows = glyph(ch);
+        if (rows) paintGlyph(cx, rows, ox, oy, u, s, { ink: getCss("--lcd-ink") });
+      }
+    }
+
+    if (state.scan) {
+      cx.fillStyle = "rgba(0,0,0,0.06)";
+      for (let y = 0; y < h; y += 3) cx.fillRect(0, y, w, 1);
+    }
+
+    // readouts
+    const bk = state.books[state.bookIdx];
+    const topVerse = state.lineVerse[state.top] || 1;
+    const botVerse = state.lineVerse[Math.min(state.lines.length - 1, state.top + ROWS - 1)] || topVerse;
+    $("ro-ref").textContent = `${bk} ${state.chapterIdx + 1}:${topVerse}`
+      + (botVerse !== topVerse ? `–${botVerse}` : "");
+    const totalScreens = Math.max(1, Math.ceil(state.lines.length / ROWS));
+    const thisScreen = Math.floor(state.top / ROWS) + 1;
+    $("ro-screen").textContent = `${thisScreen} / ${totalScreens}`;
+    $("k-up").disabled = state.top <= 0;
+    $("k-down").disabled = state.top >= state.lines.length - ROWS;
+    $("k-chprev").disabled = state.bookIdx === 0 && state.chapterIdx === 0;
+    const lastBook = state.books.length - 1;
+    $("k-chnext").disabled = state.bookIdx === lastBook && state.chapterIdx === state.chapters[lastBook].length - 1;
+  }
+
+  function getCss(v) { return getComputedStyle(document.documentElement).getPropertyValue(v).trim(); }
+
+  function scroll(delta) {
+    const max = Math.max(0, state.lines.length - ROWS);
+    state.top = Math.max(0, Math.min(max, state.top + delta));
+    render();
+  }
+
+  function stepChapter(dir) {
+    let b = state.bookIdx, c = state.chapterIdx + dir;
+    if (c < 0) { b--; if (b < 0) return; c = state.chapters[b].length - 1; }
+    else if (c >= state.chapters[b].length) { b++; if (b >= state.books.length) return; c = 0; }
+    setChapter(b, c, 1);
+  }
+
+  // --- magnifier -------------------------------------------------------
+  const mg = $("mag"), mgx = mg.getContext("2d");
+  function renderMag() {
+    const ch = ($("mag-char").value || "g")[0];
+    const rows = glyph(ch) || G["?"];
+    const curve = $("mag-curve").checked;
+    const showTrace = $("mag-trace").checked;
+    const showGrid = $("mag-grid").checked;
+
+    const cssW = mg.parentElement.clientWidth;
+    const u = Math.max(10, Math.min(46, Math.floor((cssW - 40) / GW)));
+    const w = GW * u + 40, h = GH * u + 40;
+    const dpr = window.devicePixelRatio || 1;
+    mg.width = w * dpr; mg.height = h * dpr;
+    mg.style.width = w + "px"; mg.style.height = h + "px";
+    mgx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    mgx.clearRect(0, 0, w, h);
+
+    const ox = 20, oy = 20;
+    const s = curve ? makeS(0.5) : (() => 0);
+
+    if (showGrid) {
+      mgx.strokeStyle = "rgba(0,0,0,0.18)";
+      mgx.lineWidth = 1;
+      for (let c = 0; c <= GW; c++) { mgx.beginPath(); mgx.moveTo(ox + c * u, oy); mgx.lineTo(ox + c * u, oy + GH * u); mgx.stroke(); }
+      for (let r = 0; r <= GH; r++) { mgx.beginPath(); mgx.moveTo(ox, oy + r * u); mgx.lineTo(ox + GW * u, oy + r * u); mgx.stroke(); }
+    }
+
+    paintWells(mgx, ox, oy, u, s);
+    paintGlyph(mgx, rows, ox, oy, u, s, { ink: getCss("--lcd-ink") });
+
+    if (showTrace) {
+      mgx.strokeStyle = "#c0392b";
+      mgx.lineWidth = 1.5;
+      for (let c = 0; c <= GW; c++) {
+        mgx.beginPath();
+        for (let y = 0; y <= GH * 8; y++) {
+          const ry = y / 8;
+          const x = ox + c * u + s(ry) * u;
+          const py = oy + ry * u;
+          if (y === 0) mgx.moveTo(x, py); else mgx.lineTo(x, py);
+        }
+        mgx.stroke();
+      }
+      // mark the square centre band
+      mgx.fillStyle = "rgba(43,163,90,0.14)";
+      mgx.fillRect(ox - 6, oy + 3 * u, GW * u + 12, 2 * u);
+    }
+  }
+
+  // --- boot ----------------------------------------------------------
+  async function boot() {
+    try {
+      if (!window.KJV_TEXT) await load("kjv-data.js");
+      state.books = window.KJV_BOOKS;
+      state.chapters = parseCorpus(window.KJV_TEXT, state.books);
+
+      $("loading").hidden = true;
+      $("device").hidden = false;
+
+      const john = state.books.indexOf("John");
+      setChapter(john >= 0 ? john : 0, 2, 16); // John 3 (0-based 2), focus verse 16
+
+      $("refform").addEventListener("submit", (e) => {
+        e.preventDefault();
+        const r = resolveRef($("ref").value);
+        if (!r) { $("ref").value = ""; $("ref").placeholder = "not found — try JOHN 3 16"; return; }
+        setChapter(r.bookIdx, r.chapter - 1, r.verse);
+        $("ref").value = "";
+      });
+      $("k-up").addEventListener("click", () => scroll(-ROWS));
+      $("k-down").addEventListener("click", () => scroll(ROWS));
+      $("k-chprev").addEventListener("click", () => stepChapter(-1));
+      $("k-chnext").addEventListener("click", () => stepChapter(1));
+
+      $("t-curve").addEventListener("change", (e) => { state.curve = e.target.checked; render(); });
+      $("t-wells").addEventListener("change", (e) => { state.wells = e.target.checked; render(); });
+      $("t-scan").addEventListener("change", (e) => { state.scan = e.target.checked; render(); });
+
+      document.addEventListener("keydown", (e) => {
+        if (e.target.tagName === "INPUT") return;
+        const r = $("device").getBoundingClientRect();
+        if (r.bottom < 0 || r.top > innerHeight) return; // only when the device is on screen
+        if (e.key === "ArrowUp") { scroll(-1); e.preventDefault(); }
+        else if (e.key === "ArrowDown") { scroll(1); e.preventDefault(); }
+        else if (e.key === "PageUp") { scroll(-ROWS); e.preventDefault(); }
+        else if (e.key === "PageDown") { scroll(ROWS); e.preventDefault(); }
+        else if (e.key === "ArrowLeft") { stepChapter(-1); e.preventDefault(); }
+        else if (e.key === "ArrowRight") { stepChapter(1); e.preventDefault(); }
+      });
+
+      window.addEventListener("resize", () => { render(); renderMag(); });
+
+      ["mag-char", "mag-curve", "mag-trace", "mag-grid"].forEach((id) =>
+        $(id).addEventListener("input", renderMag));
+      renderMag();
+    } catch (err) {
+      $("loading").textContent = "failed: " + (err && err.message || err);
+      throw err;
+    }
+  }
+
+  boot();
+})();
+</script>
+</body>
+</html>
