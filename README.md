@@ -198,5 +198,12 @@ first column, then four aligned columns of names per testament (the twelve minor
 **Step 2 — a reference.** `Enter` on a `BOOK C:V` string (`MATT 1:1`, `1 JOHN 4 8`, `PSALM 23`;
 `:`, `.` or spaces between the numbers, book prefixes and the usual abbreviations accepted) parses it
 against `window.KJV_BOOKS`, opens that chapter in the reading view — four lines of the curved font,
-`↑`/`↓` to page, `Esc` or any keystroke back to the line — and lights that one book's indicator. A
-reference names exactly one book; several lit at once is what search will mean.
+`↑`/`↓` to page, `Esc` or any keystroke back to the line — and lights that one book's indicator.
+
+**Step 3 — a search.** Anything `Enter` cannot read as a reference is a search: split into words,
+matched whole-word against every verse (built once at load into a flat lowercase list), a verse
+counted only if it holds *all* the words — no `?`, that is the stemming wildcard of a later step. The
+screen shows the query, the verse and book totals, and the currently picked book with its hit count;
+the index below lights every book with a match. `←`/`→` walk those lit books (an inverted cursor
+cell), and `Enter` opens the first hit in the selected one — `Esc` from there steps back to the
+result list.
