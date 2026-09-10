@@ -245,7 +245,8 @@ section { margin-top: 36px; }
       <code>BOOK C:V</code> opens a passage · words find verses holding all of them ·
       <code>?</code> stems, <code>??</code> adds synonyms then stems ·
       <kbd>&larr;</kbd><kbd>&rarr;</kbd> pick a lit book, <kbd>Enter</kbd> opens it ·
-      <kbd>Esc</kbd> or any key steps back
+      while reading, <kbd>&larr;</kbd><kbd>&rarr;</kbd> move through matching verses,
+      <kbd>&uarr;</kbd><kbd>&darr;</kbd> scroll · <kbd>Esc</kbd> returns to results
     </p>
   </section>
 
@@ -342,7 +343,7 @@ section { margin-top: 36px; }
     vocab: [],                 // every distinct lowercase word, sorted — the stem prefix range
     synGroup: new Map(),       // word -> its synonym group (incl. itself)
     read: { bookIdx: 0, chapterIdx: 0, verse: 1, lines: [], lineVerse: [], top: 0, fromResults: false },
-    results: null,             // { query, terms, hits, books, firstByBook, countByBook, sel }
+    results: null,             // { query, terms, hits, books, firstByBook, countByBook, sel, hitIndex }
     expand: null,              // { query, terms, animated, ai, wi, timer } during the "expanding" animation
   };
 
@@ -390,22 +391,40 @@ section { margin-top: 36px; }
   }
 
   // Wrap a chapter's verses, each prefixed with its number, into display lines.
-  function wrapChapter(verses) {
-    const lines = [], lineVerse = [];
+  function wrapChapter(verses, matchPattern) {
+    const lines = [], lineVerse = [], highlights = [];
     verses.forEach((vtext, i) => {
       const vn = i + 1;
-      let line = "";
-      for (const w of (vn + "  " + vtext).split(" ")) {
-        if (!line.length) { line = w; continue; }
-        if ((line + " " + w).length <= COLS) { line += " " + w; continue; }
-        lines.push(line); lineVerse.push(vn);
-        let rest = w;
-        while (rest.length > COLS) { lines.push(rest.slice(0, COLS)); lineVerse.push(vn); rest = rest.slice(COLS); }
-        line = rest;
+      const text = vn + "  " + vtext;
+      // Match before wrapping so punctuation and split words retain the same
+      // whole-word semantics as search. Verse numbers are never highlighted.
+      const mask = Array(text.length).fill(false);
+      if (matchPattern) {
+        for (const m of vtext.matchAll(matchPattern)) {
+          mask.fill(true, String(vn).length + 2 + m.index,
+            String(vn).length + 2 + m.index + m[0].length);
+        }
       }
-      if (line.length) { lines.push(line); lineVerse.push(vn); }
+      let line = "", marked = [], offset = 0;
+      const push = () => {
+        lines.push(line); lineVerse.push(vn); highlights.push(marked);
+        line = ""; marked = [];
+      };
+      for (const w of text.split(" ")) {
+        const wordMask = mask.slice(offset, offset + w.length);
+        offset += w.length + 1;
+        if (line.length && line.length + 1 + w.length > COLS) push();
+        if (line.length) { line += " "; marked.push(false); }
+        let rest = w, restMask = wordMask;
+        while (rest.length > COLS) {
+          line = rest.slice(0, COLS); marked = restMask.slice(0, COLS); push();
+          rest = rest.slice(COLS); restMask = restMask.slice(COLS);
+        }
+        line += rest; marked.push(...restMask);
+      }
+      if (line.length) push();
     });
-    return { lines, lineVerse };
+    return { lines, lineVerse, highlights };
   }
 
   // --- reference resolver -------------------------------------------
@@ -467,11 +486,15 @@ section { margin-top: 36px; }
     const chs = state.chapters && state.chapters[r.bookIdx];
     if (!chs || !chs.length) return false;
     const ci = Math.max(0, Math.min(chs.length - 1, r.chapter - 1));
-    const w = wrapChapter(chs[ci]);
+    const words = fromResults && state.results
+      ? [...new Set(state.results.terms.flatMap((t) => t.words))] : [];
+    const matchPattern = words.length
+      ? new RegExp("\\b(" + words.map(reEscape).join("|") + ")\\b", "gi") : null;
+    const w = wrapChapter(chs[ci], matchPattern);
     const idx = w.lineVerse.indexOf(r.verse);
     state.read = {
       bookIdx: r.bookIdx, chapterIdx: ci, verse: r.verse,
-      lines: w.lines, lineVerse: w.lineVerse,
+      lines: w.lines, lineVerse: w.lineVerse, highlights: w.highlights,
       top: idx >= 0 ? idx : 0,
       fromResults: !!fromResults,
     };
@@ -485,6 +508,17 @@ section { margin-top: 36px; }
   function toEntry(seed) {
     state.mode = "entry";
     state.entry = seed || "";
+  }
+
+  // Open a hit in canonical verse order, keeping the book chooser in sync.
+  function openSearchHit(index) {
+    const R = state.results;
+    if (!R || index < 0 || index >= R.hits.length) return;
+    const h = R.hits[index];
+    R.hitIndex = index;
+    R.sel = R.books.indexOf(h.b);
+    openReference({ bookIdx: h.b, chapter: h.c + 1, verse: h.v + 1 }, true);
+    litBooks(R.books, R.sel);
   }
 
   // --- search ----------------------------------------------------
@@ -585,7 +619,7 @@ section { margin-top: 36px; }
     }
 
     const { books, firstByBook, countByBook } = tally(hits);
-    state.results = { query: query.toUpperCase(), terms, hits, books, firstByBook, countByBook, sel: 0 };
+    state.results = { query: query.toUpperCase(), terms, hits, books, firstByBook, countByBook, sel: 0, hitIndex: -1 };
     state.mode = "results";
     state.entry = "";
     litBooks(books, books.length ? 0 : null);
@@ -623,7 +657,22 @@ section { margin-top: 36px; }
     if (state.mode === "read") {
       const view = state.read.lines.slice(state.read.top, state.read.top + READ_ROWS);
       view.forEach((line, r) => {
-        LcdFont.drawText(cx, line, padX, padY + r * CH * u, u, { s, ink });
+        const y = padY + r * CH * u;
+        const marked = state.read.highlights[state.read.top + r];
+        // Paint contiguous inverse cells, then the original curved glyphs.
+        for (let c = 0; c < line.length;) {
+          const inverse = marked[c];
+          let end = c + 1;
+          while (end < line.length && marked[end] === inverse) end++;
+          const x = padX + c * CW * u;
+          if (inverse) {
+            cx.fillStyle = ink;
+            cx.fillRect(x - u * .5, y - u * .5, (end - c) * CW * u, (GH + 1) * u);
+          }
+          LcdFont.drawText(cx, line.slice(c, end), x, y, u,
+            { s, ink: inverse ? getCss("--lcd") : ink });
+          c = end;
+        }
       });
       return;
     }
@@ -717,6 +766,10 @@ section { margin-top: 36px; }
     if (state.mode === "read") {
       if (e.key === "ArrowDown" || e.key === "PageDown") { state.read.top += READ_ROWS; clampReadTop(); }
       else if (e.key === "ArrowUp" || e.key === "PageUp") { state.read.top -= READ_ROWS; clampReadTop(); }
+      else if (state.read.fromResults && state.results &&
+               (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
+        openSearchHit(state.results.hitIndex + (e.key === "ArrowRight" ? 1 : -1));
+      }
       else if (e.key === "Enter") {
         if (state.read.fromResults && state.results) { state.mode = "results"; litBooks(state.results.books, state.results.sel); }
         else { toEntry(""); litBooks([], null); }
@@ -737,8 +790,7 @@ section { margin-top: 36px; }
       } else if (R && R.books.length && e.key === "Enter") {
         const b = R.books[R.sel];
         const h = R.firstByBook.get(b);
-        openReference({ bookIdx: b, chapter: h.c + 1, verse: h.v + 1 }, true);
-        litBooks(R.books, null);
+        openSearchHit(R.hits.indexOf(h));
       } else if (!restart(e)) {
         return;
       }
