@@ -69,6 +69,8 @@ h1 {
 
 .hr { height: 1px; background: var(--rule); border: 0; margin: 30px 0; }
 section { margin-top: 36px; }
+.device-stage { margin-top: 28px; }
+.explanation { margin-top: 38px; }
 
 .stage-label {
   display: flex;
@@ -99,7 +101,9 @@ section { margin-top: 36px; }
   border-radius: 18px 18px 20px 20px;
   padding: 18px 18px 12px;
   box-shadow: 0 30px 60px -30px #000, inset 0 1px 0 #3b4560;
-  max-width: 900px;
+  width: 100%;
+  max-width: 1020px;
+  margin: 0 auto;
 }
 
 .lcd-frame {
@@ -194,30 +198,8 @@ section { margin-top: 36px; }
     display drawn in the dot matrix of <a href="https://patents.google.com/patent/US4982181A/en">US&nbsp;4,982,181</a>,
     driven by the same King James text.
   </p>
-  <p class="thesis">
-    <b>Steps 1&ndash;4 &mdash; home screen, reference, search, the question marks.</b> Click the glass
-    and type onto the entry line, upper&#8209;cased the way the keyboard fed it. Below is the book index
-    from the patent drawing &mdash; the black <b>OLD</b> and <b>NEW</b> tabs, thirty&#8209;nine names in
-    four columns on the left with the twelve minor prophets beneath the central open book,
-    and twenty&#8209;seven names on the right.
-  </p>
-  <p class="thesis">
-    <code>MATT 1:1</code> then <kbd>Enter</kbd> opens the passage and lights that one book. Anything
-    else is a <b>search</b> &mdash; <code>FAITH HOPE CHARITY</code> finds the verses holding every word
-    and lights every book they fall in; the arrow keys walk the lit books and <kbd>Enter</kbd> jumps to
-    the first hit in the one you land on.
-  </p>
-  <p class="thesis">
-    A trailing <code>?</code> stems the word &mdash; <code>LOVE?</code> also catches <i>loved</i>,
-    <i>lovest</i>, <i>loveth</i>. A double <code>??</code> first swaps in the on&#8209;device synonym
-    group, then stems each of those, so <code>LOVE??</code> reaches <i>charity</i> and
-    <i>affection</i> and their forms. As on the cartridge, each marked word is played out on screen
-    &mdash; an arrow under the mark, the growing list beneath it &mdash; before the results settle.
-  </p>
 
-  <hr class="hr">
-
-  <section>
+  <section class="device-stage">
     <div class="stage-label">
       <span class="num">04</span> The question marks
       <span class="hint">try <code>LOVE?</code> or <code>LOVE?? MERCY?</code> · Enter</span>
@@ -247,6 +229,30 @@ section { margin-top: 36px; }
       <kbd>&larr;</kbd><kbd>&rarr;</kbd> pick a lit book, <kbd>Enter</kbd> opens it ·
       while reading, <kbd>&larr;</kbd><kbd>&rarr;</kbd> move through matching verses,
       <kbd>&uarr;</kbd><kbd>&darr;</kbd> scroll · <kbd>Esc</kbd> returns to results
+    </p>
+  </section>
+
+  <section class="explanation">
+    <hr class="hr">
+    <p class="thesis">
+      <b>Steps 1&ndash;4 &mdash; home screen, reference, search, the question marks.</b> Click the glass
+      and type onto the entry line, upper&#8209;cased the way the keyboard fed it. Below is the book index
+      from the patent drawing &mdash; the black <b>OLD</b> and <b>NEW</b> tabs, thirty&#8209;nine names in
+      four columns on the left with the twelve minor prophets beneath the central open book,
+      and twenty&#8209;seven names on the right.
+    </p>
+    <p class="thesis">
+      <code>MATT 1:1</code> then <kbd>Enter</kbd> opens the passage and lights that one book. Anything
+      else is a <b>search</b> &mdash; <code>FAITH HOPE CHARITY</code> finds the verses holding every word
+      and lights every book they fall in; the arrow keys walk the lit books and <kbd>Enter</kbd> jumps to
+      the first hit in the one you land on.
+    </p>
+    <p class="thesis">
+      A trailing <code>?</code> stems the word &mdash; <code>LOVE?</code> also catches <i>loved</i>,
+      <i>lovest</i>, <i>loveth</i>. A double <code>??</code> first swaps in the on&#8209;device synonym
+      group, then stems each of those, so <code>LOVE??</code> reaches <i>charity</i> and
+      <i>affection</i> and their forms. As on the cartridge, each marked word is played out on screen
+      &mdash; an arrow under the mark, the growing list beneath it &mdash; before the results settle.
     </p>
   </section>
 
