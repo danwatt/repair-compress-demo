@@ -36,6 +36,7 @@ Sources:
 | `lcd-font.js`                                   | The curved US 4,982,181 font and painter, shared by two demos.      |
 | `kjv.csv`                                       | Full King James Bible source data, one verse per row.               |
 | `kjv-data.js` / `kjv-preencoded.js`             | Generated browser data used by the demo.                            |
+| `kjv-thesaurus.js`                             | Precomputed synonym groups; the `??` source for `demo-device.html`. |
 | `build-kjv-data.js` / `build-kjv-preencoded.ts` | Scripts that regenerate the browser data.                           |
 | `mise.toml`                                     | Pinned Node version and development tasks.                          |
 
@@ -202,8 +203,16 @@ against `window.KJV_BOOKS`, opens that chapter in the reading view — four line
 
 **Step 3 — a search.** Anything `Enter` cannot read as a reference is a search: split into words,
 matched whole-word against every verse (built once at load into a flat lowercase list), a verse
-counted only if it holds *all* the words — no `?`, that is the stemming wildcard of a later step. The
-screen shows the query, the verse and book totals, and the currently picked book with its hit count;
-the index below lights every book with a match. `←`/`→` walk those lit books (an inverted cursor
-cell), and `Enter` opens the first hit in the selected one — `Esc` from there steps back to the
-result list.
+counted only if it holds *all* the words. The screen shows the query, the verse and book totals, and
+the currently picked book with its hit count; the index below lights every book with a match. `←`/`→`
+walk those lit books (an inverted cursor cell), and `Enter` opens the first hit in the selected one —
+`Esc` from there steps back to the result list.
+
+**Step 4 — the question marks.** A trailing `?` stems the word: every vocabulary form that starts with
+it (the front-coded prefix range the cartridge's lexicon walked — `love?` → `loved`, `lovest`,
+`loveth`, and also `lovely`, `lover`). `??` first swaps in the word's group from the embedded
+thesaurus (`kjv-thesaurus.js`, the same 239 groups as [demo-search.html](demo-search.html)), then
+stems each of those. A term matches a verse if *any* of its forms is present. Each marked word is
+played out the way the hardware did it — an up-arrow under the mark on the query line, the growing
+list of forms one every 200&nbsp;ms on the line below — and only then does the search run. Any key
+skips to the result, `Esc` abandons it.

@@ -134,63 +134,24 @@ section { margin-top: 36px; }
 
 /* book index --------------------------------------------------------- */
 
-.books {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 12px 18px 16px;
-  border-top: 1px solid #00000022;
-}
-.tblock { display: flex; flex-direction: column; gap: 10px; }
-
-.tgrid, .mgrid {
-  display: grid;
-  grid-auto-flow: column;
-  column-gap: 12px;
-}
-.tgrid { grid-template-columns: repeat(4, max-content); grid-template-rows: repeat(7, 13px); }
-.mgrid { grid-template-columns: repeat(3, max-content); grid-template-rows: repeat(4, 13px); }
-
-.bk, .tlabel {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  height: 13px;
+/* One coordinate system keeps the patent's three groups aligned at any size. */
+.books { padding: 0 14px 12px; }
+.book-index { display: block; width: 100%; height: auto; overflow: visible; }
+.book-index text {
   font-family: var(--pixel);
-  font-size: 7px;
-  letter-spacing: .04em;
-  line-height: 1;
-  white-space: nowrap;
+  font-size: 13px;
+  letter-spacing: -.35px;
 }
-.bk { color: var(--lcd-dim); }
-.bk i {
-  width: 6px; height: 6px; flex: 0 0 auto;
-  border: 1px solid #2b331c55;
-  background: transparent;
-  border-radius: 1px;
-}
-.bk.on { color: var(--lcd-ink); }
-.bk.on i { background: var(--lcd-ink); border-color: var(--lcd-ink); }
-
-/* arrow-key selection in the results view — inverted, like a cursor cell */
-.bk.sel { background: var(--lcd-ink); color: var(--lcd); }
-.bk.sel i { background: var(--lcd); border-color: var(--lcd); }
-
-.tlabel {
-  background: var(--lcd-ink);
-  color: var(--lcd);
-  font-weight: 700;
-  letter-spacing: .18em;
-  padding: 0 4px;
-}
-
-.spine {
-  color: #2b331c66;
-  flex: 0 0 auto;
-  align-self: center;
-}
-.spine svg { display: block; width: 44px; height: 32px; }
+.bk { fill: var(--lcd-dim); }
+.bk .selection { fill: transparent; }
+.bk.on { fill: var(--lcd-ink); }
+/* Arrow-key selection in the results view, inverted like a cursor cell. */
+.bk.sel .selection { fill: var(--lcd-ink); }
+.bk.sel text { fill: var(--lcd); }
+.tlabel rect { fill: var(--lcd-ink); }
+.tlabel text { fill: var(--lcd); font-size: 10px; letter-spacing: 1px; }
+.index-divider { fill: var(--lcd-ink); }
+.spine { fill: none; stroke: var(--lcd-ink); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
 
 .markings {
   display: flex;
@@ -211,9 +172,11 @@ section { margin-top: 36px; }
 }
 
 @media (max-width: 720px) {
-  .books { flex-direction: column; gap: 4px; }
-  .spine { margin: 6px 0; align-self: flex-start; }
-  .bk, .tlabel { font-size: 8px; }
+  .device { padding: 12px 10px 10px; }
+  .lcd-frame { padding: 8px; }
+  .books { padding: 0 6px 8px; }
+  .markings .title { font-size: 9px; }
+  .markings .ver { font-size: 6px; }
 }
 </style>
 </head>
@@ -232,24 +195,32 @@ section { margin-top: 36px; }
     driven by the same King James text.
   </p>
   <p class="thesis">
-    <b>Steps 1&ndash;3 &mdash; home screen, a reference, a search.</b> Click the glass and type onto the
-    entry line, upper&#8209;cased the way the keyboard fed it. Below is the book index from the patent
-    drawing &mdash; the black <b>OLD</b> and <b>NEW</b> tabs, thirty&#8209;nine names in four columns on
-    the left, twenty&#8209;seven on the right, an open book between.
+    <b>Steps 1&ndash;4 &mdash; home screen, reference, search, the question marks.</b> Click the glass
+    and type onto the entry line, upper&#8209;cased the way the keyboard fed it. Below is the book index
+    from the patent drawing &mdash; the black <b>OLD</b> and <b>NEW</b> tabs, thirty&#8209;nine names in
+    four columns on the left with the twelve minor prophets beneath the central open book,
+    and twenty&#8209;seven names on the right.
   </p>
   <p class="thesis">
     <code>MATT 1:1</code> then <kbd>Enter</kbd> opens the passage and lights that one book. Anything
-    that is not a reference is a <b>search</b>: <code>FAITH HOPE CHARITY</code> finds the verses that
-    hold every word, and lights every book one turns up in. The arrow keys walk those lit books;
-    <kbd>Enter</kbd> jumps to the first hit in the one you land on.
+    else is a <b>search</b> &mdash; <code>FAITH HOPE CHARITY</code> finds the verses holding every word
+    and lights every book they fall in; the arrow keys walk the lit books and <kbd>Enter</kbd> jumps to
+    the first hit in the one you land on.
+  </p>
+  <p class="thesis">
+    A trailing <code>?</code> stems the word &mdash; <code>LOVE?</code> also catches <i>loved</i>,
+    <i>lovest</i>, <i>loveth</i>. A double <code>??</code> first swaps in the on&#8209;device synonym
+    group, then stems each of those, so <code>LOVE??</code> reaches <i>charity</i> and
+    <i>affection</i> and their forms. As on the cartridge, each marked word is played out on screen
+    &mdash; an arrow under the mark, the growing list beneath it &mdash; before the results settle.
   </p>
 
   <hr class="hr">
 
   <section>
     <div class="stage-label">
-      <span class="num">03</span> Search
-      <span class="hint">reference or words · Enter · arrows pick a book</span>
+      <span class="num">04</span> The question marks
+      <span class="hint">try <code>LOVE?</code> or <code>LOVE?? MERCY?</code> · Enter</span>
     </div>
 
     <div class="device">
@@ -271,9 +242,10 @@ section { margin-top: 36px; }
     </div>
 
     <p class="underhint">
-      reference &rarr; <code>BOOK C:V</code> · words &rarr; verses with every word ·
+      <code>BOOK C:V</code> opens a passage · words find verses holding all of them ·
+      <code>?</code> stems, <code>??</code> adds synonyms then stems ·
       <kbd>&larr;</kbd><kbd>&rarr;</kbd> pick a lit book, <kbd>Enter</kbd> opens it ·
-      in a passage <kbd>&uarr;</kbd><kbd>&darr;</kbd> scroll · <kbd>Esc</kbd> steps back
+      <kbd>Esc</kbd> or any key steps back
     </p>
   </section>
 
@@ -302,34 +274,55 @@ section { margin-top: 36px; }
   // columns of seven rows, filled top-to-bottom then left-to-right; the first
   // cell of column one is the black OLD / NEW testament tab, so column one
   // carries six book names and the other three carry seven. The twelve minor
-  // prophets sit below the OT grid in their own 3x4 block. Values are book
+  // prophets sit below the central open book in their own 3x4 block. Values are book
   // indices (window.KJV_BOOKS[i]); a string is a testament tab.
   const range = (a, b) => Array.from({ length: b - a + 1 }, (_, i) => a + i);
   const OT_COLS = [["OLD", ...range(0, 5)], range(6, 12), range(13, 19), range(20, 26)];
   const MINOR   = [range(27, 30), range(31, 34), range(35, 38)];
   const NT_COLS = [["NEW", ...range(39, 44)], range(45, 51), range(52, 58), range(59, 65)];
 
+  // SVG coordinates follow the face-on proportions of FIG. 1, without its
+  // perspective skew. The center block shares the bottom four index rows.
   const SPINE = `
-    <svg viewBox="0 0 40 30" aria-hidden="true">
-      <path d="M20 6 C15 2 6 2 2 5 L2 25 C6 22 15 22 20 26 C25 22 34 22 38 25 L38 5 C34 2 25 2 20 6 Z"
-            fill="none" stroke="currentColor" stroke-width="1.4"/>
-      <line x1="20" y1="6" x2="20" y2="26" stroke="currentColor" stroke-width="1.4"/>
-    </svg>`;
+    <g class="spine" aria-hidden="true" transform="translate(312 13)">
+      <path d="M48 13 C37 3 17 3 3 9 L3 57 C19 52 35 53 48 61
+               C61 53 77 52 93 57 L93 9 C79 3 59 3 48 13 Z"/>
+      <path d="M48 13 L48 61 M9 7 L9 51 C23 48 37 51 48 57
+               M87 7 L87 51 C73 48 59 51 48 57"/>
+      <path d="M16 5 L16 46 C28 45 39 49 48 55
+               M80 5 L80 46 C68 45 57 49 48 55"/>
+      <path d="M25 5 L25 43 C34 44 42 48 48 53
+               M71 5 L71 43 C62 44 54 48 48 53"/>
+      <path d="M43 9 L43 47 M53 9 L53 47"/>
+    </g>`;
 
-  function cell(v) {
-    return typeof v === "string"
-      ? `<span class="tlabel">${v}</span>`
-      : `<span class="bk" data-i="${v}"><i></i>${ABBR[v]}</span>`;
+  function cell(v, x, y, width) {
+    if (typeof v === "string") {
+      return `<g class="tlabel" transform="translate(${x} ${y})" aria-label="${v} testament">
+        <rect y="2" width="42" height="13"/>
+        <text x="4" y="12">${v}</text></g>`;
+    }
+    return `<g class="bk" data-i="${v}" transform="translate(${x} ${y})">
+      <rect class="selection" x="-2" width="${width}" height="18"/>
+      <text y="14">${ABBR[v]}</text></g>`;
   }
-  function grid(cols, cls) {
-    return `<div class="${cls}">${cols.flat().map(cell).join("")}</div>`;
+
+  function grid(cols, x, y, step) {
+    return cols.map((col, c) => col.map((v, r) =>
+      cell(v, x + c * step, y + r * 19, step - 3)).join("")).join("");
   }
 
   function buildIndex() {
-    $("books").innerHTML =
-      `<div class="tblock">${grid(OT_COLS, "tgrid")}${grid(MINOR, "mgrid")}</div>` +
-      `<div class="spine">${SPINE}</div>` +
-      `<div class="tblock">${grid(NT_COLS, "tgrid")}</div>`;
+    $("books").innerHTML = `<svg class="book-index" viewBox="0 0 720 166"
+      role="group" aria-label="Bible book index">
+      <path class="index-divider" aria-hidden="true"
+        d="M8 4 C87 30 190 -6 280 22 C195 4 89 38 8 8 Z
+           M440 22 C530 -6 633 30 712 4 L712 8 C631 38 525 4 440 22 Z"/>
+      ${grid(OT_COLS, 8, 28, 67)}
+      ${SPINE}
+      ${grid(MINOR, 291, 85, 48)}
+      ${grid(NT_COLS, 452, 28, 65)}
+    </svg>`;
   }
 
   // --- screen --------------------------------------------------------
@@ -339,15 +332,18 @@ section { margin-top: 36px; }
 
   const cv = $("entry"), cx = cv.getContext("2d");
   const state = {
-    mode: "entry",             // "entry" | "read" | "results"
+    mode: "entry",             // "entry" | "read" | "results" | "expanding"
     entry: "",
     cursorOn: true,
     focus: false,
     books: null,               // window.KJV_BOOKS
     chapters: null,            // book -> [ [verseText, ...], ... ]
     flat: null,                // every verse as { b, c, v, lower } in canonical order
+    vocab: [],                 // every distinct lowercase word, sorted — the stem prefix range
+    synGroup: new Map(),       // word -> its synonym group (incl. itself)
     read: { bookIdx: 0, chapterIdx: 0, verse: 1, lines: [], lineVerse: [], top: 0, fromResults: false },
-    results: null,             // { query, words, hits, books, firstByBook, countByBook, sel }
+    results: null,             // { query, terms, hits, books, firstByBook, countByBook, sel }
+    expand: null,              // { query, terms, animated, ai, wi, timer } during the "expanding" animation
   };
 
   function getCss(v) { return getComputedStyle(document.documentElement).getPropertyValue(v).trim(); }
@@ -493,32 +489,111 @@ section { margin-top: 36px; }
 
   // --- search ----------------------------------------------------
   const reEscape = (w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const EXPAND_MS = 200;   // pace of the on-screen expansion, per word
+  const EXPAND_CAP = 60;   // most forms one marked term contributes
 
-  // Every typed word must appear, whole-word, in the same verse. No `?` — that
-  // is the stemming wildcard, a later step. Books that hold a match get lit, in
-  // canonical order, and the first hit in each is remembered for the arrow keys.
-  function runSearch(query) {
-    const words = query.toLowerCase().split(/\s+/).filter((w) => /[a-z0-9]/.test(w));
-    if (!words.length || !state.flat) return;
-    const res = words.map((w) => new RegExp("\\b" + reEscape(w) + "\\b"));
-
-    const hits = [];
-    for (const row of state.flat) {
-      if (res.every((re) => re.test(row.lower))) hits.push(row);
+  // A query term. `marks`: 0 exact, 1 stem (`?`), 2+ synonyms then stem (`??`).
+  // `col` is where the mark sits in the raw query, for the arrow.
+  function parseQuery(text) {
+    const terms = [];
+    const re = /\S+/g;
+    let m;
+    while ((m = re.exec(text))) {
+      const raw = m[0];
+      const marks = (raw.match(/\?+$/) || [""])[0].length;
+      const base = raw.slice(0, raw.length - marks).toLowerCase();
+      if (!/[a-z0-9]/.test(base)) continue;
+      terms.push({ raw: raw.toUpperCase(), base, marks, col: m.index + base.length });
     }
+    return terms.slice(0, 7);
+  }
 
+  // Stem: every vocabulary word that starts with `root` (the front-coded prefix
+  // range the cartridge's lexicon walked). `??` first swaps in the synonym
+  // group, keeping group order so the animation shows each synonym's forms in a
+  // run.
+  function expandTerm(t) {
+    if (t.marks === 0) return [t.base];
+    const roots = t.marks >= 2 ? (state.synGroup.get(t.base) || [t.base]) : [t.base];
+    const seen = new Set(), out = [];
+    for (const root of roots) {
+      for (const w of state.vocab) {
+        if (!w.startsWith(root) || seen.has(w)) continue;
+        seen.add(w); out.push(w);
+        if (out.length >= EXPAND_CAP) return out;
+      }
+    }
+    return out;
+  }
+
+  function tally(hits) {
     const books = [], firstByBook = new Map(), countByBook = new Map();
     for (const h of hits) {
       if (!firstByBook.has(h.b)) { books.push(h.b); firstByBook.set(h.b, h); }
       countByBook.set(h.b, (countByBook.get(h.b) || 0) + 1);
     }
+    return { books, firstByBook, countByBook };
+  }
 
-    state.results = { query: query.toUpperCase(), words, hits, books, firstByBook, countByBook, sel: 0 };
+  // Run the query: reference first, else parse + expand. Marked terms play out
+  // on screen before the results land; a plain query goes straight through.
+  function beginSearch(query) {
+    const ref = resolveRef(query);
+    if (ref && openReference(ref, false)) { litBooks([ref.bookIdx], null); return; }
+
+    const terms = parseQuery(query);
+    if (!terms.length || !state.flat) return;
+    terms.forEach((t) => { t.words = expandTerm(t); });
+
+    const animated = terms.filter((t) => t.marks >= 1);
+    if (animated.length) {
+      state.mode = "expanding";
+      state.expand = { query: query.toUpperCase(), terms, animated, ai: 0, wi: -1, timer: 0 };
+      render();
+      state.expand.timer = setTimeout(expandTick, EXPAND_MS);
+    } else {
+      finishSearch(query, terms);
+    }
+  }
+
+  function expandTick() {
+    const E = state.expand;
+    if (!E) return;
+    const term = E.animated[E.ai];
+    E.wi++;
+    if (E.wi >= term.words.length) {
+      E.ai++;
+      E.wi = -1;
+      if (E.ai >= E.animated.length) { finishSearch(E.query, E.terms); return; }
+    }
+    render();
+    E.timer = setTimeout(expandTick, EXPAND_MS);
+  }
+
+  function finishSearch(query, terms) {
+    if (state.expand) { clearTimeout(state.expand.timer); state.expand = null; }
+
+    let hits;
+    if (terms.some((t) => !t.words.length)) {
+      hits = [];
+    } else {
+      const res = terms.map((t) => new RegExp("\\b(" + t.words.map(reEscape).join("|") + ")\\b"));
+      hits = [];
+      for (const row of state.flat) {
+        if (res.every((re) => re.test(row.lower))) hits.push(row);
+      }
+    }
+
+    const { books, firstByBook, countByBook } = tally(hits);
+    state.results = { query: query.toUpperCase(), terms, hits, books, firstByBook, countByBook, sel: 0 };
     state.mode = "results";
     state.entry = "";
     litBooks(books, books.length ? 0 : null);
     render();
   }
+
+  // --- layout + render ------------------------------------------
+  function rows() { return state.mode === "entry" ? ENTRY_ROWS : READ_ROWS; }
 
   // --- layout + render ------------------------------------------
   function rows() { return state.mode === "entry" ? ENTRY_ROWS : READ_ROWS; }
@@ -550,6 +625,21 @@ section { margin-top: 36px; }
       view.forEach((line, r) => {
         LcdFont.drawText(cx, line, padX, padY + r * CH * u, u, { s, ink });
       });
+      return;
+    }
+
+    if (state.mode === "expanding") {
+      const E = state.expand;
+      const term = E.animated[E.ai];
+      LcdFont.drawText(cx, E.query.slice(0, COLS), padX, padY, u, { s, ink });
+      // an up-arrow under the mark of the term being expanded
+      const col = Math.min(term.col, COLS - 1);
+      LcdFont.drawText(cx, "^", padX + col * CW * u, padY + CH * u, u, { s, ink });
+      if (E.wi >= 0) {
+        const word = term.words[E.wi] || "";
+        LcdFont.drawText(cx, ("> " + word.toUpperCase()).slice(0, COLS), padX, padY + 2 * CH * u, u, { s, ink });
+        LcdFont.drawText(cx, (E.wi + 1) + "/" + term.words.length, padX, padY + 3 * CH * u, u, { s, ink });
+      }
       return;
     }
 
@@ -593,7 +683,7 @@ section { margin-top: 36px; }
   }
 
   // --- input ---------------------------------------------------------
-  const ACCEPT = /^[a-z0-9 :'\-]$/i;
+  const ACCEPT = /^[a-z0-9 :'?\-]$/i;
 
   // Any typed character abandons the current view and starts a fresh entry line.
   function restart(e) {
@@ -604,6 +694,7 @@ section { margin-top: 36px; }
 
   function onKey(e) {
     if (e.key === "Escape") {
+      if (state.expand) { clearTimeout(state.expand.timer); state.expand = null; }
       if (state.mode === "read" && state.read.fromResults && state.results) {
         state.mode = "results";
         litBooks(state.results.books, state.results.sel);
@@ -613,6 +704,13 @@ section { margin-top: 36px; }
         state.entry = "";
       }
       e.preventDefault(); state.cursorOn = true; render();
+      return;
+    }
+
+    // during the expansion animation any other key jumps straight to the results
+    if (state.mode === "expanding") {
+      finishSearch(state.expand.query, state.expand.terms);
+      e.preventDefault();
       return;
     }
 
@@ -654,9 +752,7 @@ section { margin-top: 36px; }
     } else if (e.key === "Enter") {
       const q = state.entry.trim();
       if (q) {
-        const r = resolveRef(q);
-        if (r && openReference(r, false)) { litBooks([r.bookIdx], null); e.preventDefault(); return; }
-        runSearch(q);
+        beginSearch(q);
         e.preventDefault();
         return;
       }
@@ -693,11 +789,21 @@ section { margin-top: 36px; }
       if (!window.KJV_TEXT) await load("kjv-data.js");
       state.books = window.KJV_BOOKS;
       state.chapters = parseCorpus(window.KJV_TEXT, state.books);
-      const flat = [];
+
+      const flat = [], vocab = new Set();
       state.chapters.forEach((chs, b) => chs.forEach((verses, c) => verses.forEach((t, v) => {
-        flat.push({ b, c, v, lower: t.toLowerCase() });
+        const lower = t.toLowerCase();
+        flat.push({ b, c, v, lower });
+        for (const word of lower.split(/[^a-z0-9']+/)) if (word) vocab.add(word);
       })));
       state.flat = flat;
+      state.vocab = [...vocab].sort();
+
+      if (!window.KJV_THESAURUS) await load("kjv-thesaurus.js");
+      for (const group of (window.KJV_THESAURUS || [])) {
+        const lc = group.map((w) => w.toLowerCase());
+        for (const w of lc) state.synGroup.set(w, lc);
+      }
     } catch (e) {
       // corpus unavailable — the entry line still works, lookups just no-op
     }
