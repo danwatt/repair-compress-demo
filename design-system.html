@@ -1,0 +1,429 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The design system — RPR1 demos</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Silkscreen:wght@400;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="design-system.css">
+<style>
+/* Particular to the catalogue: the swatch grids, and the frames that hold a
+   live component next to the selector that makes it. Everything being shown
+   is design-system.css, untouched. */
+
+.swatches { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 10px; }
+.swatch {
+  border: 1px solid var(--rule); border-radius: var(--radius);
+  background: var(--panel); overflow: hidden;
+}
+.swatch .chipface { height: 46px; border-bottom: 1px solid var(--rule); }
+.swatch .name { display: block; padding: 6px 8px 2px; color: var(--ink); font-size: var(--fs-fine); }
+.swatch .value { display: block; padding: 0 8px 7px; color: var(--ink-soft); font-size: var(--fs-micro); }
+
+.scale { display: grid; gap: 8px; }
+.scale-row { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; }
+.scale-row .token { flex: 0 0 110px; color: var(--ink-soft); font-size: var(--fs-fine); }
+.scale-row .size { flex: 0 0 52px; color: var(--hot); font-size: var(--fs-fine); font-variant-numeric: tabular-nums; }
+
+/* A component, then the markup that made it. */
+.specimen { margin-bottom: 26px; }
+.specimen > .what { margin: 0 0 8px; }
+.specimen > .why { margin: 0 0 10px; max-width: var(--measure); color: var(--ink-soft); font-size: var(--fs-small); }
+.specimen pre {
+  margin: 10px 0 0; padding: 10px 12px; border: 1px solid var(--rule); border-radius: var(--radius);
+  background: var(--ground); color: var(--ink-soft); font: var(--fs-small)/1.7 var(--mono);
+  overflow-x: auto;
+}
+.specimen pre b { color: var(--dmg-4); font-weight: 500; }
+
+/* The strip cells here stand for nothing, so they get flat demonstration fills. */
+.demo-cell { width: 18px; background: var(--sym-word); }
+.demo-cell.esc { width: 8px; background: var(--sym-esc); }
+.demo-cell.rule { background: var(--sym-rule); }
+.demo-cell.ramp { background: color-mix(in oklab, var(--sym-rule-hi) 60%, var(--sym-rule-lo)); }
+
+.rules { max-width: var(--measure); padding-left: 18px; color: var(--ink-soft); }
+.rules li { margin-bottom: 8px; }
+.rules b { color: var(--ink); font-weight: 500; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <p class="eyebrow">design system · one stylesheet, seven pages</p>
+  <h1>The parts these pages are made of</h1>
+  <p class="thesis">
+    The six demo pages were written one at a time, and each carried its own copy of the same hundred
+    lines of CSS. The copies drifted — four paddings for one button, four measures for one paragraph,
+    three gaps above a section — so the pages looked related rather than identical. Everything shared
+    now lives in <code>design-system.css</code>: tokens first, then primitives built from them. This
+    page is the catalogue, and it is built from nothing else.
+  </p>
+  <p class="thesis">
+    A page links the stylesheet, sets the few sizes it wants to tune, and adds only what is genuinely
+    its own — a stream strip's cells, a device's chrome. Page rules come after the system in the
+    cascade, so an override is always one line in the page that needs it.
+  </p>
+
+  <hr class="hr">
+
+  <section>
+    <div class="stage-label"><span class="num">01</span> <span>Colour</span>
+      <span class="hint">every value below is read back out of the stylesheet</span></div>
+
+    <p class="note">Surfaces and ink. Two surfaces only — the ground everything sits on, and the panel
+      that lifts a region off it — separated by a one-pixel rule.</p>
+    <div class="swatches" id="sw-surface"></div>
+
+    <p class="note">The blue ramp. <code>--dmg-4</code> is the reading blue for figures, links and
+      headings; <code>--dmg-3</code> labels; the two darker steps are fills.</p>
+    <div class="swatches" id="sw-blue"></div>
+
+    <p class="note">One accent. <code>--hot</code> marks the thing to act on or look at — the current
+      tab, the focus ring, the primary button, the number carrying the point. Using it for anything
+      else is how a page stops having a focal point.</p>
+    <div class="swatches" id="sw-hot"></div>
+
+    <p class="note">Status, and the meaning colours: one hue per kind of thing in an encoded stream,
+      so a cell in a strip, its swatch in a legend and its row in a table all agree.</p>
+    <div class="swatches" id="sw-sym"></div>
+
+    <p class="note">Hardware. The emulated Franklin unit: grey-green glass in a dark case.</p>
+    <div class="swatches" id="sw-lcd"></div>
+  </section>
+
+  <section>
+    <div class="stage-label"><span class="num">02</span> <span>Type</span>
+      <span class="hint">two faces, eight sizes</span></div>
+    <p class="note">Silkscreen is a label face: eyebrows, headings, stage labels, tab names, the
+      numeral badge on a step. It never sets running text. Everything else is IBM Plex Mono, because
+      every page is ultimately about bytes in rows.</p>
+    <div class="panel">
+      <div class="scale" id="type-scale"></div>
+    </div>
+  </section>
+
+  <section>
+    <div class="stage-label"><span class="num">03</span> <span>Metrics</span>
+      <span class="hint">the tokens a page is expected to set</span></div>
+    <p class="note">A page overrides these on <code>:root</code> rather than restating the rule that
+      uses them. Everything else — the radius, the section rhythm, the page measure — is the same
+      everywhere by design.</p>
+    <div class="table-wrap">
+      <table id="metrics"></table>
+    </div>
+  </section>
+
+  <section>
+    <div class="stage-label"><span class="num">04</span> <span>Surfaces and frame</span></div>
+
+    <div class="specimen">
+      <p class="what"><b>Panel.</b></p>
+      <p class="why">One step up off the ground, for a region that belongs together: a set of knobs,
+        a codec's column, a chart and its note.</p>
+      <div class="panel">
+        <div class="codec-head"><h3>RPR1</h3><span class="sub">Re-Pair over words, byte-framed</span></div>
+        <p class="note" style="margin:0">A panel with a codec head on it.</p>
+      </div>
+      <pre>&lt;div class="<b>panel</b>"&gt;
+  &lt;div class="<b>codec-head</b>"&gt;&lt;h3&gt;RPR1&lt;/h3&gt;&lt;span class="sub"&gt;…&lt;/span&gt;&lt;/div&gt;
+&lt;/div&gt;</pre>
+    </div>
+
+    <div class="specimen">
+      <p class="what"><b>Readout.</b></p>
+      <p class="why">Where a page answers back after you touch something: what the cell you clicked
+        turned out to be. Blue for the value, hot for the part that matters.</p>
+      <div class="readout">Token <b>#1842</b> at <span class="hot">0x0a3c</span> expands to
+        <b>7 words</b> — <span class="hd">and the LORD said unto</span></div>
+    </div>
+
+    <div class="specimen">
+      <p class="what"><b>Stage label.</b></p>
+      <p class="why">Numbered steps in the argument, with an aside pushed to the right edge.</p>
+      <div class="stage-label"><span class="num">07</span> <span>What it cost</span>
+        <span class="hint">4.1 MB in, 1.2 MB out</span></div>
+    </div>
+  </section>
+
+  <section>
+    <div class="stage-label"><span class="num">05</span> <span>Controls</span></div>
+
+    <div class="specimen">
+      <p class="what"><b>Buttons.</b></p>
+      <p class="why">Outlined by default. <code>.primary</code> and <code>.on</code> take the accent
+        and are the one thing on a page wearing it; <code>.quiet</code> steps back to a suggestion;
+        <code>.small</code> is the size that sits in a row of controls.</p>
+      <div class="actions">
+        <button type="button">Encode</button>
+        <button type="button" class="primary">Run</button>
+        <button type="button" class="on">Trace on</button>
+        <button type="button" class="quiet small">faith hope charity</button>
+        <button type="button" disabled>Waiting</button>
+      </div>
+      <pre>&lt;button class="<b>primary</b>"&gt;Run&lt;/button&gt;  &lt;button class="<b>quiet small</b>"&gt;…&lt;/button&gt;</pre>
+    </div>
+
+    <div class="specimen">
+      <p class="what"><b>A row of controls</b> over the thing it drives.</p>
+      <p class="why">One class, <code>.controls</code>, for the strip paginators, the chase form and
+        the search bars that used to be four near-identical blocks.</p>
+      <div class="controls">
+        <button type="button">←</button>
+        <label class="position">Start byte
+          <input type="range" min="0" max="100" value="30" aria-label="start byte">
+          <input type="number" min="0" max="100" value="30" aria-label="start byte, exact">
+        </label>
+        <button type="button">→</button>
+        <label>Bytes shown <input type="number" value="1024" step="128" aria-label="bytes shown"></label>
+        <label><input type="checkbox" checked> New row after verse</label>
+      </div>
+    </div>
+
+    <div class="specimen">
+      <p class="what"><b>Knobs</b>, in a panel beside a stage.</p>
+      <div class="grid">
+        <div class="panel">
+          <p class="note" style="margin:0">The stage the knobs drive sits here.</p>
+        </div>
+        <div class="panel">
+          <div class="knob">
+            <label for="ds-k1">Minimum pair count</label>
+            <div class="row">
+              <input id="ds-k1" type="range" min="2" max="64" value="12">
+              <input type="number" value="12" aria-label="minimum pair count, exact">
+            </div>
+            <p class="note">Pairs seen fewer times than this are left alone.</p>
+          </div>
+          <div class="knob">
+            <label for="ds-k2">Lexicon</label>
+            <select id="ds-k2">
+              <option>front-coded</option>
+              <option>plain</option>
+            </select>
+          </div>
+          <div class="knob">
+            <label class="check"><input type="checkbox" checked> Reserve single bytes</label>
+          </div>
+          <div class="actions"><button type="button" class="primary">Encode</button></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="specimen">
+      <p class="what"><b>Chips and tags.</b></p>
+      <p class="why">A chip is a word or a number you can pick; a tag is a fixed label saying what
+        kind of row this is.</p>
+      <div class="chips">
+        <span class="chip">charity</span>
+        <span class="chip">#1842</span>
+        <span class="chip"><b>love</b> → loveth</span>
+      </div>
+      <p class="note"><span class="tag word">word</span> <span class="tag rule">rule</span>
+        <span class="tag suffix">suffix</span></p>
+    </div>
+  </section>
+
+  <section>
+    <div class="stage-label"><span class="num">06</span> <span>Data</span></div>
+
+    <div class="specimen">
+      <p class="what"><b>The headline figure</b>, and the statistics under it.</p>
+      <div class="headline-figure">
+        <div class="big">3.4&times;<small>smaller</small></div>
+        <div class="verdict">4,145 KB in, <b>1,219 KB</b> out — <span class="ok">round-trips exactly</span></div>
+      </div>
+      <div class="stat-grid">
+        <div class="stat"><div class="k">Lexicon</div><div class="v">28,114</div><div class="n">distinct words</div></div>
+        <div class="stat"><div class="k">Rules</div><div class="v hot">16,384</div><div class="n">at the cap</div></div>
+        <div class="stat"><div class="k">Stream</div><div class="v">982 KB</div></div>
+        <div class="stat"><div class="k">Round trip</div><div class="v good">exact</div></div>
+      </div>
+    </div>
+
+    <div class="specimen">
+      <p class="what"><b>Where the bytes went</b>: one bar, one segment per part, a legend under it.</p>
+      <div class="bar">
+        <div style="flex:3;background:var(--sym-word)">word list</div>
+        <div style="flex:2;background:var(--dmg-3)">rules</div>
+        <div style="flex:6;background:var(--dmg-2)">stream</div>
+        <div style="flex:1;background:var(--hot)"></div>
+      </div>
+      <div class="legend">
+        <span><i style="background:var(--sym-word)"></i><b>word list</b></span>
+        <span><i style="background:var(--dmg-3)"></i><b>rules</b></span>
+        <span><i class="ramp" style="--lo:var(--sym-rule-lo);--hi:var(--sym-rule-hi)"></i><b>tone</b> is words encoded</span>
+        <span><i class="marker" style="--marker:var(--verse-marker)"></i><b>verse</b> boundary</span>
+        <span><i class="outline-marker"></i><b>search match</b></span>
+      </div>
+    </div>
+
+    <div class="specimen">
+      <p class="what"><b>A strip of stream</b>, cell by cell.</p>
+      <p class="why">The strip, the row and the boundary markers are shared; what a cell means, how
+        wide it is and how its tone is mixed belongs to the page that draws it.</p>
+      <div class="strip">
+        <span class="cell demo-cell esc"></span>
+        <span class="cell demo-cell"></span>
+        <span class="cell demo-cell rule"></span>
+        <span class="cell demo-cell ramp has-verse"></span>
+        <span class="cell demo-cell"></span>
+        <span class="cell demo-cell rule has-chapter"></span>
+        <span class="cell demo-cell esc"></span>
+        <span class="cell demo-cell ramp"></span>
+      </div>
+      <p class="chart-note">Markers paint inside the bottom edge, at <code>--marker-w</code>.</p>
+    </div>
+
+    <div class="specimen">
+      <p class="what"><b>Tables</b>, and the window a long one gets.</p>
+      <div class="table-wrap" style="--table-max-h:180px">
+        <table>
+          <thead><tr><th>#</th><th>Words</th><th class="num">Uses</th><th class="num">Bytes saved</th></tr></thead>
+          <tbody>
+            <tr><td class="num">1</td><td class="word">of the</td><td class="num">12,908</td><td class="num">24,104</td></tr>
+            <tr><td class="num">2</td><td class="word">and the</td><td class="num">9,421</td><td class="num">17,660</td></tr>
+            <tr><td class="num">3</td><td class="word">the LORD</td><td class="num">7,036</td><td class="num">13,190</td></tr>
+            <tr><td class="num">4</td><td class="word">shall be</td><td class="num">6,112</td><td class="num">11,458</td></tr>
+            <tr><td class="num">5</td><td class="word">unto the</td><td class="num">5,880</td><td class="num">11,024</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="table-note">A page sets <code>--table-max-h</code> rather than restating the rule.</p>
+    </div>
+
+    <div class="specimen">
+      <p class="what"><b>What a step cost.</b></p>
+      <div class="cost">
+        <span>book table <b>132</b> bytes</span>
+        <span>stream walk <b>1,904</b> bytes</span>
+        <span class="warn">rules <b>whole table</b></span>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="stage-label"><span class="num">07</span> <span>Hardware</span>
+      <span class="hint">shared by the reader and the whole machine</span></div>
+    <p class="note">A moulded case, a well, and glass lit from the top. Nothing in it is specific to
+      either page: the reader narrows the case, the device squares its foot and takes keys.</p>
+    <div class="device" style="max-width:520px">
+      <div class="markings" style="font-size:var(--fs-nano);letter-spacing:.16em;text-transform:uppercase;margin:2px 4px 12px">
+        <span class="title">Electronic King James Bible</span><span class="ver">FIG. 4</span>
+      </div>
+      <div class="lcd-frame">
+        <div class="lcd" style="height:96px">
+          <div class="glow"></div>
+        </div>
+      </div>
+      <p class="note" style="margin:12px 2px 0">Press <kbd>Enter</kbd> to open a passage.</p>
+    </div>
+  </section>
+
+  <section>
+    <div class="stage-label"><span class="num">08</span> <span>Working in it</span></div>
+    <ul class="rules">
+      <li><b>Start from the tokens.</b> A new value is a decision; if it is worth making, it is worth
+        naming on <code>:root</code> where every page can see it.</li>
+      <li><b>Tune through the metric tokens</b> — <code>--table-max-h</code>, <code>--chart-h</code>,
+        <code>--cell-h</code>, <code>--grid-aside</code>, <code>--marker-w</code> — rather than
+        repeating the rule that reads them.</li>
+      <li><b>One accent.</b> If two things on a page are hot, neither is.</li>
+      <li><b>Keep the page's own CSS about the page.</b> If a second page needs the same rule, it
+        belongs here instead, and the second page is where you find that out.</li>
+      <li><b>No colour literals outside the tokens</b>, including in generated SVG: presentation
+        attributes take <code>var(--hot)</code> just as well as a hex.</li>
+      <li><b>Leave focus alone.</b> The ring is declared once, at zero specificity; a component that
+        needs a tighter offset says only that.</li>
+    </ul>
+  </section>
+
+  <footer>
+    <p>The stylesheet is <a href="design-system.css">design-system.css</a>; this catalogue uses no
+      other rules than the ones it shows. The demos it dresses: <a href="demo.html">RPR1</a>,
+      <a href="demo-ylk1.html">YLK1</a>, <a href="demo-verse.html">Verse</a>,
+      <a href="demo-search.html">Search</a>, <a href="demo-reader.html">Reader</a> and
+      <a href="demo-device.html">Device</a>.</p>
+  </footer>
+
+</div>
+
+<script src="nav.js"></script>
+<script>
+// The catalogue reads its own values back out of the stylesheet, so a swatch
+// can never claim a colour the system has stopped using.
+(() => {
+  "use strict";
+
+  const root = getComputedStyle(document.documentElement);
+  const value = (token) => root.getPropertyValue(token).trim();
+
+  const GROUPS = {
+    "sw-surface": ["--ground", "--panel", "--ink", "--ink-soft", "--rule"],
+    "sw-blue": ["--dmg-1", "--dmg-2", "--dmg-3", "--dmg-4"],
+    "sw-hot": ["--hot", "--hot-soft"],
+    "sw-sym": ["--warn", "--good", "--pink", "--sym-esc", "--sym-word", "--sym-rule",
+               "--sym-direct", "--sym-delta", "--sym-terminal", "--sym-shortcut",
+               "--chain", "--chapter-marker", "--verse-marker"],
+    "sw-lcd": ["--lcd", "--lcd-well", "--lcd-ink", "--lcd-dim", "--case", "--case-face", "--case-edge"],
+  };
+
+  for (const [id, tokens] of Object.entries(GROUPS)) {
+    document.getElementById(id).innerHTML = tokens.map((t) => `
+      <div class="swatch">
+        <div class="chipface" style="background:var(${t})"></div>
+        <span class="name">${t}</span>
+        <span class="value">${value(t) || "—"}</span>
+      </div>`).join("");
+  }
+
+  const TYPE = [
+    ["--fs-nano", "a caption inside a swatch"],
+    ["--fs-micro", "uppercase keys, legends inside bars"],
+    ["--fs-fine", "legends, notes, footers, hints"],
+    ["--fs-small", "buttons, tables, secondary body"],
+    ["--fs-field", "what the reader types into"],
+    ["--fs-base", "body"],
+    ["--fs-lead", "a verse, a query, a unit"],
+    ["--fs-figure", "a statistic"],
+  ];
+  document.getElementById("type-scale").innerHTML = TYPE.map(([t, use]) => `
+    <div class="scale-row">
+      <span class="token">${t}</span>
+      <span class="size">${value(t)}</span>
+      <span style="font-size:var(${t})">The LORD is my shepherd</span>
+      <span class="note" style="margin:0;margin-left:auto">${use}</span>
+    </div>`).join("") + `
+    <div class="scale-row">
+      <span class="token">--fs-title</span>
+      <span class="size">clamp</span>
+      <span style="font-family:var(--pixel);font-size:var(--fs-title);color:var(--dmg-4);line-height:1.25">Silkscreen</span>
+      <span class="note" style="margin:0;margin-left:auto">page titles only</span>
+    </div>`;
+
+  const METRICS = [
+    ["--wrap", "the page column"],
+    ["--measure", "the text measure for running prose"],
+    ["--section-gap", "space above a section"],
+    ["--panel-pad", "a panel's padding, and the gap under a figure"],
+    ["--radius", "panels, fields, chips, bars"],
+    ["--radius-lg", "keys and the parts moulded into a case"],
+    ["--radius-device", "the case itself"],
+    ["--grid-aside", "the control column beside a stage"],
+    ["--table-max-h", "a scrolling table's window"],
+    ["--chart-h", "a chart's height"],
+    ["--bar-h", "the byte bar"],
+    ["--cell-h", "a stream strip's cell"],
+    ["--marker-w", "the structure marker under a cell"],
+  ];
+  document.getElementById("metrics").innerHTML =
+    `<thead><tr><th>Token</th><th class="num">Default</th><th>What it sets</th></tr></thead><tbody>` +
+    METRICS.map(([t, use]) =>
+      `<tr><td class="word">${t}</td><td class="num">${value(t)}</td><td>${use}</td></tr>`).join("") +
+    `</tbody>`;
+})();
+</script>
+</body>
+</html>

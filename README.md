@@ -31,8 +31,10 @@ Sources:
 | `demo-search.html`                              | One query, both codecs, every byte each has to read.                |
 | `demo-reader.html`                              | A KJV reader in the curved LCD font of US 4,982,181.                |
 | `demo-device.html`                             | The two patents assembled into one Franklin-style KJV emulator.     |
+| `design-system.html`                            | The design system's own page: tokens, type, and every part.         |
 | `thesaurus.txt`                                 | Synonym groups, as words. Filtered against the lexicon at encode.   |
-| `nav.js`                                        | The tab bar the six demo pages share.                               |
+| `nav.js`                                        | The tab bar the demo pages share.                                   |
+| `design-system.css`                             | Tokens and shared parts — the one copy of everything the pages share.|
 | `lcd-font.js`                                   | The curved US 4,982,181 font and painter, shared by two demos.      |
 | `kjv.csv`                                       | Full King James Bible source data, one verse per row.               |
 | `kjv-data.js` / `kjv-preencoded.js`             | Generated browser data used by the demo.                            |
@@ -58,9 +60,12 @@ Run `mise tasks` to list all available tasks. After starting the server, open
 <http://localhost:8080/demo.html>; browsers will not load the demo correctly over `file://`.
 
 `demo.html`, `demo-ylk1.html`, `demo-verse.html`, `demo-search.html`, `demo-reader.html` and
-`demo-device.html` are hand-edited and otherwise self-contained. They share `nav.js`, which injects the
-tab bar and its style; `demo-reader.html` and `demo-device.html` also share `lcd-font.js`, the curved
-glyph table and canvas painter, rather than carry two copies of it. After changing `repair-codec.ts` or
+`demo-device.html` are hand-edited and otherwise self-contained. They share `design-system.css` — the
+tokens, type scale and parts described in [the design system's own page](design-system.html) — and
+`nav.js`, which injects the tab bar; `demo-reader.html` and `demo-device.html` also share
+`lcd-font.js`, the curved glyph table and canvas painter, rather than carry two copies of it. A page's
+own `<style>` block holds only what is particular to it, and sets sizes such as `--table-max-h` or
+`--cell-h` rather than restating the rules that read them. After changing `repair-codec.ts` or
 `link-codec.ts`, run `mise run build` to regenerate `repair-codec.js` and `link-codec.js`. The build
 and data tasks use mise source/output tracking and skip unchanged work.
 

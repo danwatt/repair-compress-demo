@@ -7,120 +7,28 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Silkscreen:wght@400;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="design-system.css">
 <style>
-:root {
-  --ground: #0a0e1a;
-  --panel: #121a2e;
-  --ink: #f2f4fa;
-  --ink-soft: #8b96b3;
-  --rule: #253253;
-  --dmg-4: #5b9dff;
-  --dmg-3: #3d7fd9;
-  --dmg-2: #2a5aa8;
-  --dmg-1: #163262;
-  --hot: #e8b923;
-  --hot-soft: #f6d878;
-  --warn: #ffb454;
-  --good: #008a63;
-  --pink: #ff6b9a;
-  --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
-  --pixel: "Silkscreen", "IBM Plex Mono", monospace;
-}
+/* Particular to the seek page: the book/chapter/verse picker, the numbered
+   steps each codec walks through, and the trace table's kinds.
+   Everything else is design-system.css. */
 
-* { box-sizing: border-box; }
+:root { --table-max-h: 420px; }
 
-body {
-  margin: 0;
-  background: var(--ground);
-  color: var(--ink);
-  font-family: var(--mono);
-  font-size: 14px;
-  line-height: 1.5;
-  -webkit-font-smoothing: antialiased;
-}
-
-.wrap { max-width: 1120px; margin: 0 auto; padding: 32px 20px 80px; }
-
-.eyebrow {
-  font-family: var(--pixel);
-  font-size: 10px;
-  letter-spacing: .12em;
-  color: var(--dmg-3);
-  text-transform: uppercase;
-  margin: 0 0 14px;
-}
-
-h1 {
-  font-family: var(--pixel);
-  font-weight: 400;
-  font-size: clamp(20px, 4.4vw, 34px);
-  line-height: 1.25;
-  margin: 0 0 12px;
-  color: var(--dmg-4);
-}
-
-.thesis { max-width: 66ch; margin: 0 0 10px; color: var(--ink-soft); }
-.thesis a { color: var(--hot); text-decoration-thickness: 1px; text-underline-offset: 2px; }
-.thesis b { color: var(--ink); font-weight: 500; }
-.thesis code { color: var(--hot); }
-
-.hr { height: 1px; background: var(--rule); border: 0; margin: 28px 0; }
-section { margin-top: 34px; }
-
-.stage-label {
-  display: flex;
-  align-items: baseline;
-  gap: 10px;
-  font-family: var(--pixel);
-  font-size: 10px;
-  letter-spacing: .1em;
-  text-transform: uppercase;
-  color: var(--dmg-3);
-  margin-bottom: 12px;
-}
-.stage-label .num { color: var(--hot); }
-.stage-label .hint {
-  font-family: var(--mono);
-  font-size: 11px;
-  letter-spacing: 0;
-  text-transform: none;
-  color: var(--ink-soft);
-  margin-left: auto;
-}
-
-.panel { background: var(--panel); border: 1px solid var(--rule); border-radius: 2px; padding: 14px; }
-.two { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; align-items: start; }
-@media (max-width: 860px) { .two { grid-template-columns: 1fr; } }
-
-.codec-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 10px; }
-.codec-head h3 { margin: 0; font-family: var(--pixel); font-size: 12px; font-weight: 400; color: var(--dmg-4); }
-.codec-head .sub { font-size: 11px; color: var(--ink-soft); }
-.codec-head.ylk h3 { color: var(--hot); }
+/* Every table here is short key/value rows; none of them should wrap. */
+th, td { white-space: nowrap; }
 
 .picker { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px 14px; }
-.picker label { display: flex; flex-direction: column; gap: 5px; font-size: 11px; color: var(--ink-soft); }
-.picker select {
-  padding: 6px 8px; border: 1px solid var(--rule); background: var(--ground);
-  color: var(--ink); font-family: var(--mono); font-size: 13px; border-radius: 2px; min-width: 96px;
-}
+.picker label { display: flex; flex-direction: column; gap: 5px; font-size: var(--fs-fine); color: var(--ink-soft); }
+.picker select { min-width: 96px; }
 .picker select.book { min-width: 190px; }
-.picker .status { font-size: 11px; color: var(--ink-soft); margin-left: auto; }
-select:focus-visible, button:focus-visible { outline: 2px solid var(--hot); outline-offset: 2px; }
-
-button {
-  font-family: var(--mono); font-size: 12px; font-weight: 500;
-  padding: 7px 12px; border-radius: 2px; cursor: pointer;
-  border: 1px solid var(--dmg-4); background: var(--ground); color: var(--dmg-4);
-}
-button:hover { background: var(--dmg-1); }
-button[disabled] { opacity: .5; cursor: default; }
-button.on { background: var(--hot); border-color: var(--hot); color: var(--ground); }
+.picker .status { font-size: var(--fs-fine); color: var(--ink-soft); margin-left: auto; }
 
 .verse-text {
-  margin-top: 14px; padding: 12px 14px; border-left: 2px solid var(--hot);
-  background: var(--panel); color: var(--ink); font-size: 15px; line-height: 1.7;
+  margin-top: var(--panel-pad); padding: 12px 14px; border-left: 2px solid var(--hot);
+  background: var(--panel); color: var(--ink); font-size: var(--fs-lead); line-height: 1.7;
 }
-.verse-text .ref { display: block; font-size: 11px; color: var(--ink-soft); margin-bottom: 4px; }
+.verse-text .ref { display: block; font-size: var(--fs-fine); color: var(--ink-soft); margin-bottom: 4px; }
 
 /* Steps ------------------------------------------------------------------- */
 
@@ -128,71 +36,31 @@ button.on { background: var(--hot); border-color: var(--hot); color: var(--groun
 .step:first-of-type { border-top: 0; }
 .step .head { display: flex; align-items: baseline; gap: 8px; }
 .step .n {
-  font-family: var(--pixel); font-size: 9px; color: var(--ground);
-  background: var(--dmg-3); border-radius: 2px; padding: 2px 5px; flex: 0 0 auto;
+  font-family: var(--pixel); font-size: var(--fs-nano); color: var(--ground);
+  background: var(--dmg-3); border-radius: var(--radius); padding: 2px 5px; flex: 0 0 auto;
 }
 .ylk .step .n { background: var(--hot); }
-.step .title { font-size: 12px; color: var(--ink); font-weight: 500; }
-.step .body { font-size: 12px; color: var(--ink-soft); margin-top: 5px; }
+.step .title { font-size: var(--fs-small); color: var(--ink); font-weight: 500; }
+.step .body { font-size: var(--fs-small); color: var(--ink-soft); margin-top: 5px; }
 .step .body b { color: var(--ink); font-weight: 500; }
 .addr { color: var(--hot); font-variant-numeric: tabular-nums; }
-.cost { display: flex; flex-wrap: wrap; gap: 4px 8px; margin-top: 7px; }
-.cost span {
-  font-size: 10px; padding: 2px 6px; border-radius: 2px;
-  border: 1px solid var(--rule); background: var(--ground); color: var(--ink-soft);
-  font-variant-numeric: tabular-nums;
-}
-.cost span b { color: var(--dmg-4); font-weight: 600; }
-.cost span.warn b { color: var(--warn); }
 
 /* Trace table ------------------------------------------------------------- */
 
-table { width: 100%; border-collapse: collapse; font-size: 12px; }
-th, td { text-align: left; padding: 5px 10px; border-bottom: 1px solid var(--rule); white-space: nowrap; }
-th { font-weight: 500; color: var(--ink-soft); }
-td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
-.table-wrap { max-height: 420px; overflow: auto; border: 1px solid var(--rule); background: var(--panel); border-radius: 2px; }
-.table-wrap thead th { position: sticky; top: 0; background: var(--panel); box-shadow: inset 0 -1px 0 var(--rule); z-index: 1; }
-.table-wrap tr:last-child td { border-bottom: 0; }
 tbody tr { cursor: pointer; }
 tbody tr:hover { background: var(--dmg-1); }
 tbody tr.sel { background: var(--dmg-1); box-shadow: inset 2px 0 0 var(--hot); }
-td.word { color: var(--dmg-4); }
 td.marker { color: var(--pink); }
 td.shared { color: var(--ink-soft); }
 .kind-direct { color: var(--ink-soft); }
 .kind-link { color: var(--hot); }
 .kind-terminal { color: var(--good); }
 
+/* The running transcript of the seek, rather than a one-line answer. */
 .readout {
-  margin-top: 10px; padding: 10px 12px; background: var(--panel);
-  border: 1px solid var(--rule); border-radius: 2px; font-size: 12px; color: var(--ink-soft);
-  min-height: 96px; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.7;
+  margin-top: 10px; padding: 10px 12px; min-height: 96px;
+  white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.7;
 }
-.readout b { color: var(--dmg-4); font-weight: 500; }
-.readout .hot { color: var(--hot); }
-.readout .good { color: var(--good); }
-.readout .hd { color: var(--ink); font-weight: 500; }
-
-/* Memory map -------------------------------------------------------------- */
-
-.map { width: 100%; display: block; }
-.map-note { font-size: 11px; color: var(--ink-soft); margin-top: 8px; }
-.legend { display: flex; flex-wrap: wrap; gap: 4px 16px; margin-top: 10px; font-size: 11px; }
-.legend span { display: flex; align-items: center; gap: 6px; color: var(--ink-soft); }
-.legend i { width: 11px; height: 11px; display: inline-block; border-radius: 1px; }
-
-.stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 14px 20px; margin-top: 4px; }
-.stat .k { font-size: 10px; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-soft); }
-.stat .v { font-size: 19px; font-variant-numeric: tabular-nums; }
-.stat .v.hot { color: var(--hot); }
-.stat .n { font-size: 10px; color: var(--ink-soft); }
-
-.note { font-size: 11px; color: var(--ink-soft); margin-top: 10px; }
-.note b { color: var(--ink); font-weight: 500; }
-.loading { color: var(--ink-soft); font-size: 13px; }
-footer { margin-top: 44px; font-size: 11px; color: var(--ink-soft); }
-footer a { color: var(--hot); }
 </style>
 </head>
 <body>
@@ -844,14 +712,14 @@ footer a { color: var(--hot); }
     const x = (byte) => (byte / scale) * W;
 
     const bands = [
-      { label: "header + tables", color: "#253253" },
-      { label: "lexicon", color: "#008a63" },
-      { label: "book table", color: "#e8b923" },
-      { label: "stream", color: "#2a5aa8" },
+      { label: "header + tables", color: "var(--rule)" },
+      { label: "lexicon", color: "var(--good)" },
+      { label: "book table", color: "var(--hot)" },
+      { label: "stream", color: "var(--dmg-2)" },
     ];
 
     function row(y, sections, marks, spans, title) {
-      const out = [`<text x="0" y="${y - 8}" fill="#8b96b3" font-size="11" font-family="monospace">${title}</text>`];
+      const out = [`<text x="0" y="${y - 8}" fill="var(--ink-soft)" font-size="11" font-family="monospace">${title}</text>`];
       for (const s of sections) {
         out.push(`<rect x="${x(s.from)}" y="${y}" width="${Math.max(0.6, x(s.to) - x(s.from))}" height="26" fill="${s.color}" opacity="0.55"><title>${s.label}: ${fmt(s.from)}–${fmt(s.to)}</title></rect>`);
       }
@@ -859,17 +727,17 @@ footer a { color: var(--hot); }
         out.push(`<rect x="${x(span.from)}" y="${y}" width="${Math.max(0.8, x(span.to) - x(span.from))}" height="26" fill="${span.color}" opacity="0.85"><title>${span.label}</title></rect>`);
       }
       for (const mark of marks) {
-        out.push(`<rect x="${x(mark)}" y="${y - 4}" width="1" height="34" fill="#ff6b9a" opacity="0.8"/>`);
+        out.push(`<rect x="${x(mark)}" y="${y - 4}" width="1" height="34" fill="var(--pink)" opacity="0.8"/>`);
       }
       return out.join("");
     }
 
     const rprSections = [
-      { from: 0, to: rpr.offsets.escapeTable, label: "header, suffix table, lexicon", color: "#008a63" },
-      { from: rpr.offsets.escapeTable, to: rpr.offsets.rules, label: "escape table", color: "#253253" },
-      { from: rpr.offsets.rules, to: rpr.offsets.anchors, label: "rules", color: "#3d7fd9" },
-      { from: rpr.offsets.anchors, to: rpr.offsets.stream, label: "book table", color: "#e8b923" },
-      { from: rpr.offsets.stream, to: rprTotal, label: "stream", color: "#2a5aa8" },
+      { from: 0, to: rpr.offsets.escapeTable, label: "header, suffix table, lexicon", color: "var(--good)" },
+      { from: rpr.offsets.escapeTable, to: rpr.offsets.rules, label: "escape table", color: "var(--rule)" },
+      { from: rpr.offsets.rules, to: rpr.offsets.anchors, label: "rules", color: "var(--dmg-3)" },
+      { from: rpr.offsets.anchors, to: rpr.offsets.stream, label: "book table", color: "var(--hot)" },
+      { from: rpr.offsets.stream, to: rprTotal, label: "stream", color: "var(--dmg-2)" },
     ];
     const ruleMarks = [];
     for (const id of walk.scanRuleIds) ruleMarks.push(rpr.offsets.rules + (id - rpr.lexiconSize) * 4);
@@ -877,11 +745,11 @@ footer a { color: var(--hot); }
       for (const id of token.ruleIds) ruleMarks.push(rpr.offsets.rules + (id - rpr.lexiconSize) * 4);
     }
     const rprSpans = [
-      { from: rpr.offsets.anchors, to: rpr.offsets.anchors + 2 * 66, color: "#e8b923", label: "book table read" },
+      { from: rpr.offsets.anchors, to: rpr.offsets.anchors + 2 * 66, color: "var(--hot)", label: "book table read" },
       {
         from: rpr.offsets.stream + walk.anchor.offset,
         to: rpr.offsets.stream + walk.endOffset,
-        color: "#ff6b9a",
+        color: "var(--pink)",
         label: `stream read: ${fmt(walk.scan.bytes + walk.read.bytes)} bytes`,
       },
     ];
@@ -891,17 +759,17 @@ footer a { color: var(--hot); }
     const furthest = state.rows.reduce((max, r) => Math.max(max, r.chased.kind === "direct" ? 0 : r.chased.reach), 0);
     const furthestByte = ylkStreamStart + Math.ceil(ylk.bitAt[furthest] / 8);
     const ylkSections = [
-      { from: 0, to: ylk.sizes.header + ylk.sizes.directTable + ylk.sizes.lexicon, label: "header, direct terms, lexicon", color: "#008a63" },
-      { from: ylk.sizes.header + ylk.sizes.directTable + ylk.sizes.lexicon, to: ylkStreamStart - ylk.sizes.anchors, label: "first-occurrence pointers, code lengths", color: "#253253" },
-      { from: ylkStreamStart - ylk.sizes.anchors, to: ylkStreamStart, label: "book table", color: "#e8b923" },
-      { from: ylkStreamStart, to: ylkTotal, label: "stream", color: "#2a5aa8" },
+      { from: 0, to: ylk.sizes.header + ylk.sizes.directTable + ylk.sizes.lexicon, label: "header, direct terms, lexicon", color: "var(--good)" },
+      { from: ylk.sizes.header + ylk.sizes.directTable + ylk.sizes.lexicon, to: ylkStreamStart - ylk.sizes.anchors, label: "first-occurrence pointers, code lengths", color: "var(--rule)" },
+      { from: ylkStreamStart - ylk.sizes.anchors, to: ylkStreamStart, label: "book table", color: "var(--hot)" },
+      { from: ylkStreamStart, to: ylkTotal, label: "stream", color: "var(--dmg-2)" },
     ];
     const ylkSpans = [
-      { from: ylkStreamStart - ylk.sizes.anchors, to: ylkStreamStart, color: "#e8b923", label: "book table read" },
+      { from: ylkStreamStart - ylk.sizes.anchors, to: ylkStreamStart, color: "var(--hot)", label: "book table read" },
       {
         from: anchorByte,
         to: furthestByte,
-        color: "#ff6b9a",
+        color: "var(--pink)",
         label: `decoded to resolve the verse: ${kb(furthestByte - anchorByte)}`,
       },
     ];
@@ -911,17 +779,17 @@ footer a { color: var(--hot); }
 
     svg.push(row(24, rprSections, ruleMarks, rprSpans, `RPR1 — ${fmt(rprTotal)} bytes`));
     svg.push(row(120, ylkSections, chaseMarks, ylkSpans, `YLK1 — ${fmt(ylkTotal)} bytes`));
-    svg.push(`<text x="0" y="200" fill="#8b96b3" font-size="11" font-family="monospace">0</text>`);
-    svg.push(`<text x="${W}" y="200" fill="#8b96b3" font-size="11" font-family="monospace" text-anchor="end">${fmt(scale)}</text>`);
+    svg.push(`<text x="0" y="200" fill="var(--ink-soft)" font-size="11" font-family="monospace">0</text>`);
+    svg.push(`<text x="${W}" y="200" fill="var(--ink-soft)" font-size="11" font-family="monospace" text-anchor="end">${fmt(scale)}</text>`);
     $("map").innerHTML = svg.join("");
     $("map").setAttribute("viewBox", `0 0 ${W} 210`);
 
     $("map-legend").innerHTML = [
-      ["#008a63", "word list"],
-      ["#3d7fd9", "rules"],
-      ["#e8b923", "book table"],
-      ["#2a5aa8", "stream"],
-      ["#ff6b9a", "read for this verse"],
+      ["var(--good)", "word list"],
+      ["var(--dmg-3)", "rules"],
+      ["var(--hot)", "book table"],
+      ["var(--dmg-2)", "stream"],
+      ["var(--pink)", "read for this verse"],
     ].map(([c, l]) => `<span><i style="background:${c}"></i>${l}</span>`).join("");
 
     $("map-note").innerHTML =

@@ -7,190 +7,55 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Silkscreen:wght@400;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="design-system.css">
 <style>
-:root {
-  --ground: #0a0e1a;
-  --panel: #121a2e;
-  --ink: #f2f4fa;
-  --ink-soft: #8b96b3;
-  --rule: #253253;
-  --dmg-4: #5b9dff;
-  --dmg-3: #3d7fd9;
-  --dmg-2: #2a5aa8;
-  --dmg-1: #163262;
-  --hot: #e8b923;
-  --hot-soft: #f6d878;
-  --warn: #ffb454;
-  --good: #008a63;
-  --pink: #ff6b9a;
-  --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
-  --pixel: "Silkscreen", "IBM Plex Mono", monospace;
-}
+/* Particular to the search page: the query bar, how a term expands through the
+   thesaurus and the stemmer, and a hit in the results.
+   Everything else is design-system.css. */
 
-* { box-sizing: border-box; }
+:root { --table-max-h: 320px; }
 
-body {
-  margin: 0;
-  background: var(--ground);
-  color: var(--ink);
-  font-family: var(--mono);
-  font-size: 14px;
-  line-height: 1.5;
-  -webkit-font-smoothing: antialiased;
-}
-
-.wrap { max-width: 1120px; margin: 0 auto; padding: 32px 20px 80px; }
-
-.eyebrow {
-  font-family: var(--pixel);
-  font-size: 10px;
-  letter-spacing: .12em;
-  color: var(--dmg-3);
-  text-transform: uppercase;
-  margin: 0 0 14px;
-}
-
-h1 {
-  font-family: var(--pixel);
-  font-weight: 400;
-  font-size: clamp(20px, 4.4vw, 34px);
-  line-height: 1.25;
-  margin: 0 0 12px;
-  color: var(--dmg-4);
-}
-
-.thesis { max-width: 66ch; margin: 0 0 10px; color: var(--ink-soft); }
-.thesis a { color: var(--hot); text-decoration-thickness: 1px; text-underline-offset: 2px; }
-.thesis b { color: var(--ink); font-weight: 500; }
-.thesis code, code { color: var(--hot); }
-
-section { margin-top: 34px; }
-
-.stage-label {
-  display: flex;
-  align-items: baseline;
-  gap: 10px;
-  font-family: var(--pixel);
-  font-size: 10px;
-  letter-spacing: .1em;
-  text-transform: uppercase;
-  color: var(--dmg-3);
-  margin-bottom: 12px;
-}
-.stage-label .num { color: var(--hot); }
-.stage-label .hint {
-  font-family: var(--mono);
-  font-size: 11px;
-  letter-spacing: 0;
-  text-transform: none;
-  color: var(--ink-soft);
-  margin-left: auto;
-}
-
-.panel { background: var(--panel); border: 1px solid var(--rule); border-radius: 2px; padding: 14px; }
-.two { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; align-items: start; }
-@media (max-width: 860px) { .two { grid-template-columns: 1fr; } }
-
-.codec-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 10px; }
-.codec-head h3 { margin: 0; font-family: var(--pixel); font-size: 12px; font-weight: 400; color: var(--dmg-4); }
-.codec-head .sub { font-size: 11px; color: var(--ink-soft); }
-.codec-head.ylk h3 { color: var(--hot); }
+/* Every table here is short key/value rows; none of them should wrap. */
+th, td { white-space: nowrap; }
 
 /* Query bar --------------------------------------------------------------- */
 
 .query { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
-.query input[type=search] {
-  flex: 1; min-width: 260px; padding: 10px 12px;
-  border: 1px solid var(--rule); background: var(--ground); color: var(--ink);
-  font-family: var(--mono); font-size: 15px; border-radius: 2px;
-}
-.query input[type=search]:focus-visible, button:focus-visible { outline: 2px solid var(--hot); outline-offset: 2px; }
-
-button {
-  font-family: var(--mono); font-size: 12px; font-weight: 500;
-  padding: 8px 13px; border-radius: 2px; cursor: pointer;
-  border: 1px solid var(--dmg-4); background: var(--ground); color: var(--dmg-4);
-}
-button:hover { background: var(--dmg-1); }
-button.primary { background: var(--hot); border-color: var(--hot); color: var(--ground); }
-button.primary:hover { background: var(--hot-soft); }
-button[disabled] { opacity: .5; cursor: default; }
+.query input[type=search] { flex: 1; min-width: 260px; padding: 10px 12px; font-size: var(--fs-lead); }
 .examples { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
-.examples button { font-size: 11px; padding: 4px 9px; border-color: var(--rule); color: var(--ink-soft); }
-.examples button:hover { border-color: var(--hot); color: var(--hot); }
-.status { font-size: 11px; color: var(--ink-soft); margin-top: 8px; }
+.status { font-size: var(--fs-fine); color: var(--ink-soft); margin-top: 8px; }
 
 /* Expansion --------------------------------------------------------------- */
 
 .term-block { border-top: 1px solid var(--rule); padding: 12px 0; }
 .term-block:first-child { border-top: 0; padding-top: 0; }
 .term-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
-.term-head .q { font-size: 15px; color: var(--hot); font-weight: 600; }
-.term-head .how { font-size: 11px; color: var(--ink-soft); }
-.chips { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
-.chip {
-  padding: 2px 8px; border: 1px solid var(--rule); border-radius: 2px; background: var(--ground);
-  color: var(--dmg-4); font-size: 12px;
-}
+.term-head .q { font-size: var(--fs-lead); color: var(--hot); font-weight: 600; }
+.term-head .how { font-size: var(--fs-fine); color: var(--ink-soft); }
 .chip.direct { color: var(--ink-soft); border-style: dashed; }
 .chip.seed { color: var(--hot); border-color: var(--hot); }
 .chip.syn { color: var(--good); border-color: color-mix(in oklab, var(--good) 60%, var(--rule)); }
 .synonyms { margin-top: 8px; padding-left: 10px; border-left: 2px solid var(--rule); }
-.stage-note { font-size: 10px; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-soft); margin: 6px 0 2px; }
-.chip b { color: var(--hot); font-weight: 500; }
-.term-cost { display: flex; flex-wrap: wrap; gap: 4px 8px; margin-top: 8px; }
-.term-cost span {
-  font-size: 10px; padding: 2px 6px; border-radius: 2px;
-  border: 1px solid var(--rule); background: var(--ground); color: var(--ink-soft);
-  font-variant-numeric: tabular-nums;
-}
-.term-cost span b { color: var(--dmg-4); font-weight: 600; }
+.stage-note { margin: 6px 0 2px; }
 
 /* Cost -------------------------------------------------------------------- */
 
-.stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 14px 20px; }
-.stat .k { font-size: 10px; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-soft); }
-.stat .v { font-size: 19px; font-variant-numeric: tabular-nums; }
-.stat .v.hot { color: var(--hot); }
-.stat .v.good { color: var(--good); }
-.stat .n { font-size: 10px; color: var(--ink-soft); }
-
-.bar { display: flex; height: 30px; border: 1px solid var(--rule); border-radius: 2px; overflow: hidden; margin-top: 14px; }
-.bar div { display: flex; align-items: center; justify-content: center; font-size: 10px; color: #fff; min-width: 0; overflow: hidden; }
-.legend { display: flex; flex-wrap: wrap; gap: 4px 16px; margin-top: 10px; font-size: 11px; }
-.legend span { display: flex; align-items: center; gap: 6px; color: var(--ink-soft); }
-.legend i { width: 11px; height: 11px; display: inline-block; border-radius: 1px; }
-
-table { width: 100%; border-collapse: collapse; font-size: 12px; }
-th, td { text-align: left; padding: 5px 10px; border-bottom: 1px solid var(--rule); white-space: nowrap; }
-th { font-weight: 500; color: var(--ink-soft); }
-td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
-.table-wrap { max-height: 320px; overflow: auto; border: 1px solid var(--rule); background: var(--panel); border-radius: 2px; margin-top: 14px; }
-.table-wrap thead th { position: sticky; top: 0; background: var(--panel); box-shadow: inset 0 -1px 0 var(--rule); z-index: 1; }
-.table-wrap tr:last-child td { border-bottom: 0; }
-td.word { color: var(--dmg-4); }
-
-/* Map --------------------------------------------------------------------- */
-
-.map { width: 100%; display: block; }
-.map-note { font-size: 11px; color: var(--ink-soft); margin-top: 8px; }
+.bar { margin-top: var(--panel-pad); }
+.table-wrap { margin-top: var(--panel-pad); }
 
 /* Results ----------------------------------------------------------------- */
 
 .hit { border-top: 1px solid var(--rule); padding: 10px 0; }
 .hit:first-child { border-top: 0; }
-.hit .ref { font-size: 11px; color: var(--hot); }
-.hit .text { color: var(--ink); font-size: 14px; line-height: 1.65; }
+.hit .ref { font-size: var(--fs-fine); color: var(--hot); }
+.hit .text { color: var(--ink); font-size: var(--fs-base); line-height: 1.65; }
 .hit .text mark { background: transparent; color: var(--hot); font-weight: 600; }
 .results-head { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 8px; }
-.results-head .count { font-size: 19px; color: var(--dmg-4); font-variant-numeric: tabular-nums; }
-.results-head .agree { font-size: 11px; color: var(--good); }
+.results-head .count { font-size: var(--fs-figure); color: var(--dmg-4); font-variant-numeric: tabular-nums; }
+.results-head .agree { font-size: var(--fs-fine); color: var(--good); }
 .results-head .agree.bad { color: var(--warn); }
 
-.note { font-size: 11px; color: var(--ink-soft); margin-top: 12px; max-width: 88ch; }
-.note b { color: var(--ink); font-weight: 500; }
-footer { margin-top: 44px; font-size: 11px; color: var(--ink-soft); }
-footer a { color: var(--hot); }
+.note { margin-top: 12px; max-width: 88ch; }
 </style>
 </head>
 <body>
@@ -696,10 +561,10 @@ footer a { color: var(--hot); }
 
       const synonymStep = set.synonyms
         ? `<div class="synonyms">
-             <div class="stage-note">thesaurus →</div>
+             <div class="label stage-note">thesaurus →</div>
              <div class="chips">${set.roots.map((root, i) =>
                `<span class="chip${i === 0 ? " seed" : " syn"}">${escapeHtml(root)}</span>`).join("")}</div>
-             <div class="term-cost">
+             <div class="cost">
                <span>${set.rprSyn.asHead > 0 ? `heads its group — a head-only scan reaches it at <b>${fmt(set.rprSyn.headBytes)} B</b>`
                  : set.rprSyn.asMember > 0 ? "in a group it does not head — nothing points back to it"
                  : "in no group"}</span>
@@ -708,7 +573,7 @@ footer a { color: var(--hot); }
                  ? `<span>YLK1 finds <b>${fmt(set.ylkSyn.words.length)}</b> of them — the rest are direct terms</span>`
                  : ""}
              </div>
-             <div class="stage-note">stemming →</div>
+             <div class="label stage-note">stemming →</div>
            </div>`
         : "";
 
@@ -716,7 +581,7 @@ footer a { color: var(--hot); }
         <div class="term-head"><span class="q">${escapeHtml(set.raw)}</span><span class="how">${escapeHtml(how)}</span></div>
         ${synonymStep}
         <div class="chips">${chips}${extra}</div>
-        <div class="term-cost">
+        <div class="cost">
           <span>words <b>${fmt(set.words.length)}</b></span>
           <span>searchable in YLK1 <b>${fmt(set.rows.length)}</b></span>
           <span>RPR1 word-list walk <b>${kb(set.rprWalk)}</b></span>
@@ -761,19 +626,19 @@ footer a { color: var(--hot); }
       ylk: sets.reduce((n, set) => n + (set.ylkSyn ? set.ylkSyn.bytes : 0), 0),
     };
     const rprParts = [
-      { label: "rule table", bytes: rprResult.cost.rules, color: "#3d7fd9" },
-      { label: "stream", bytes: rprResult.cost.stream, color: "#2a5aa8" },
-      { label: "word list", bytes: rprLexBytes, color: "#008a63" },
-      { label: "thesaurus", bytes: thesaurusBytes.rpr, color: "#ffb454" },
+      { label: "rule table", bytes: rprResult.cost.rules, color: "var(--dmg-3)" },
+      { label: "stream", bytes: rprResult.cost.stream, color: "var(--dmg-2)" },
+      { label: "word list", bytes: rprLexBytes, color: "var(--good)" },
+      { label: "thesaurus", bytes: thesaurusBytes.rpr, color: "var(--warn)" },
     ];
     const rprTotal = rprParts.reduce((n, p) => n + p.bytes, 0);
 
     const ylkParts = [
-      { label: "word list", bytes: ylkResult.cost.lexicon, color: "#008a63" },
-      { label: "first-occurrence", bytes: ylkResult.cost.firstOccurrence, color: "#e8b923" },
-      { label: "chains", bytes: ylkResult.cost.postings, color: "#ff6b9a" },
-      { label: "verse resolution", bytes: ylkResult.cost.resolution, color: "#2a5aa8" },
-      { label: "thesaurus", bytes: thesaurusBytes.ylk, color: "#ffb454" },
+      { label: "word list", bytes: ylkResult.cost.lexicon, color: "var(--good)" },
+      { label: "first-occurrence", bytes: ylkResult.cost.firstOccurrence, color: "var(--hot)" },
+      { label: "chains", bytes: ylkResult.cost.postings, color: "var(--pink)" },
+      { label: "verse resolution", bytes: ylkResult.cost.resolution, color: "var(--dmg-2)" },
+      { label: "thesaurus", bytes: thesaurusBytes.ylk, color: "var(--warn)" },
     ];
     const ylkTotal = ylkParts.reduce((n, p) => n + p.bytes, 0);
     state.totals = { rpr: rprTotal, ylk: ylkTotal };
@@ -866,40 +731,40 @@ footer a { color: var(--hot); }
       `<rect x="${x(from)}" y="${y}" width="${Math.max(0.6, x(to) - x(from))}" height="26" fill="${color}" opacity="${opacity}"><title>${label}</title></rect>`;
 
     // RPR1: the rule table and the stream, both end to end.
-    svg.push(`<text x="0" y="16" fill="#8b96b3" font-size="11" font-family="monospace">RPR1 — reads ${kb(state.totals.rpr)} of ${fmt(rpr.offsets.total)}</text>`);
-    svg.push(band(24, 0, rpr.offsets.escapeTable, "#008a63", "word list", 0.45));
-    svg.push(band(24, rpr.offsets.lexicon, rpr.offsets.lexicon + rpr.lexWalk, "#008a63", "word-list walk", 0.95));
-    svg.push(band(24, rpr.offsets.rules, rpr.offsets.anchors, "#3d7fd9", "rule table, read end to end", 0.95));
-    svg.push(band(24, rpr.offsets.anchors, rpr.offsets.stream, "#e8b923", "anchor table", 0.5));
-    svg.push(band(24, rpr.offsets.stream, rpr.offsets.total, "#ff6b9a", "stream, read end to end", 0.95));
+    svg.push(`<text x="0" y="16" fill="var(--ink-soft)" font-size="11" font-family="monospace">RPR1 — reads ${kb(state.totals.rpr)} of ${fmt(rpr.offsets.total)}</text>`);
+    svg.push(band(24, 0, rpr.offsets.escapeTable, "var(--good)", "word list", 0.45));
+    svg.push(band(24, rpr.offsets.lexicon, rpr.offsets.lexicon + rpr.lexWalk, "var(--good)", "word-list walk", 0.95));
+    svg.push(band(24, rpr.offsets.rules, rpr.offsets.anchors, "var(--dmg-3)", "rule table, read end to end", 0.95));
+    svg.push(band(24, rpr.offsets.anchors, rpr.offsets.stream, "var(--hot)", "anchor table", 0.5));
+    svg.push(band(24, rpr.offsets.stream, rpr.offsets.total, "var(--pink)", "stream, read end to end", 0.95));
 
     // YLK1: the word list to the query's rows, then scattered chain entries.
     const streamStart = ylk.container.streamStart;
-    svg.push(`<text x="0" y="112" fill="#8b96b3" font-size="11" font-family="monospace">YLK1 — reads ${kb(state.totals.ylk)} of ${fmt(ylk.sizes.total)}</text>`);
-    svg.push(band(120, 0, ylk.sizes.header + ylk.sizes.directTable + ylk.sizes.lexicon, "#008a63", "word list", 0.45));
-    svg.push(band(120, ylk.sizes.header + ylk.sizes.directTable, ylk.sizes.header + ylk.sizes.directTable + ylkResult.cost.lexicon, "#008a63", "word-list walk", 0.95));
-    svg.push(band(120, streamStart - ylk.sizes.anchors, streamStart, "#e8b923", "anchor table", 0.9));
-    svg.push(band(120, streamStart, ylk.sizes.total, "#2a5aa8", "stream", 0.35));
+    svg.push(`<text x="0" y="112" fill="var(--ink-soft)" font-size="11" font-family="monospace">YLK1 — reads ${kb(state.totals.ylk)} of ${fmt(ylk.sizes.total)}</text>`);
+    svg.push(band(120, 0, ylk.sizes.header + ylk.sizes.directTable + ylk.sizes.lexicon, "var(--good)", "word list", 0.45));
+    svg.push(band(120, ylk.sizes.header + ylk.sizes.directTable, ylk.sizes.header + ylk.sizes.directTable + ylkResult.cost.lexicon, "var(--good)", "word-list walk", 0.95));
+    svg.push(band(120, streamStart - ylk.sizes.anchors, streamStart, "var(--hot)", "anchor table", 0.9));
+    svg.push(band(120, streamStart, ylk.sizes.total, "var(--dmg-2)", "stream", 0.35));
     for (const span of ylkResult.cost.spans) {
       const from = streamStart + Math.floor(ylk.bitAt[span.from] / 8);
       const to = streamStart + Math.ceil(ylk.bitAt[span.to] / 8);
-      svg.push(band(120, from, to, "#5b9dff", "scanned to place a hit in a verse", 0.85));
+      svg.push(band(120, from, to, "var(--dmg-4)", "scanned to place a hit in a verse", 0.85));
     }
     for (const position of positionsSample) {
       const byte = streamStart + Math.floor(ylk.bitAt[position] / 8);
-      svg.push(`<rect x="${x(byte)}" y="116" width="1" height="34" fill="#ff6b9a" opacity="0.85"/>`);
+      svg.push(`<rect x="${x(byte)}" y="116" width="1" height="34" fill="var(--pink)" opacity="0.85"/>`);
     }
 
-    svg.push(`<text x="0" y="180" fill="#8b96b3" font-size="11" font-family="monospace">0</text>`);
-    svg.push(`<text x="${W}" y="180" fill="#8b96b3" font-size="11" font-family="monospace" text-anchor="end">${fmt(scale)}</text>`);
+    svg.push(`<text x="0" y="180" fill="var(--ink-soft)" font-size="11" font-family="monospace">0</text>`);
+    svg.push(`<text x="${W}" y="180" fill="var(--ink-soft)" font-size="11" font-family="monospace" text-anchor="end">${fmt(scale)}</text>`);
     $("map").innerHTML = svg.join("");
 
     $("map-legend").innerHTML = [
-      ["#008a63", "word list"],
-      ["#3d7fd9", "rule table"],
-      ["#e8b923", "anchor table"],
-      ["#5b9dff", "scanned to name a verse"],
-      ["#ff6b9a", "read for this query"],
+      ["var(--good)", "word list"],
+      ["var(--dmg-3)", "rule table"],
+      ["var(--hot)", "anchor table"],
+      ["var(--dmg-4)", "scanned to name a verse"],
+      ["var(--pink)", "read for this query"],
     ].map(([c, l]) => `<span><i style="background:${c}"></i>${l}</span>`).join("");
 
     $("map-note").innerHTML =
@@ -994,7 +859,7 @@ footer a { color: var(--hot); }
 
   async function boot() {
     try {
-      $("examples").innerHTML = EXAMPLES.map((q) => `<button data-q="${escapeHtml(q)}">${escapeHtml(q)}</button>`).join("");
+      $("examples").innerHTML = EXAMPLES.map((q) => `<button class="quiet small" data-q="${escapeHtml(q)}">${escapeHtml(q)}</button>`).join("");
       for (const button of $("examples").querySelectorAll("button")) {
         button.addEventListener("click", () => {
           $("q").value = button.dataset.q;
