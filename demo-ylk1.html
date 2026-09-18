@@ -7,163 +7,23 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Silkscreen:wght@400;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="design-system.css">
 <style>
+/* Particular to the link-chase page: cells whose width is their cost, the
+   chain arcs drawn over the strip, the chase log, and the bit fields.
+   Everything else is design-system.css. */
+
 :root {
-  --ground: #0a0e1a;
-  --panel: #121a2e;
-  --ink: #f2f4fa;
-  --ink-soft: #8b96b3;
-  --rule: #253253;
-  --dmg-4: #5b9dff;
-  --dmg-3: #3d7fd9;
-  --dmg-2: #2a5aa8;
-  --dmg-1: #163262;
-  --hot: #e8b923;
-  --hot-soft: #f6d878;
-  --warn: #ffb454;
-  /* One hue per entry kind: what the reader finds when it lands on a cell. */
-  --sym-direct: #35406b;
-  --sym-delta: #2a5aa8;
-  --sym-delta-lo: color-mix(in oklab, #2a5aa8 70%, var(--ground));
-  --sym-delta-hi: color-mix(in oklab, #5b9dff 78%, #ffffff);
-  --sym-terminal: #008a63;
-  --sym-shortcut: #ffb454;
-  --chain: #e8b923;
-  --chapter-marker: #f6d878;
-  --verse-marker: #ff6b9a;
-  --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
-  --pixel: "Silkscreen", "IBM Plex Mono", monospace;
+  --grid-aside: 320px;
+  --table-max-h: 380px;
+  --chart-h: 240px;
+  --cell-h: 15px;
+  --marker-w: 3px;             /* markers are terms of their own here */
 }
 
-* { box-sizing: border-box; }
+/* Bare tables sit flush against the panel's left edge. */
+th, td { padding: 5px 8px 5px 0; }
 
-body {
-  margin: 0;
-  background: var(--ground);
-  color: var(--ink);
-  font-family: var(--mono);
-  font-size: 14px;
-  line-height: 1.5;
-  -webkit-font-smoothing: antialiased;
-}
-
-.wrap { max-width: 1080px; margin: 0 auto; padding: 32px 20px 80px; }
-
-.eyebrow {
-  font-family: var(--pixel);
-  font-size: 10px;
-  letter-spacing: .12em;
-  color: var(--dmg-3);
-  text-transform: uppercase;
-  margin: 0 0 14px;
-}
-
-h1 {
-  font-family: var(--pixel);
-  font-weight: 400;
-  font-size: clamp(20px, 4.4vw, 34px);
-  line-height: 1.25;
-  margin: 0 0 12px;
-  color: var(--dmg-4);
-}
-
-.thesis { max-width: 64ch; margin: 0 0 8px; color: var(--ink-soft); }
-.thesis a { color: var(--hot); text-decoration-thickness: 1px; text-underline-offset: 2px; }
-.thesis b { color: var(--ink); font-weight: 500; }
-
-.hr { height: 1px; background: var(--rule); border: 0; margin: 28px 0; }
-
-section { margin-top: 30px; }
-
-.stage-label {
-  display: flex;
-  align-items: baseline;
-  gap: 10px;
-  font-family: var(--pixel);
-  font-size: 10px;
-  letter-spacing: .1em;
-  text-transform: uppercase;
-  color: var(--dmg-3);
-  margin-bottom: 12px;
-}
-.stage-label .num { color: var(--hot); }
-.stage-label .hint {
-  font-family: var(--mono);
-  font-size: 11px;
-  letter-spacing: 0;
-  text-transform: none;
-  color: var(--ink-soft);
-  margin-left: auto;
-}
-
-.grid { display: grid; grid-template-columns: 1fr 320px; gap: 20px; align-items: start; }
-@media (max-width: 800px) { .grid { grid-template-columns: 1fr; } }
-
-textarea {
-  width: 100%;
-  min-height: 190px;
-  resize: vertical;
-  padding: 12px;
-  border: 1px solid var(--rule);
-  background: var(--panel);
-  color: var(--ink);
-  font-family: var(--mono);
-  font-size: 13px;
-  line-height: 1.6;
-  border-radius: 2px;
-}
-textarea:focus-visible, input:focus-visible, button:focus-visible, select:focus-visible {
-  outline: 2px solid var(--hot);
-  outline-offset: 2px;
-}
-
-.panel { background: var(--panel); border: 1px solid var(--rule); border-radius: 2px; padding: 14px; }
-
-.knob { margin-bottom: 16px; }
-.knob:last-child { margin-bottom: 0; }
-.knob label { display: block; font-size: 11px; color: var(--ink-soft); margin-bottom: 5px; }
-.knob .row { display: flex; align-items: center; gap: 10px; }
-.knob input[type=number], .knob select {
-  width: 92px; padding: 5px 6px; border: 1px solid var(--rule);
-  background: var(--ground); color: var(--ink); font-family: var(--mono); font-size: 13px; border-radius: 2px;
-}
-.knob select { width: 100%; }
-.knob input[type=range] { flex: 1; accent-color: var(--hot); min-width: 0; }
-.knob .note { font-size: 10px; color: var(--ink-soft); margin-top: 5px; }
-.knob .check { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--ink); }
-.knob input[type=checkbox] { accent-color: var(--hot); }
-
-.actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
-
-button {
-  font-family: var(--mono); font-size: 12px; font-weight: 500;
-  padding: 8px 14px; border-radius: 2px; cursor: pointer;
-  border: 1px solid var(--dmg-4); background: var(--ground); color: var(--dmg-4);
-}
-button:hover { background: var(--dmg-1); }
-button.primary { background: var(--hot); border-color: var(--hot); color: var(--ground); }
-button.primary:hover { background: var(--hot-soft); }
-button[disabled] { opacity: .5; cursor: default; }
-
-.headline-figure { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 18px; margin-bottom: 14px; }
-.big { font-size: clamp(30px, 7vw, 48px); font-weight: 600; line-height: 1; color: var(--dmg-4); }
-.big small { font-size: 15px; font-weight: 400; color: var(--ink-soft); margin-left: 4px; }
-.verdict { font-size: 12px; color: var(--ink-soft); }
-.verdict b { color: var(--hot); font-weight: 600; }
-.ok { color: var(--sym-terminal); }
-.bad { color: var(--warn); }
-
-.bar { display: flex; height: 34px; border: 1px solid var(--rule); border-radius: 2px; overflow: hidden; }
-.bar div { display: flex; align-items: center; justify-content: center; font-size: 10px; color: #fff; min-width: 0; overflow: hidden; }
-.legend { display: flex; flex-wrap: wrap; gap: 4px 18px; margin-top: 10px; font-size: 11px; }
-.legend span { display: flex; align-items: center; gap: 6px; color: var(--ink-soft); }
-.legend i { width: 10px; height: 10px; display: inline-block; border-radius: 1px; }
-.legend i.ramp { width: 34px; background: linear-gradient(to right, var(--lo), var(--hi)); }
-.legend i.chain-marker { width: 18px; height: 10px; background: var(--panel); border: 2px solid var(--chain); }
-.legend i.boundary-marker {
-  width: 18px; height: 10px; background: var(--panel);
-  border: 1px solid var(--rule); box-shadow: inset 0 -3px var(--marker);
-}
 .legend i.width-marker {
   width: 44px; height: 10px;
   background: linear-gradient(to right, var(--sym-direct) 0 7px, transparent 7px 9px, var(--sym-delta) 9px 44px);
@@ -171,29 +31,7 @@ button[disabled] { opacity: .5; cursor: default; }
 
 .budget { margin-bottom: 14px; }
 .budget .bar { height: 26px; }
-.budget .bar div { font-size: 9px; }
-.legend b { color: var(--ink); font-weight: 500; }
-
-table { width: 100%; border-collapse: collapse; font-size: 12px; }
-th, td { text-align: left; padding: 5px 8px 5px 0; border-bottom: 1px solid var(--rule); }
-th { font-weight: 500; color: var(--ink-soft); }
-td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
-
-.table-wrap {
-  max-height: 380px; overflow: auto;
-  border: 1px solid var(--rule); background: var(--panel); border-radius: 2px;
-}
-.table-wrap th, .table-wrap td { padding: 5px 10px; white-space: nowrap; }
-.table-wrap thead th {
-  position: sticky; top: 0; background: var(--panel);
-  box-shadow: inset 0 -1px 0 var(--rule); z-index: 1;
-}
-.table-wrap tr:last-child td { border-bottom: 0; }
-.table-wrap td.word { color: var(--dmg-4); }
-
-.stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 14px 20px; margin-top: 16px; }
-.stat .k { font-size: 10px; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-soft); }
-.stat .v { font-size: 19px; font-variant-numeric: tabular-nums; }
+.budget .bar div { font-size: var(--fs-nano); }
 
 .compare { margin-top: 18px; }
 .compare table { max-width: 560px; }
@@ -202,99 +40,48 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 
 /* Chain strip -------------------------------------------------------------- */
 
-.strip-controls, .chase-controls, .search-controls, .lex-controls {
-  display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-bottom: 10px;
-}
-.strip-controls label, .chase-controls label, .search-controls label, .lex-controls label {
-  display: flex; align-items: center; gap: 8px; color: var(--ink-soft); font-size: 11px; white-space: nowrap;
-}
-.strip-controls label.position { flex: 1; min-width: 240px; }
-.strip-controls input[type=range] { flex: 1; min-width: 120px; accent-color: var(--hot); }
-.strip-controls input[type=number], .chase-controls input[type=number] {
-  width: 96px; padding: 5px 6px; border: 1px solid var(--rule);
-  background: var(--ground); color: var(--ink); font-family: var(--mono); font-size: 12px; border-radius: 2px;
-}
-.strip-controls button, .chase-controls button, .search-controls button, .lex-controls button { padding: 5px 9px; }
-.search-controls input[type=search], .lex-controls input[type=search] {
-  flex: 1; min-width: 200px; padding: 6px 8px; border: 1px solid var(--rule);
-  background: var(--ground); color: var(--ink); font-family: var(--mono); font-size: 12px; border-radius: 2px;
-}
-
+.strip { align-content: flex-start; position: relative; }
 .strip-frame { position: relative; margin-bottom: 10px; }
-.strip {
-  display: flex;
-  flex-wrap: wrap;
-  align-content: flex-start;
-  gap: 2px;
-  position: relative;
-}
-.strip.forced-rows { display: block; }
-.stream-row { display: flex; flex-wrap: wrap; gap: 2px; margin-bottom: 2px; }
-.stream-row:last-child { margin-bottom: 0; }
 .strip-arcs {
   position: absolute; inset: 0; width: 100%; height: 100%;
   pointer-events: none; overflow: visible;
 }
 /* Width is the cost: every cell is as many pixels wide as the entry is bits. */
-.cell {
-  height: 15px; border-radius: 1px; cursor: pointer; border: 0; padding: 0;
-  flex: 0 0 auto;
-  background: var(--sym-direct);
-}
-.cell:focus-visible { outline: 2px solid var(--hot); outline-offset: 1px; }
+.cell { border: 0; padding: 0; flex: 0 0 auto; background: var(--sym-direct); }
 .cell.k-delta { background: color-mix(in oklab, var(--sym-delta-hi) calc(var(--t) * 100%), var(--sym-delta-lo)); }
 .cell.k-terminal { background: var(--sym-terminal); }
 .cell.k-shortcut { background: var(--sym-shortcut); }
-/* Structure markers are terms in their own right here, so the boundary paints
-   on the marker's own cell rather than on whatever cell happened to contain it. */
-.cell.has-chapter { box-shadow: inset 0 -3px var(--chapter-marker); }
-.cell.has-verse { box-shadow: inset 0 -3px var(--verse-marker); }
 .cell.in-chain { outline: 2px solid var(--chain); outline-offset: 1px; z-index: 2; }
 .cell.chain-head { outline: 2px solid #fff; outline-offset: 1px; z-index: 3; }
 .cell.chase-trail { filter: brightness(1.5) saturate(1.3); }
 
-.readout {
-  min-height: 44px; padding: 8px 10px; background: var(--panel);
-  border: 1px solid var(--rule); border-radius: 2px; font-size: 12px; color: var(--ink-soft);
-}
-.readout b { color: var(--dmg-4); font-weight: 500; }
-.readout .hot { color: var(--hot); }
-
 .bits { display: flex; flex-wrap: wrap; gap: 4px 10px; margin-top: 8px; }
 .bitfield { display: flex; flex-direction: column; gap: 2px; }
 .bitrun {
-  font-family: var(--mono); font-size: 13px; letter-spacing: .14em;
-  padding: 2px 6px; border-radius: 2px; background: var(--ground); border: 1px solid var(--rule);
+  font-family: var(--mono); font-size: var(--fs-field); letter-spacing: .14em;
+  padding: 2px 6px; border-radius: var(--radius); background: var(--ground); border: 1px solid var(--rule);
 }
 .bitrun.code { color: var(--dmg-4); border-color: var(--dmg-2); }
 .bitrun.raw { color: var(--hot); border-color: color-mix(in oklab, var(--hot) 45%, var(--ground)); }
-.bitfield small { font-size: 9px; letter-spacing: .05em; text-transform: uppercase; color: var(--ink-soft); }
-.table-note { margin-top: 6px; font-size: 11px; color: var(--ink-soft); }
+.bitfield small { font-size: var(--fs-nano); letter-spacing: .05em; text-transform: uppercase; color: var(--ink-soft); }
 .table-note b { color: var(--hot); font-weight: 500; }
 
-.chips { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 10px; max-height: 160px; overflow: auto; }
+/* Numbers you can pick, so the list stays a fixed height. */
+.chips { margin-top: 10px; max-height: 160px; overflow: auto; }
 .chip {
-  padding: 2px 7px; border: 1px solid var(--rule); border-radius: 2px; background: var(--panel);
-  color: var(--dmg-4); font-size: 11px; font-variant-numeric: tabular-nums; cursor: pointer;
+  padding: 2px 7px; background: var(--panel);
+  font-size: var(--fs-fine); font-variant-numeric: tabular-nums; cursor: pointer;
 }
-.chip:hover { border-color: var(--hot); color: var(--hot); }
 
 .chase-log {
-  margin: 10px 0 0; padding: 12px; border: 1px solid var(--rule); border-radius: 2px;
-  background: var(--panel); font-size: 12px; max-height: 260px; overflow: auto;
+  margin: 10px 0 0; padding: 12px; border: 1px solid var(--rule); border-radius: var(--radius);
+  background: var(--panel); font-size: var(--fs-small); max-height: 260px; overflow: auto;
   white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.7;
 }
 .chase-log .hop { color: var(--ink-soft); }
 .chase-log .hop b { color: var(--dmg-4); font-weight: 500; }
 .chase-log .land { color: var(--sym-terminal); }
 .chase-log .land b { color: var(--hot); }
-
-.chart { width: 100%; height: 240px; display: block; }
-.chart-note { font-size: 11px; color: var(--ink-soft); margin-top: 8px; }
-
-.empty { color: var(--ink-soft); font-size: 12px; }
-footer { margin-top: 44px; font-size: 11px; color: var(--ink-soft); }
-footer a { color: var(--hot); }
 </style>
 </head>
 <body>
@@ -394,7 +181,7 @@ footer a { color: var(--hot); }
     <div class="stage-label"><span class="num">03</span> <span>The chain</span>
       <span class="hint" id="chain-hint"></span></div>
     <div class="budget" id="budget"></div>
-    <div class="strip-controls">
+    <div class="controls strip-controls">
       <button type="button" id="strip-prev" aria-label="Previous page">←</button>
       <label class="position">Start term
         <input type="range" id="strip-position" min="0" max="0" value="0" step="1">
@@ -414,9 +201,9 @@ footer a { color: var(--hot); }
       <span><i class="ramp" style="--lo:var(--sym-delta-lo);--hi:var(--sym-delta-hi)"></i><b>delta</b> to next occurrence, light means far</span>
       <span><i style="background:var(--sym-terminal)"></i><b>terminal</b> link to the lexicon</span>
       <span><i style="background:var(--sym-shortcut)"></i><b>shortcut</b> signal</span>
-      <span><i class="boundary-marker" style="--marker:var(--chapter-marker)"></i><b>chapter</b> boundary</span>
-      <span><i class="boundary-marker" style="--marker:var(--verse-marker)"></i><b>verse</b> boundary</span>
-      <span><i class="chain-marker"></i><b>selected chain</b></span>
+      <span><i class="marker" style="--marker:var(--chapter-marker)"></i><b>chapter</b> boundary</span>
+      <span><i class="marker" style="--marker:var(--verse-marker)"></i><b>verse</b> boundary</span>
+      <span><i class="outline-marker" style="--outline:var(--chain)"></i><b>selected chain</b></span>
       <span><i class="width-marker"></i><b>width</b> is the cost: every cell is as wide as the bits it spends</span>
     </div>
   </section>
@@ -424,7 +211,7 @@ footer a { color: var(--hot); }
   <section id="chase-section" hidden>
     <div class="stage-label"><span class="num">04</span> <span>Read mode — the forward chase</span>
       <span class="hint">FIG. 5: the device knows the word only when the chain lands on the lexicon</span></div>
-    <div class="chase-controls">
+    <div class="controls chase-controls">
       <label>From term <input type="number" id="chase-start" min="0" value="0"></label>
       <button type="button" id="chase-step">Step</button>
       <button type="button" id="chase-run">Run to lexicon</button>
@@ -437,7 +224,7 @@ footer a { color: var(--hot); }
   <section id="search-section" hidden>
     <div class="stage-label"><span class="num">05</span> <span>Search mode</span>
       <span class="hint">FIG. 6: no posting list, because the chain is the posting list</span></div>
-    <form class="search-controls" id="search-form">
+    <form class="controls search-controls" id="search-form">
       <label for="search-word">Word</label>
       <input type="search" id="search-word" autocomplete="off" spellcheck="false"
              placeholder="Exact, case-sensitive — try God, meek, Melchizedek">
@@ -458,7 +245,7 @@ footer a { color: var(--hot); }
   <section id="lexicon-section" hidden>
     <div class="stage-label"><span class="num">07</span> <span>Lexicon</span>
       <span class="hint" id="lexicon-hint"></span></div>
-    <div class="lex-controls">
+    <div class="controls lex-controls">
       <label for="lex-filter">Filter</label>
       <input type="search" id="lex-filter" autocomplete="off" spellcheck="false" placeholder="Prefix or substring">
     </div>

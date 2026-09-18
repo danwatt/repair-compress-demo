@@ -7,145 +7,42 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Silkscreen:wght@400;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="design-system.css">
 <style>
-:root {
-  --ground: #0a0e1a;
-  --panel: #121a2e;
-  --ink: #f2f4fa;
-  --ink-soft: #8b96b3;
-  --rule: #253253;
-  --dmg-4: #5b9dff;
-  --dmg-3: #3d7fd9;
-  --dmg-2: #2a5aa8;
-  --dmg-1: #163262;
-  --hot: #e8b923;
-  --hot-soft: #f6d878;
-  --pink: #ff6b9a;
-  --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
-  --pixel: "Silkscreen", "IBM Plex Mono", monospace;
+/* Particular to the reader: the hand-held unit's keypad and its readout, and
+   the magnifier that takes one glyph apart.
+   The case, the glass, and the rest are design-system.css. */
 
-  /* the glass */
-  --lcd: #b9c6a8;
-  --lcd-well: #aebc9c;
-  --lcd-ink: #232a1c;
-  --case: #1c2331;
-  --case-edge: #2c3547;
-}
-
-* { box-sizing: border-box; }
-
-body {
-  margin: 0;
-  background: var(--ground);
-  color: var(--ink);
-  font-family: var(--mono);
-  font-size: 14px;
-  line-height: 1.5;
-  -webkit-font-smoothing: antialiased;
-}
-
-.wrap { max-width: 1120px; margin: 0 auto; padding: 32px 20px 80px; }
-
-.eyebrow {
-  font-family: var(--pixel);
-  font-size: 10px;
-  letter-spacing: .12em;
-  color: var(--dmg-3);
-  text-transform: uppercase;
-  margin: 0 0 14px;
-}
-
-h1 {
-  font-family: var(--pixel);
-  font-weight: 400;
-  font-size: clamp(20px, 4.4vw, 34px);
-  line-height: 1.25;
-  margin: 0 0 16px;
-  color: var(--dmg-4);
-}
-
-.thesis { max-width: 68ch; margin: 0 0 12px; color: var(--ink-soft); }
-.thesis a { color: var(--hot); text-decoration-thickness: 1px; text-underline-offset: 2px; }
-.thesis b { color: var(--ink); font-weight: 500; }
-.thesis code { color: var(--hot); font-size: 12.5px; }
-
-.hr { height: 1px; background: var(--rule); border: 0; margin: 30px 0; }
-section { margin-top: 36px; }
-
-.stage-label {
-  display: flex;
-  align-items: baseline;
-  gap: 10px;
-  font-family: var(--pixel);
-  font-size: 10px;
-  letter-spacing: .1em;
-  text-transform: uppercase;
-  color: var(--dmg-3);
-  margin-bottom: 16px;
-}
-.stage-label .num { color: var(--hot); }
-.stage-label .hint {
-  font-family: var(--mono);
-  font-size: 11px;
-  letter-spacing: 0;
-  text-transform: none;
-  color: var(--ink-soft);
-  margin-left: auto;
-}
-
-/* device ----------------------------------------------------------------- */
-
-.device {
-  background: linear-gradient(180deg, #222a3b, var(--case));
-  border: 1px solid var(--case-edge);
-  border-radius: 18px;
-  padding: 20px;
-  box-shadow: 0 30px 60px -30px #000, inset 0 1px 0 #3b4560;
-  max-width: 860px;
-}
-.brand {
-  font-family: var(--pixel);
-  font-size: 9px;
-  letter-spacing: .16em;
-  color: var(--ink-soft);
-  text-transform: uppercase;
-  display: flex;
-  justify-content: space-between;
-  margin: 2px 4px 12px;
-}
+.device { max-width: 860px; }
+.brand { font-size: var(--fs-nano); letter-spacing: .16em; text-transform: uppercase; margin: 2px 4px 12px; }
 .brand span:last-child { color: var(--dmg-3); }
 
-.lcd-frame {
-  background: #0f1410;
-  border-radius: 8px;
-  padding: 10px;
-  box-shadow: inset 0 2px 8px #000;
-}
-.lcd {
-  position: relative;
-  background: var(--lcd);
-  border-radius: 3px;
-  overflow: hidden;
-  box-shadow: inset 0 0 0 1px #00000030, inset 0 0 24px #7d8a6a55;
-}
-.lcd canvas { display: block; width: 100%; height: auto; }
-.lcd .glow {
-  position: absolute; inset: 0; pointer-events: none;
-  background: radial-gradient(120% 80% at 50% 0%, #ffffff22, transparent 60%);
-}
-
-.readout {
+/* What the unit is showing, in the strip under the glass. */
+.gauge {
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
   gap: 6px 14px;
   margin: 12px 4px 14px;
-  font-size: 11px;
+  font-size: var(--fs-fine);
   color: var(--ink-soft);
 }
-.readout b { color: var(--hot-soft); font-weight: 500; font-variant-numeric: tabular-nums; }
+.gauge b { color: var(--hot-soft); font-weight: 500; font-variant-numeric: tabular-nums; }
 
+/* Keypad. Keys are moulded into the case, so they take the case's rounder
+   corner and its darker face rather than the flat lab button. */
 .pad { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; }
+button {
+  padding: 9px 12px;
+  border-radius: var(--radius-lg);
+  border-color: var(--dmg-3);
+  background: #10192b;
+  min-width: 42px;
+}
+button:active { transform: translateY(1px); }
+button.key { font-size: var(--fs-base); line-height: 1; padding: 9px 11px; }
+button.wide { letter-spacing: .08em; }
+
 .refform { display: flex; gap: 8px; align-items: stretch; flex: 1 1 260px; }
 .refform input {
   flex: 1;
@@ -154,73 +51,38 @@ section { margin-top: 36px; }
   background: #0e131f;
   color: var(--ink);
   font-family: var(--mono);
-  font-size: 13px;
+  font-size: var(--fs-field);
   letter-spacing: .12em;
   text-transform: uppercase;
-  border-radius: 4px;
+  border-radius: var(--radius-lg);
 }
 .refform input::placeholder { color: #4a556f; letter-spacing: .12em; }
-
-button {
-  font-family: var(--mono);
-  font-size: 12px;
-  font-weight: 500;
-  padding: 9px 12px;
-  border-radius: 4px;
-  cursor: pointer;
-  border: 1px solid var(--dmg-3);
-  background: #10192b;
-  color: var(--dmg-4);
-  min-width: 42px;
-}
-button:hover { background: var(--dmg-1); }
-button:active { transform: translateY(1px); }
-button.key { font-size: 14px; line-height: 1; padding: 9px 11px; }
-button.wide { letter-spacing: .08em; }
-button[disabled] { opacity: .4; cursor: default; }
-input:focus-visible, button:focus-visible { outline: 2px solid var(--hot); outline-offset: 2px; }
 
 .toggles {
   display: flex;
   flex-wrap: wrap;
   gap: 8px 18px;
   margin-top: 16px;
-  padding-top: 14px;
+  padding-top: var(--panel-pad);
   border-top: 1px solid var(--case-edge);
 }
-.toggles label { display: flex; align-items: center; gap: 7px; font-size: 12px; color: var(--ink-soft); cursor: pointer; }
-.toggles input { accent-color: var(--hot); }
+.toggles label { display: flex; align-items: center; gap: 7px; font-size: var(--fs-small); color: var(--ink-soft); cursor: pointer; }
 
-/* magnifier ------------------------------------------------------------- */
+/* Magnifier --------------------------------------------------------------- */
 
 .mag-grid { display: grid; grid-template-columns: minmax(0, 340px) 1fr; gap: 24px; align-items: start; }
 @media (max-width: 760px) { .mag-grid { grid-template-columns: 1fr; } }
 
-.mag-panel { background: var(--panel); border: 1px solid var(--rule); border-radius: 4px; padding: 16px; max-width: 380px; }
+.mag-panel { background: var(--panel); border: 1px solid var(--rule); border-radius: var(--radius-lg); padding: 16px; max-width: 380px; }
 .mag-panel canvas { display: block; width: auto; max-width: 100%; height: auto; margin: 0 auto; background: var(--lcd); border-radius: 3px; }
-.mag-controls { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; margin-top: 14px; }
+.mag-controls { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; margin-top: var(--panel-pad); }
 .mag-controls input[type=text] {
-  width: 54px; text-align: center;
-  padding: 7px; border: 1px solid var(--rule); background: var(--ground);
-  color: var(--ink); font-family: var(--mono); font-size: 16px; border-radius: 3px;
+  width: 54px; text-align: center; padding: 7px;
+  font-size: 16px; border-radius: 3px;
 }
-.mag-controls label { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--ink-soft); }
-.mag-controls input[type=checkbox] { accent-color: var(--hot); }
+.mag-controls label { display: flex; align-items: center; gap: 6px; font-size: var(--fs-small); color: var(--ink-soft); }
 
-.prose { max-width: 68ch; color: var(--ink-soft); }
-.prose p { margin: 0 0 12px; }
-.prose b { color: var(--ink); font-weight: 500; }
-.prose code { color: var(--hot); font-size: 12.5px; }
-.prose a { color: var(--hot); }
-.quote {
-  border-left: 2px solid var(--dmg-3);
-  padding: 4px 0 4px 14px;
-  margin: 0 0 14px;
-  color: var(--ink);
-  font-size: 13px;
-}
-
-.loading { color: var(--ink-soft); font-size: 12px; padding: 20px 4px; }
+.loading { padding: 20px 4px; }
 </style>
 </head>
 <body>
@@ -259,7 +121,7 @@ input:focus-visible, button:focus-visible { outline: 2px solid var(--hot); outli
     <div id="loading" class="loading">loading the King James text&hellip;</div>
 
     <div class="device" id="device" hidden>
-      <div class="brand"><span>Electronic King James Bible</span><span>FIG. 4</span></div>
+      <div class="markings brand"><span>Electronic King James Bible</span><span>FIG. 4</span></div>
       <div class="lcd-frame">
         <div class="lcd">
           <canvas id="screen"></canvas>
@@ -267,7 +129,7 @@ input:focus-visible, button:focus-visible { outline: 2px solid var(--hot); outli
         </div>
       </div>
 
-      <div class="readout">
+      <div class="gauge">
         <span>at <b id="ro-ref">&mdash;</b></span>
         <span>screen <b id="ro-screen">&mdash;</b></span>
         <span><b id="ro-cells">37&times;4</b> cells lit per patent</span>

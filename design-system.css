@@ -1,0 +1,556 @@
+/* The shared design system for the six demo pages.
+ *
+ * The pages grew one at a time, each carrying its own copy of the same
+ * hundred-odd lines of CSS, and the copies had drifted: four values for a
+ * button's padding, four for the text measure, three for the space above a
+ * section. This file is the single copy. Everything here is either a token
+ * (a named decision) or a primitive built out of tokens; nothing in it knows
+ * about RPR1, YLK1, or the King James Bible.
+ *
+ * A page links this file and then adds only what is genuinely its own — the
+ * shape of its stream strip, its device chrome, the sizes it tunes through the
+ * tokens below. Page rules come after this file in the cascade, so a plain
+ * element or single-class override in the page always wins.
+ *
+ * See design-system.html for the rendered catalogue.
+ */
+
+/* Tokens ------------------------------------------------------------------ */
+
+:root {
+  /* Surfaces and ink. Two surfaces only: the ground everything sits on, and
+     the panel that lifts a region off it, separated by a one-pixel rule. */
+  --ground: #0a0e1a;
+  --panel: #121a2e;
+  --ink: #f2f4fa;
+  --ink-soft: #8b96b3;
+  --rule: #253253;
+
+  /* The blue ramp, dark to light. --dmg-4 is the reading blue for figures,
+     links, and headings; --dmg-3 labels; --dmg-2 and --dmg-1 are fills. */
+  --dmg-1: #163262;
+  --dmg-2: #2a5aa8;
+  --dmg-3: #3d7fd9;
+  --dmg-4: #5b9dff;
+
+  /* One accent, used for the thing the reader is meant to act on or look at:
+     the current tab, the focus ring, the primary button, the number that
+     carries the point. --hot-soft is its hover. */
+  --hot: #e8b923;
+  --hot-soft: #f6d878;
+
+  /* Status. --warn is a cost going the wrong way, --good a result that holds. */
+  --warn: #ffb454;
+  --good: #008a63;
+  --pink: #ff6b9a;
+
+  /* Meaning colours: one hue per kind of thing in an encoded stream, so a cell
+     in a strip, its legend swatch, and its row in a table all agree. RPR1
+     escapes/words/rules, then YLK1's entry kinds, then the markers both use. */
+  --sym-esc: #ffb454;
+  --sym-word: #008a63;
+  --sym-rule: #163262;
+  --sym-direct: #35406b;
+  --sym-delta: #2a5aa8;
+  --sym-terminal: #008a63;
+  --sym-shortcut: #ffb454;
+  --chain: #e8b923;
+  --chapter-marker: #f6d878;
+  --verse-marker: #ff6b9a;
+  /* Ramp ends. A cell's tone within its hue carries how much it encodes, so
+     each ramp runs from a ground-mixed low to a white-mixed high. */
+  --sym-esc-lo: color-mix(in oklab, var(--sym-esc) 62%, var(--ground));
+  --sym-esc-hi: color-mix(in oklab, var(--sym-esc) 55%, #ffffff);
+  --sym-rule-lo: color-mix(in oklab, var(--sym-rule) 62%, var(--ground));
+  --sym-rule-hi: color-mix(in oklab, var(--sym-rule) 55%, #ffffff);
+  --sym-delta-lo: color-mix(in oklab, var(--sym-delta) 70%, var(--ground));
+  --sym-delta-hi: color-mix(in oklab, var(--dmg-4) 78%, #ffffff);
+
+  /* Hardware. The emulated Franklin unit: grey-green glass in a dark case. */
+  --lcd: #b9c6a8;
+  --lcd-well: #aebc9c;
+  --lcd-ink: #232a1c;
+  --lcd-dim: #7b8a68;          /* an unlit / printed label */
+  --case: #1c2331;
+  --case-face: #222a3b;
+  --case-edge: #2c3547;
+
+  /* Two faces. Silkscreen is a label face — eyebrows, headings, stage labels,
+     tab names — and never sets running text; everything else is the mono. */
+  --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --pixel: "Silkscreen", "IBM Plex Mono", monospace;
+
+  /* Type scale. Eight sizes, bottom to top, plus the page title's clamp. */
+  --fs-nano: 9px;              /* a caption inside a swatch */
+  --fs-micro: 10px;            /* uppercase keys, legends inside bars */
+  --fs-fine: 11px;             /* legends, notes, footers, hints */
+  --fs-small: 12px;            /* buttons, tables, secondary body */
+  --fs-field: 13px;            /* what the reader types into */
+  --fs-base: 14px;             /* body */
+  --fs-lead: 15px;             /* a verse, a query, a headline figure's unit */
+  --fs-figure: 19px;           /* a statistic */
+  --fs-title: clamp(20px, 4.4vw, 34px);
+
+  /* Metrics. The page is one column; panels and fields share one radius, the
+     device chrome a larger one. */
+  --wrap: 1120px;
+  --measure: 66ch;             /* the text measure for running prose */
+  --radius: 2px;
+  --radius-lg: 4px;
+  --radius-device: 18px;
+  --section-gap: 34px;
+  --panel-pad: 14px;
+
+  /* Sizes a page is expected to tune. */
+  --grid-aside: 300px;         /* the control column beside a stage */
+  --table-max-h: 400px;        /* a scrolling table's window */
+  --chart-h: 220px;
+  --bar-h: 34px;
+  --cell-h: 16px;              /* a stream strip's cell */
+  --marker-w: 2px;             /* the structure marker under a cell */
+}
+
+/* Base -------------------------------------------------------------------- */
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--ground);
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: var(--fs-base);
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* One focus ring, on anything focusable. :where() keeps it at zero
+   specificity, so a component that needs a tighter offset just says so. */
+:where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
+  outline: 2px solid var(--hot);
+  outline-offset: 2px;
+}
+
+code { color: var(--hot); }
+
+kbd {
+  font-family: var(--mono);
+  font-size: var(--fs-micro);
+  border: 1px solid var(--rule);
+  border-bottom-width: 2px;
+  border-radius: 3px;
+  padding: 1px 5px;
+  color: var(--ink);
+  background: var(--panel);
+}
+
+/* Layout ------------------------------------------------------------------ */
+
+.wrap { max-width: var(--wrap); margin: 0 auto; padding: 32px 20px 80px; }
+
+section { margin-top: var(--section-gap); }
+
+.hr { height: 1px; background: var(--rule); border: 0; margin: 28px 0; }
+
+/* A stage and its controls: the work on the left, the knobs on the right. */
+.grid {
+  display: grid;
+  grid-template-columns: 1fr var(--grid-aside);
+  gap: 20px;
+  align-items: start;
+}
+@media (max-width: 800px) { .grid { grid-template-columns: 1fr; } }
+
+/* Two codecs side by side. */
+.two { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; align-items: start; }
+@media (max-width: 860px) { .two { grid-template-columns: 1fr; } }
+
+.actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: var(--panel-pad); }
+
+/* The tab bar ------------------------------------------------------------- */
+/* nav.js builds the markup; the look lives here with everything else. */
+
+.tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  margin: 0 0 26px;
+  border-bottom: 1px solid var(--rule);
+}
+.tabs a {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 8px 14px 9px;
+  text-decoration: none;
+  border: 1px solid transparent;
+  border-bottom: 0;
+  border-radius: var(--radius) var(--radius) 0 0;
+  margin-bottom: -1px;
+  color: var(--ink-soft);
+  background: transparent;
+}
+.tabs a .label {
+  font-family: var(--pixel);
+  font-size: var(--fs-fine);
+  letter-spacing: .06em;
+  color: var(--dmg-3);
+}
+/* margin: 0 because a tab's note is also a .note, which has space above it. */
+.tabs a .note { margin: 0; font-size: var(--fs-micro); color: var(--ink-soft); }
+.tabs a:hover { background: var(--panel); border-color: var(--rule); }
+.tabs a:hover .label { color: var(--dmg-4); }
+.tabs a[aria-current="page"] {
+  background: var(--panel);
+  border-color: var(--rule);
+  box-shadow: inset 0 2px 0 var(--hot);
+  cursor: default;
+}
+.tabs a[aria-current="page"] .label { color: var(--hot); }
+@media (max-width: 620px) {
+  .tabs a .note { display: none; }
+}
+
+/* Type -------------------------------------------------------------------- */
+
+/* What the page is about, above its title: the patent numbers, the codec. */
+.eyebrow {
+  font-family: var(--pixel);
+  font-size: var(--fs-micro);
+  letter-spacing: .12em;
+  color: var(--dmg-3);
+  text-transform: uppercase;
+  margin: 0 0 14px;
+}
+
+h1 {
+  font-family: var(--pixel);
+  font-weight: 400;
+  font-size: var(--fs-title);
+  line-height: 1.25;
+  margin: 0 0 12px;
+  color: var(--dmg-4);
+}
+
+/* The claim under the title, and running prose anywhere else. */
+.thesis, .prose { max-width: var(--measure); color: var(--ink-soft); }
+.thesis { margin: 0 0 10px; }
+.prose p { margin: 0 0 12px; }
+.thesis a, .prose a { color: var(--hot); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+.thesis b, .prose b { color: var(--ink); font-weight: 500; }
+.thesis code, .prose code { color: var(--hot); font-size: 12.5px; }
+
+/* A numbered step in the argument, with an aside pushed to the right. */
+.stage-label {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  font-family: var(--pixel);
+  font-size: var(--fs-micro);
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: var(--dmg-3);
+  margin-bottom: 12px;
+}
+.stage-label .num { color: var(--hot); }
+.stage-label .hint {
+  font-family: var(--mono);
+  font-size: var(--fs-fine);
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--ink-soft);
+  margin-left: auto;
+}
+
+/* A small uppercase key over the thing it names. */
+.label {
+  font-size: var(--fs-micro);
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+
+.note { font-size: var(--fs-fine); color: var(--ink-soft); margin-top: 10px; }
+.note b { color: var(--ink); font-weight: 500; }
+
+.empty { color: var(--ink-soft); font-size: var(--fs-small); }
+.loading { color: var(--ink-soft); font-size: var(--fs-small); }
+
+.quote {
+  border-left: 2px solid var(--dmg-3);
+  padding: 4px 0 4px 14px;
+  margin: 0 0 14px;
+  color: var(--ink);
+  font-size: var(--fs-field);
+}
+
+footer { margin-top: 44px; font-size: var(--fs-fine); color: var(--ink-soft); }
+footer a { color: var(--hot); }
+
+/* Surfaces ---------------------------------------------------------------- */
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  padding: var(--panel-pad);
+}
+
+/* Where a page answers back: what the cell you clicked turned out to be. */
+.readout {
+  min-height: 44px;
+  padding: 8px 10px;
+  background: var(--panel);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  font-size: var(--fs-small);
+  color: var(--ink-soft);
+}
+.readout b { color: var(--dmg-4); font-weight: 500; }
+.readout .hot { color: var(--hot); }
+.readout .good { color: var(--good); }
+.readout .hd { color: var(--ink); font-weight: 500; }
+
+/* Controls ---------------------------------------------------------------- */
+
+button {
+  font-family: var(--mono);
+  font-size: var(--fs-small);
+  font-weight: 500;
+  padding: 8px 14px;
+  border-radius: var(--radius);
+  cursor: pointer;
+  border: 1px solid var(--dmg-4);
+  background: var(--ground);
+  color: var(--dmg-4);
+}
+button:hover { background: var(--dmg-1); }
+button.primary { background: var(--hot); border-color: var(--hot); color: var(--ground); }
+button.primary:hover { background: var(--hot-soft); }
+button.on { background: var(--hot); border-color: var(--hot); color: var(--ground); }
+button.quiet { border-color: var(--rule); color: var(--ink-soft); }
+button.quiet:hover { border-color: var(--hot); color: var(--hot); background: var(--ground); }
+button.small { padding: 5px 9px; }
+button[disabled] { opacity: .5; cursor: default; }
+
+/* Fields. One recipe: inset on the ground, one-pixel rule, mono at field size. */
+input[type=number],
+input[type=search],
+input[type=text],
+select {
+  padding: 5px 6px;
+  border: 1px solid var(--rule);
+  background: var(--ground);
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: var(--fs-field);
+  border-radius: var(--radius);
+}
+
+textarea {
+  width: 100%;
+  min-height: 190px;
+  resize: vertical;
+  padding: 12px;
+  border: 1px solid var(--rule);
+  background: var(--panel);
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: var(--fs-field);
+  line-height: 1.6;
+  border-radius: var(--radius);
+}
+
+input[type=range], input[type=checkbox] { accent-color: var(--hot); }
+
+/* One knob in a control panel: a label, a row of inputs, a note under it. */
+.knob { margin-bottom: 16px; }
+.knob:last-child { margin-bottom: 0; }
+.knob label { display: block; font-size: var(--fs-fine); color: var(--ink-soft); margin-bottom: 5px; }
+.knob .row { display: flex; align-items: center; gap: 10px; }
+.knob input[type=number], .knob select { width: 92px; }
+.knob select { width: 100%; }
+.knob input[type=range] { flex: 1; min-width: 0; }
+.knob .note { font-size: var(--fs-micro); color: var(--ink-soft); margin-top: 5px; }
+.knob .check { display: flex; align-items: center; gap: 8px; font-size: var(--fs-small); color: var(--ink); }
+
+/* A row of controls over the thing they drive. */
+.controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-bottom: 10px; }
+.controls label {
+  display: flex; align-items: center; gap: 8px;
+  color: var(--ink-soft); font-size: var(--fs-fine); white-space: nowrap;
+}
+.controls label.position { flex: 1; min-width: 260px; }
+.controls input[type=range] { flex: 1; min-width: 120px; }
+.controls input[type=search] { flex: 1; min-width: 200px; padding: 6px 8px; font-size: var(--fs-small); }
+.controls input[type=number] { width: 90px; font-size: var(--fs-small); }
+.controls button { padding: 5px 9px; }
+
+/* A word, a term, a number you can pick. */
+.chips { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
+.chip {
+  padding: 2px 8px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  background: var(--ground);
+  color: var(--dmg-4);
+  font-size: var(--fs-small);
+}
+.chip:hover { border-color: var(--hot); color: var(--hot); }
+.chip b { color: var(--hot); font-weight: 500; }
+
+/* A codec's name over the panel that shows what it does. */
+.codec-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 10px; }
+.codec-head h3 { margin: 0; font-family: var(--pixel); font-size: var(--fs-small); font-weight: 400; color: var(--dmg-4); }
+.codec-head .sub { font-size: var(--fs-fine); color: var(--ink-soft); }
+.codec-head.ylk h3 { color: var(--hot); }
+
+/* What a step cost, in bytes read: small pills of number and unit. */
+.cost { display: flex; flex-wrap: wrap; gap: 4px 8px; margin-top: 8px; }
+.cost span {
+  font-size: var(--fs-micro); padding: 2px 6px; border-radius: var(--radius);
+  border: 1px solid var(--rule); background: var(--ground); color: var(--ink-soft);
+  font-variant-numeric: tabular-nums;
+}
+.cost span b { color: var(--dmg-4); font-weight: 600; }
+.cost span.warn b { color: var(--warn); }
+
+/* A fixed label on a row: what kind of thing this is. */
+.tag {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: var(--radius);
+  font-size: var(--fs-micro);
+  color: #fff;
+  letter-spacing: .04em;
+}
+.tag.suffix { background: var(--hot); color: var(--ground); }
+.tag.word { background: var(--dmg-3); }
+.tag.rule { background: var(--dmg-2); color: var(--dmg-4); }
+
+/* Data -------------------------------------------------------------------- */
+
+table { width: 100%; border-collapse: collapse; font-size: var(--fs-small); }
+th, td { text-align: left; padding: 5px 10px; border-bottom: 1px solid var(--rule); }
+th { font-weight: 500; color: var(--ink-soft); }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+td.word { color: var(--dmg-4); }
+
+/* A table with a window on it: the head stays, the body scrolls. */
+.table-wrap {
+  max-height: var(--table-max-h);
+  overflow: auto;
+  border: 1px solid var(--rule);
+  background: var(--panel);
+  border-radius: var(--radius);
+}
+.table-wrap th, .table-wrap td { padding: 5px 10px; white-space: nowrap; }
+.table-wrap thead th {
+  position: sticky; top: 0; background: var(--panel);
+  box-shadow: inset 0 -1px 0 var(--rule); z-index: 1;
+}
+.table-wrap tr:last-child td { border-bottom: 0; }
+
+/* The number the section is about, with its unit and verdict beside it. */
+.headline-figure { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 18px; margin-bottom: var(--panel-pad); }
+.big { font-size: clamp(30px, 7vw, 48px); font-weight: 600; line-height: 1; color: var(--dmg-4); }
+.big small { font-size: var(--fs-lead); font-weight: 400; color: var(--ink-soft); margin-left: 4px; }
+.verdict { font-size: var(--fs-small); color: var(--ink-soft); }
+.verdict b { color: var(--hot); font-weight: 600; }
+.ok { color: var(--good); }
+.bad { color: var(--warn); }
+
+/* Smaller numbers, in a row that reflows. */
+.stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 14px 20px; }
+.stat .k { font-size: var(--fs-micro); letter-spacing: .06em; text-transform: uppercase; color: var(--ink-soft); }
+.stat .v { font-size: var(--fs-figure); font-variant-numeric: tabular-nums; }
+.stat .v.hot { color: var(--hot); }
+.stat .v.good { color: var(--good); }
+.stat .n { font-size: var(--fs-micro); color: var(--ink-soft); }
+
+/* Where the bytes went: one bar, one segment per part, a legend under it. */
+.bar {
+  display: flex;
+  height: var(--bar-h);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.bar div {
+  display: flex; align-items: center; justify-content: center;
+  font-size: var(--fs-micro); color: #fff; min-width: 0; overflow: hidden;
+}
+.legend { display: flex; flex-wrap: wrap; gap: 4px 16px; margin-top: 10px; font-size: var(--fs-fine); }
+.legend span { display: flex; align-items: center; gap: 6px; color: var(--ink-soft); }
+.legend b { color: var(--ink); font-weight: 500; }
+.legend i { width: 11px; height: 11px; display: inline-block; border-radius: 1px; }
+/* A swatch for a ramp, for a structure marker, for a search hit. */
+.legend i.ramp { width: 34px; background: linear-gradient(to right, var(--lo), var(--hi)); }
+.legend i.marker {
+  width: 18px; height: 10px; background: var(--panel);
+  border: 1px solid var(--rule); box-shadow: inset 0 calc(-1 * var(--marker-w)) var(--marker);
+}
+.legend i.outline-marker {
+  width: 18px; height: 10px; background: var(--panel);
+  border: 2px solid var(--outline, var(--hot));
+}
+
+.chart, .map { width: 100%; display: block; }
+.chart { height: var(--chart-h); }
+.chart-note, .map-note, .table-note { font-size: var(--fs-fine); color: var(--ink-soft); margin-top: 8px; }
+
+/* The stream, cell by cell. A page decides how wide a cell is and what it
+   means; the strip, the row, and the markers under a cell are shared. */
+.strip { display: flex; flex-wrap: wrap; gap: 2px; }
+.strip.forced-rows { display: block; }
+.stream-row { display: flex; flex-wrap: wrap; gap: 2px; margin-bottom: 2px; }
+.stream-row:last-child { margin-bottom: 0; }
+.cell { height: var(--cell-h); border-radius: 1px; cursor: pointer; }
+.cell:focus-visible { outline: 2px solid var(--hot); outline-offset: 1px; }
+.cell.has-chapter { box-shadow: inset 0 calc(-1 * var(--marker-w)) var(--chapter-marker); }
+.cell.has-verse { box-shadow: inset 0 calc(-1 * var(--marker-w)) var(--verse-marker); }
+
+/* Hardware ---------------------------------------------------------------- */
+/* The emulated unit: a moulded case, a well, and glass lit from the top. */
+
+.device {
+  background: linear-gradient(180deg, var(--case-face), var(--case));
+  border: 1px solid var(--case-edge);
+  border-radius: var(--radius-device);
+  padding: 20px;
+  box-shadow: 0 30px 60px -30px #000, inset 0 1px 0 #3b4560;
+}
+.lcd-frame {
+  background: #0f1410;
+  border-radius: 8px;
+  padding: 12px;
+  box-shadow: inset 0 2px 10px #000;
+}
+.lcd {
+  position: relative;
+  background: var(--lcd);
+  border-radius: 3px;
+  overflow: hidden;
+  box-shadow: inset 0 0 0 1px #00000030, inset 0 0 26px #7d8a6a55;
+}
+.lcd canvas { display: block; width: 100%; height: auto; }
+.lcd .glow {
+  position: absolute; inset: 0; pointer-events: none;
+  background: radial-gradient(120% 75% at 50% 0%, #ffffff22, transparent 60%);
+}
+/* The printed markings on the case, above and below the glass. */
+.markings {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-family: var(--pixel);
+  color: var(--ink-soft);
+}
+.markings .ver { color: var(--dmg-3); }
+
+/* Motion ------------------------------------------------------------------ */
+
+@media (prefers-reduced-motion: no-preference) {
+  .sweep-line { stroke-dasharray: 3000; stroke-dashoffset: 3000; animation: draw .7s ease-out forwards; }
+  @keyframes draw { to { stroke-dashoffset: 0; } }
+}

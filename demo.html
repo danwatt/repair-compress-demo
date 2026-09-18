@@ -8,230 +8,33 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="preload" href="kjv-preencoded.js" as="script">
 <link href="https://fonts.googleapis.com/css2?family=Silkscreen:wght@400;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="design-system.css">
 <style>
-:root {
-  --ground: #0a0e1a;
-  --panel: #121a2e;
-  --ink: #f2f4fa;
-  --ink-soft: #8b96b3;
-  --rule: #253253;
-  --dmg-4: #5b9dff;
-  --dmg-3: #3d7fd9;
-  --dmg-2: #2a5aa8;
-  --dmg-1: #163262;
-  --hot: #e8b923;
-  --hot-soft: #f6d878;
-  --warn: #ffb454;
-  /* Stream strip: one hue per symbol kind, each a 10-step ramp by words encoded. */
-  --sym-esc: #ffb454;
-  --sym-word: #008a63;
-  --sym-rule: #163262;
-  --sym-esc-lo: color-mix(in oklab, var(--sym-esc) 62%, var(--ground));
-  --sym-esc-hi: color-mix(in oklab, var(--sym-esc) 55%, #ffffff);
-  --sym-rule-lo: color-mix(in oklab, var(--sym-rule) 62%, var(--ground));
-  --sym-rule-hi: color-mix(in oklab, var(--sym-rule) 55%, #ffffff);
-  --chapter-marker: #f6d878;
-  --verse-marker: #ff6b9a;
-  --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
-  --pixel: "Silkscreen", "IBM Plex Mono", monospace;
-}
+/* Particular to the compression lab: the stream strip's cells and their tone
+   ramps, the pair-tree modal, and the lexicon walk. Everything else — the
+   page frame, panels, controls, tables, legends — is design-system.css. */
 
-* { box-sizing: border-box; }
-
-body {
-  margin: 0;
-  background: var(--ground);
-  color: var(--ink);
-  font-family: var(--mono);
-  font-size: 14px;
-  line-height: 1.5;
-  -webkit-font-smoothing: antialiased;
-}
-
-.wrap { max-width: 1080px; margin: 0 auto; padding: 32px 20px 80px; }
-
-.eyebrow {
-  font-family: var(--pixel);
-  font-size: 10px;
-  letter-spacing: .12em;
-  color: var(--dmg-3);
-  text-transform: uppercase;
-  margin: 0 0 14px;
-}
-
-h1 {
-  font-family: var(--pixel);
-  font-weight: 400;
-  font-size: clamp(20px, 4.4vw, 34px);
-  line-height: 1.25;
-  margin: 0 0 12px;
-  color: var(--dmg-4);
-}
-
-.thesis { max-width: 62ch; margin: 0 0 8px; color: var(--ink-soft); }
-.thesis a { color: var(--hot); text-decoration-thickness: 1px; text-underline-offset: 2px; }
-
-.hr { height: 1px; background: var(--rule); border: 0; margin: 28px 0; }
-
-section { margin-top: 30px; }
-
-.stage-label {
-  display: flex;
-  align-items: baseline;
-  gap: 10px;
-  font-family: var(--pixel);
-  font-size: 10px;
-  letter-spacing: .1em;
-  text-transform: uppercase;
-  color: var(--dmg-3);
-  margin-bottom: 12px;
-}
-.stage-label .num { color: var(--hot); }
-.stage-label .hint {
-  font-family: var(--mono);
-  font-size: 11px;
-  letter-spacing: 0;
-  text-transform: none;
-  color: var(--ink-soft);
-  margin-left: auto;
-}
-
-.grid { display: grid; grid-template-columns: 1fr 300px; gap: 20px; align-items: start; }
-@media (max-width: 760px) { .grid { grid-template-columns: 1fr; } }
-
-textarea {
-  width: 100%;
-  min-height: 190px;
-  resize: vertical;
-  padding: 12px;
-  border: 1px solid var(--rule);
-  background: var(--panel);
-  color: var(--ink);
-  font-family: var(--mono);
-  font-size: 13px;
-  line-height: 1.6;
-  border-radius: 2px;
-}
-textarea:focus-visible, input:focus-visible, button:focus-visible {
-  outline: 2px solid var(--hot);
-  outline-offset: 2px;
-}
-
-.panel { background: var(--panel); border: 1px solid var(--rule); border-radius: 2px; padding: 14px; }
-
-.knob { margin-bottom: 16px; }
-.knob:last-child { margin-bottom: 0; }
-.knob label { display: block; font-size: 11px; color: var(--ink-soft); margin-bottom: 5px; }
-.knob .row { display: flex; align-items: center; gap: 10px; }
-.knob input[type=number] {
-  width: 74px; padding: 5px 6px; border: 1px solid var(--rule);
-  background: var(--ground); color: var(--ink); font-family: var(--mono); font-size: 13px; border-radius: 2px;
-}
-.knob input[type=range] { flex: 1; accent-color: var(--hot); min-width: 0; }
-.knob .note { font-size: 10px; color: var(--ink-soft); margin-top: 5px; }
-
-.actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
-
-button {
-  font-family: var(--mono); font-size: 12px; font-weight: 500;
-  padding: 8px 14px; border-radius: 2px; cursor: pointer;
-  border: 1px solid var(--dmg-4); background: var(--ground); color: var(--dmg-4);
-}
-button:hover { background: var(--dmg-1); }
-button.primary { background: var(--hot); border-color: var(--hot); color: var(--ground); }
-button.primary:hover { background: var(--hot-soft); }
-button[disabled] { opacity: .5; cursor: default; }
-
-.headline-figure { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 18px; margin-bottom: 14px; }
-.big { font-size: clamp(30px, 7vw, 48px); font-weight: 600; line-height: 1; color: var(--dmg-4); }
-.big small { font-size: 15px; font-weight: 400; color: var(--ink-soft); margin-left: 4px; }
-.verdict { font-size: 12px; color: var(--ink-soft); }
-.verdict b { color: var(--hot); font-weight: 600; }
-.bad { color: var(--warn); }
-
-.bar { display: flex; height: 34px; border: 1px solid var(--rule); border-radius: 2px; overflow: hidden; }
-.bar div { display: flex; align-items: center; justify-content: center; font-size: 10px; color: #fff; min-width: 0; overflow: hidden; }
-.legend { display: flex; flex-wrap: wrap; gap: 4px 18px; margin-top: 10px; font-size: 11px; }
-.legend span { display: flex; align-items: center; gap: 6px; color: var(--ink-soft); }
-.legend i { width: 10px; height: 10px; display: inline-block; border-radius: 1px; }
-.legend i.ramp { width: 34px; background: linear-gradient(to right, var(--lo), var(--hi)); }
-.legend b { color: var(--ink); font-weight: 500; }
-
-table { width: 100%; border-collapse: collapse; font-size: 12px; }
-th, td { text-align: left; padding: 5px 8px 5px 0; border-bottom: 1px solid var(--rule); }
-th { font-weight: 500; color: var(--ink-soft); }
-td.num { text-align: right; font-variant-numeric: tabular-nums; }
-
-.table-wrap {
-  max-height: 400px; overflow: auto;
-  border: 1px solid var(--rule); background: var(--panel); border-radius: 2px;
-}
-.table-wrap table { font-size: 12px; }
-.table-wrap th, .table-wrap td { padding: 5px 10px; white-space: nowrap; }
-.table-wrap thead th {
-  position: sticky; top: 0; background: var(--panel);
-  box-shadow: inset 0 -1px 0 var(--rule); z-index: 1;
-}
+/* Bare tables sit flush against the panel's left edge. */
+th, td { padding: 5px 8px 5px 0; }
+.knob input[type=number] { width: 74px; }
 .table-wrap td.words { white-space: normal; word-break: break-word; min-width: 220px; color: var(--dmg-4); }
 .table-wrap td.pairs { white-space: normal; word-break: break-word; min-width: 260px; color: var(--ink-soft); }
-.table-wrap tr:last-child td { border-bottom: 0; }
-.tag {
-  display: inline-block; padding: 1px 6px; border-radius: 2px;
-  font-size: 10px; color: #fff; letter-spacing: .04em;
-}
-.tag.suffix { background: var(--hot); color: var(--ground); }
-.tag.word { background: var(--dmg-3); }
-.tag.rule { background: var(--dmg-2); color: var(--dmg-4); }
 
-.chart { width: 100%; height: 220px; display: block; }
-.chart-note { font-size: 11px; color: var(--ink-soft); margin-top: 8px; }
+.stream-search { margin-bottom: 12px; }
+.stream-search input[type=search] { min-width: 220px; }
+.stream-search-status { flex-basis: 100%; min-height: 1.5em; color: var(--ink-soft); font-size: var(--fs-fine); }
 
-.stream-controls {
-  display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px;
-  margin-bottom: 10px;
-}
-.stream-controls label {
-  display: flex; align-items: center; gap: 8px;
-  color: var(--ink-soft); font-size: 11px; white-space: nowrap;
-}
-.stream-controls label.position { flex: 1; min-width: 260px; }
-.stream-controls input[type=range] { flex: 1; min-width: 120px; accent-color: var(--hot); }
-.stream-controls input[type=checkbox] { accent-color: var(--hot); }
-.stream-controls input[type=number] {
-  width: 90px; padding: 5px 6px; border: 1px solid var(--rule);
-  background: var(--ground); color: var(--ink); font-family: var(--mono);
-  font-size: 12px; border-radius: 2px;
-}
-.stream-controls button { padding: 5px 9px; }
-.stream-search {
-  display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px;
-  margin-bottom: 12px;
-}
-.stream-search label { color: var(--ink-soft); font-size: 11px; }
-.stream-search input[type=search] {
-  flex: 1; min-width: 220px; padding: 6px 8px; border: 1px solid var(--rule);
-  background: var(--ground); color: var(--ink); font-family: var(--mono);
-  font-size: 12px; border-radius: 2px;
-}
-.stream-search button { padding: 6px 12px; }
-.stream-search-status { flex-basis: 100%; min-height: 1.5em; color: var(--ink-soft); font-size: 11px; }
-.strip { display: flex; flex-wrap: wrap; gap: 2px; margin-bottom: 10px; }
-.strip.forced-rows { display: block; }
-.stream-row { display: flex; flex-wrap: wrap; gap: 2px; margin-bottom: 2px; }
-.stream-row:last-child { margin-bottom: 0; }
+/* The strip: one cell per token, width by token size, tone by words encoded. */
+.strip { margin-bottom: 10px; }
 .cell {
-  height: 16px; border-radius: 1px; cursor: pointer;
   --t: 0;
   background: var(--base);
   background: color-mix(in oklab, var(--hi) calc(var(--t) * 100%), var(--lo));
 }
-.cell:focus-visible { outline: 2px solid var(--hot); outline-offset: 1px; }
 .cell.b1 { width: 8px; --base: var(--sym-esc); --lo: var(--sym-esc-lo); --hi: var(--sym-esc-hi); }
 /* Single word is always exactly one word — flat tone, no ramp. */
 .cell.b2t { width: 18px; background: var(--sym-word); }
 .cell.b2r { width: 18px; --base: var(--sym-rule); --lo: var(--sym-rule-lo); --hi: var(--sym-rule-hi); }
-.cell.has-chapter { box-shadow: inset 0 -2px var(--chapter-marker); }
-.cell.has-verse { box-shadow: inset 0 -2px var(--verse-marker); }
 .cell.search-hit {
   position: relative; z-index: 1; outline: 2px solid var(--hot); outline-offset: 1px;
   filter: brightness(1.35) saturate(1.2);
@@ -246,19 +49,8 @@ td.num { text-align: right; font-variant-numeric: tabular-nums; }
 .cell.s7 { --t: .778; }
 .cell.s8 { --t: .889; }
 .cell.s9 { --t: 1; }
-.legend i.marker {
-  width: 18px; height: 10px; background: var(--panel);
-  border: 1px solid var(--rule); box-shadow: inset 0 -2px var(--marker);
-}
-.legend i.search-marker {
-  width: 18px; height: 10px; background: var(--panel); border: 2px solid var(--hot);
-}
-.readout {
-  min-height: 44px; padding: 8px 10px; background: var(--panel);
-  border: 1px solid var(--rule); border-radius: 2px; font-size: 12px; color: var(--ink-soft);
-}
-.readout b { color: var(--dmg-4); font-weight: 500; }
 
+/* One cell, opened: what it decodes to, and the pair tree under it. */
 .stream-modal {
   width: min(760px, calc(100vw - 32px)); max-height: min(760px, calc(100vh - 32px));
   padding: 0; border: 1px solid var(--dmg-3); border-radius: 3px;
@@ -271,15 +63,12 @@ td.num { text-align: right; font-variant-numeric: tabular-nums; }
   padding: 16px 18px; border-bottom: 1px solid var(--rule);
 }
 .stream-modal-title { margin: 0; color: var(--dmg-4); font: 400 15px/1.4 var(--pixel); }
-.stream-modal-meta { margin-top: 5px; color: var(--ink-soft); font-size: 11px; }
+.stream-modal-meta { margin-top: 5px; color: var(--ink-soft); font-size: var(--fs-fine); }
 .stream-modal-close { flex: 0 0 auto; padding: 4px 9px; }
 .stream-modal-body { overflow: auto; padding: 18px; }
-.stream-modal-label {
-  margin: 0 0 6px; color: var(--ink-soft); font-size: 10px;
-  letter-spacing: .06em; text-transform: uppercase;
-}
+.stream-modal-label { margin: 0 0 6px; }
 .stream-modal-decode, .stream-pair-tree {
-  margin: 0; padding: 12px; border: 1px solid var(--rule); border-radius: 2px;
+  margin: 0; padding: 12px; border: 1px solid var(--rule); border-radius: var(--radius);
   background: var(--ground); white-space: pre-wrap; overflow-wrap: anywhere;
   font: 13px/1.65 var(--mono);
 }
@@ -293,44 +82,28 @@ td.num { text-align: right; font-variant-numeric: tabular-nums; }
 .stream-pair-tree summary::marker { color: var(--hot); }
 .stream-pair-tree b { color: var(--dmg-4); font-weight: 500; }
 .stream-pair-side {
-  display: inline-block; width: 42px; color: var(--hot); font-size: 10px;
+  display: inline-block; width: 42px; color: var(--hot); font-size: var(--fs-micro);
   letter-spacing: .04em; text-transform: uppercase;
 }
 .stream-pair-leaf { color: var(--ink); }
 
-.lexicon-controls {
-  display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px;
-  margin-bottom: 10px;
-}
-.lexicon-controls label {
-  display: flex; align-items: center; gap: 8px; flex: 1; min-width: 260px;
-  color: var(--ink-soft); font-size: 11px; white-space: nowrap;
-}
-.lexicon-controls input[type=range] { flex: 1; min-width: 120px; accent-color: var(--hot); }
-.lexicon-controls input[type=number] {
-  width: 90px; padding: 5px 6px; border: 1px solid var(--rule);
-  background: var(--ground); color: var(--ink); font-family: var(--mono);
-  font-size: 12px; border-radius: 2px;
-}
-.lexicon-controls button { padding: 5px 9px; }
+/* The lexicon walk: each entry rebuilt from the one before it. */
 .lexicon-visual {
-  padding: 14px; border: 1px solid var(--rule); background: var(--panel); border-radius: 2px;
+  padding: var(--panel-pad); border: 1px solid var(--rule); background: var(--panel);
+  border-radius: var(--radius);
 }
 .lexicon-step {
   display: grid; grid-template-columns: 120px minmax(0, 1fr); gap: 12px;
   align-items: start; padding: 9px 0;
 }
 .lexicon-step + .lexicon-step { border-top: 1px solid var(--rule); }
-.lexicon-step-label {
-  color: var(--ink-soft); font-size: 10px; letter-spacing: .06em; text-transform: uppercase;
-}
-.lexicon-step-label b { display: block; color: var(--ink); font-size: 12px; letter-spacing: 0; text-transform: none; }
+.lexicon-step-label b { display: block; color: var(--ink); font-size: var(--fs-small); letter-spacing: 0; text-transform: none; }
 .lexicon-pieces { display: flex; flex-wrap: wrap; align-items: stretch; gap: 3px; min-width: 0; }
 .lexicon-piece {
   display: inline-flex; flex-direction: column; justify-content: center; min-height: 38px;
-  padding: 4px 8px; border-radius: 2px; overflow-wrap: anywhere;
+  padding: 4px 8px; border-radius: var(--radius); overflow-wrap: anywhere;
 }
-.lexicon-piece small { color: inherit; opacity: .78; font-size: 9px; }
+.lexicon-piece small { color: inherit; opacity: .78; font-size: var(--fs-nano); }
 .lexicon-piece.shared { background: var(--dmg-3); color: var(--ink); }
 .lexicon-piece.literal { background: var(--sym-word); color: var(--ink); }
 .lexicon-piece.suffix { background: var(--hot); color: var(--ground); }
@@ -342,7 +115,7 @@ td.num { text-align: right; font-variant-numeric: tabular-nums; }
 .lexicon-piece.empty-piece { background: var(--ground); color: var(--ink-soft); border: 1px solid var(--rule); }
 .lexicon-equation { color: var(--ink-soft); align-self: center; padding: 0 2px; }
 .lexicon-readout { margin-top: 10px; }
-.lexicon-neighborhood { margin-top: 10px; max-height: 280px; }
+.lexicon-neighborhood { margin-top: 10px; --table-max-h: 280px; }
 .lexicon-neighborhood tr.is-selected td { background: var(--dmg-1); }
 .lexicon-pick {
   width: 100%; padding: 0; border: 0; background: transparent; color: var(--dmg-4);
@@ -352,18 +125,6 @@ td.num { text-align: right; font-variant-numeric: tabular-nums; }
 @media (max-width: 600px) {
   .lexicon-step { grid-template-columns: 1fr; gap: 5px; }
   .lexicon-piece { min-height: 34px; }
-}
-
-.empty { color: var(--ink-soft); font-size: 12px; }
-.stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 14px 20px; }
-.stat .k { font-size: 10px; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-soft); }
-.stat .v { font-size: 19px; font-variant-numeric: tabular-nums; }
-footer { margin-top: 44px; font-size: 11px; color: var(--ink-soft); }
-footer a { color: var(--hot); }
-
-@media (prefers-reduced-motion: no-preference) {
-  .sweep-line { stroke-dasharray: 3000; stroke-dashoffset: 3000; animation: draw .7s ease-out forwards; }
-  @keyframes draw { to { stroke-dashoffset: 0; } }
 }
 </style>
 </head>
@@ -448,7 +209,7 @@ footer a { color: var(--hot); }
   <section id="stream-section" hidden>
     <div class="stage-label"><span class="num">05</span> <span>Stream</span>
       <span class="hint" id="stream-hint"></span></div>
-    <div class="stream-controls">
+    <div class="controls stream-controls">
       <button type="button" id="stream-prev" aria-label="Show previous stream page">←</button>
       <label class="position">Start byte
         <input type="range" id="stream-position" min="0" max="0" value="0" step="1">
@@ -460,7 +221,7 @@ footer a { color: var(--hot); }
       </label>
       <label><input type="checkbox" id="stream-breaks"> New row after verse/chapter</label>
     </div>
-    <form class="stream-search" id="stream-search-form">
+    <form class="controls stream-search" id="stream-search-form">
       <label for="stream-search">Find in decompressed stream</label>
       <input type="search" id="stream-search" autocomplete="off" spellcheck="false"
              placeholder="Enter an exact, case-sensitive phrase">
@@ -475,7 +236,7 @@ footer a { color: var(--hot); }
       <span><i class="ramp" style="--lo:var(--sym-rule-lo);--hi:var(--sym-rule-hi)"></i><b>2 bytes</b> grammar rule</span>
       <span><i class="marker" style="--marker:var(--chapter-marker)"></i><b>chapter</b> boundary</span>
       <span><i class="marker" style="--marker:var(--verse-marker)"></i><b>verse</b> boundary</span>
-      <span><i class="search-marker"></i><b>search match</b></span>
+      <span><i class="outline-marker"></i><b>search match</b></span>
       <span id="shade-legend"></span>
     </div>
   </section>
@@ -483,7 +244,7 @@ footer a { color: var(--hot); }
   <section id="lexicon-section" hidden>
     <div class="stage-label"><span class="num">06</span> <span>Lexicon storage</span>
       <span class="hint" id="lexicon-hint"></span></div>
-    <div class="lexicon-controls">
+    <div class="controls lexicon-controls">
       <button type="button" id="lexicon-prev" aria-label="Show previous lexicon entry">←</button>
       <label>Entry
         <input type="range" id="lexicon-position" min="0" max="0" value="0" step="1">
@@ -529,9 +290,9 @@ footer a { color: var(--hot); }
       <button type="button" class="stream-modal-close" id="stream-modal-close" aria-label="Close decode modal">Close</button>
     </div>
     <div class="stream-modal-body">
-      <p class="stream-modal-label">Full decoded text</p>
+      <p class="label stream-modal-label">Full decoded text</p>
       <pre class="stream-modal-decode" id="stream-modal-decode"></pre>
-      <p class="stream-modal-label" style="margin-top:16px">Recursive pair breakdown</p>
+      <p class="label stream-modal-label" style="margin-top:16px">Recursive pair breakdown</p>
       <ol class="stream-pair-tree" id="stream-pair-tree"></ol>
     </div>
   </div>
@@ -841,15 +602,15 @@ And God said, Let there be lights in the firmament of the heaven to divide the d
 
     $("lexicon-visual").innerHTML = `
       <div class="lexicon-step">
-        <div class="lexicon-step-label">Previous entry<b>${index === 0 ? "—" : `#${fmt(index - 1)}`}</b></div>
+        <div class="label lexicon-step-label">Previous entry<b>${index === 0 ? "—" : `#${fmt(index - 1)}`}</b></div>
         <div class="lexicon-pieces">${previousPieces}</div>
       </div>
       <div class="lexicon-step">
-        <div class="lexicon-step-label">Bytes stored<b>${fmt(storage.totalBytes)} byte${storage.totalBytes === 1 ? "" : "s"}</b></div>
+        <div class="label lexicon-step-label">Bytes stored<b>${fmt(storage.totalBytes)} byte${storage.totalBytes === 1 ? "" : "s"}</b></div>
         <div class="lexicon-pieces">${recipePieces}</div>
       </div>
       <div class="lexicon-step">
-        <div class="lexicon-step-label">Reconstructed<b>#${fmt(index)}</b></div>
+        <div class="label lexicon-step-label">Reconstructed<b>#${fmt(index)}</b></div>
         <div class="lexicon-pieces">${rebuiltPieces}</div>
       </div>`;
 

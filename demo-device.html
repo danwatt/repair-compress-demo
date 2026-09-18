@@ -7,127 +7,31 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Silkscreen:wght@400;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="design-system.css">
 <style>
-:root {
-  --ground: #0a0e1a;
-  --panel: #121a2e;
-  --ink: #f2f4fa;
-  --ink-soft: #8b96b3;
-  --rule: #253253;
-  --dmg-4: #5b9dff;
-  --dmg-3: #3d7fd9;
-  --dmg-1: #163262;
-  --hot: #e8b923;
-  --hot-soft: #f6d878;
-  --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
-  --pixel: "Silkscreen", "IBM Plex Mono", monospace;
+/* Particular to the whole machine: the wider case, the live glass you can type
+   into, and the book index drawn from the patent's FIG. 1.
+   The case, the glass, and the page frame are design-system.css. */
 
-  --lcd: #b9c6a8;
-  --lcd-ink: #232a1c;
-  --lcd-dim: #7b8a68;          /* an unlit / printed label */
-  --case: #1c2331;
-  --case-edge: #2c3547;
-  --case-face: #222a3b;
-}
-
-* { box-sizing: border-box; }
-
-body {
-  margin: 0;
-  background: var(--ground);
-  color: var(--ink);
-  font-family: var(--mono);
-  font-size: 14px;
-  line-height: 1.5;
-  -webkit-font-smoothing: antialiased;
-}
-
-.wrap { max-width: 1120px; margin: 0 auto; padding: 32px 20px 80px; }
-
-.eyebrow {
-  font-family: var(--pixel);
-  font-size: 10px;
-  letter-spacing: .12em;
-  color: var(--dmg-3);
-  text-transform: uppercase;
-  margin: 0 0 14px;
-}
-
-h1 {
-  font-family: var(--pixel);
-  font-weight: 400;
-  font-size: clamp(20px, 4.4vw, 34px);
-  line-height: 1.25;
-  margin: 0 0 16px;
-  color: var(--dmg-4);
-}
-
-.thesis { max-width: 68ch; margin: 0 0 12px; color: var(--ink-soft); }
-.thesis a { color: var(--hot); text-decoration-thickness: 1px; text-underline-offset: 2px; }
-.thesis b { color: var(--ink); font-weight: 500; }
-.thesis code { color: var(--hot); font-size: 12.5px; }
-
-.hr { height: 1px; background: var(--rule); border: 0; margin: 30px 0; }
-section { margin-top: 36px; }
 .device-stage { margin-top: 28px; }
 .explanation { margin-top: 38px; }
 
-.stage-label {
-  display: flex;
-  align-items: baseline;
-  gap: 10px;
-  font-family: var(--pixel);
-  font-size: 10px;
-  letter-spacing: .1em;
-  text-transform: uppercase;
-  color: var(--dmg-3);
-  margin-bottom: 16px;
-}
-.stage-label .num { color: var(--hot); }
-.stage-label .hint {
-  font-family: var(--mono);
-  font-size: 11px;
-  letter-spacing: 0;
-  text-transform: none;
-  color: var(--ink-soft);
-  margin-left: auto;
-}
-
-/* device --------------------------------------------------------------- */
-
+/* A desk unit rather than a hand-held one: wider, and squarer at the foot. */
 .device {
-  background: linear-gradient(180deg, var(--case-face), var(--case));
-  border: 1px solid var(--case-edge);
-  border-radius: 18px 18px 20px 20px;
+  border-radius: var(--radius-device) var(--radius-device) 20px 20px;
   padding: 18px 18px 12px;
-  box-shadow: 0 30px 60px -30px #000, inset 0 1px 0 #3b4560;
   width: 100%;
   max-width: 1020px;
   margin: 0 auto;
 }
 
-.lcd-frame {
-  background: #0f1410;
-  border-radius: 8px;
-  padding: 12px;
-  box-shadow: inset 0 2px 10px #000;
-}
+/* The glass takes keys, so it shows a focus ring of its own. */
 .lcd {
-  position: relative;
-  background: var(--lcd);
-  border-radius: 3px;
-  overflow: hidden;
-  box-shadow: inset 0 0 0 1px #00000030, inset 0 0 26px #7d8a6a55;
   outline: 2px solid transparent;
   outline-offset: 2px;
   cursor: text;
 }
 .lcd.on { outline-color: var(--hot); }
-.lcd .glow {
-  position: absolute; inset: 0; pointer-events: none;
-  background: radial-gradient(120% 70% at 50% 0%, #ffffff22, transparent 60%);
-}
-.lcd canvas { display: block; width: 100%; height: auto; }
 
 /* the hidden key sink */
 #kbd {
@@ -143,7 +47,7 @@ section { margin-top: 36px; }
 .book-index { display: block; width: 100%; height: auto; overflow: visible; }
 .book-index text {
   font-family: var(--pixel);
-  font-size: 13px;
+  font-size: var(--fs-field);
   letter-spacing: -.35px;
 }
 .bk { fill: var(--lcd-dim); }
@@ -153,33 +57,21 @@ section { margin-top: 36px; }
 .bk.sel .selection { fill: var(--lcd-ink); }
 .bk.sel text { fill: var(--lcd); }
 .tlabel rect { fill: var(--lcd-ink); }
-.tlabel text { fill: var(--lcd); font-size: 10px; letter-spacing: 1px; }
+.tlabel text { fill: var(--lcd); font-size: var(--fs-micro); letter-spacing: 1px; }
 .index-divider { fill: var(--lcd-ink); }
 .spine { fill: none; stroke: var(--lcd-ink); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
 
-.markings {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  padding: 10px 6px 2px;
-  font-family: var(--pixel);
-  color: var(--ink-soft);
-}
-.markings .title { font-size: 12px; letter-spacing: .1em; }
-.markings .ver { font-size: 8px; letter-spacing: .12em; color: var(--dmg-3); }
+.markings { padding: 10px 6px 2px; }
+.markings .title { font-size: var(--fs-small); letter-spacing: .1em; }
+.markings .ver { font-size: 8px; letter-spacing: .12em; }
 
-.underhint { margin: 12px 2px 0; font-size: 11px; color: var(--ink-soft); }
-.underhint kbd {
-  font-family: var(--mono); font-size: 10px;
-  border: 1px solid var(--rule); border-bottom-width: 2px; border-radius: 3px;
-  padding: 1px 5px; color: var(--ink); background: var(--panel);
-}
+.underhint { margin: 12px 2px 0; font-size: var(--fs-fine); color: var(--ink-soft); }
 
 @media (max-width: 720px) {
   .device { padding: 12px 10px 10px; }
   .lcd-frame { padding: 8px; }
   .books { padding: 0 6px 8px; }
-  .markings .title { font-size: 9px; }
+  .markings .title { font-size: var(--fs-nano); }
   .markings .ver { font-size: 6px; }
 }
 </style>
